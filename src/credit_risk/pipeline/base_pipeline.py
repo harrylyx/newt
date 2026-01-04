@@ -1,0 +1,2 @@
+class BasePipeline:
+    pass

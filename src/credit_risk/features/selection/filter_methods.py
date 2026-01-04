@@ -1,0 +1,2 @@
+class FilterMethods:
+    pass

@@ -23,21 +23,24 @@ jobs:
         apt-get update
         apt-get install -y --no-install-recommends git build-essential
 
-    # setup-python works in containers too, or we can just use cached poetry
-    # But setup-python's cache feature works well.
-    - name: Section - caching
-      uses: actions/setup-python@v4
-      with:
-        python-version: ${{ matrix.python-version }}
-        cache: 'poetry'
+    # setup-python is not supported inside containers. Use direct caching.
     
     - name: Install Poetry
-      run: |
-        pip install poetry
-        poetry config virtualenvs.create false
+      run: pip install poetry
+
+    - name: Configure Poetry
+      run: poetry config virtualenvs.in-project true
+
+    - name: Cache virtualenv
+      uses: actions/cache@v3
+      with:
+        path: .venv
+        key: venv-${{ runner.os }}-${{ matrix.python-version }}-${{ hashFiles('**/poetry.lock') }}
+        restore-keys: |
+          venv-${{ runner.os }}-${{ matrix.python-version }}-
 
     - name: Install dependencies
-      run: poetry install --no-interaction --no-root
+      run: poetry install --no-interaction
 
     - name: Install library
       run: poetry install --no-interaction

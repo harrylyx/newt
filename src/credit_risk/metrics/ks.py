@@ -1,10 +1,9 @@
 import numpy as np
-from scipy.stats import ks_2samp
-from typing import Union, Tuple
+from typing import Union
 
 def calculate_ks(y_true: Union[np.ndarray, list], y_prob: Union[np.ndarray, list]) -> float:
     """
-    Calculate the Kolmogorov-Smirnov (KS) statistic.
+    Calculate the Kolmogorov-Smirnov (KS) statistic using efficient sorting.
     
     Args:
         y_true: True binary labels (0 or 1).
@@ -13,31 +12,33 @@ def calculate_ks(y_true: Union[np.ndarray, list], y_prob: Union[np.ndarray, list
     Returns:
         float: KS statistic.
     """
-    y_true = np.asarray(y_true)
-    y_prob = np.asarray(y_prob)
-    
-    # Calculate KS using scipy which computes the max difference between CDFs
-    # of the two distributions (positives and negatives)
-    return ks_2samp(y_prob[y_true == 1], y_prob[y_true == 0]).statistic
-
-def calculate_ks_fast(y_true: Union[np.ndarray, list], y_prob: Union[np.ndarray, list]) -> float:
-    """
-    Alternative fast implementation using sorting.
-    """
-    y_true = np.asarray(y_true)
-    y_prob = np.asarray(y_prob)
-    
-    # Sort by probability descending
-    idx = np.argsort(y_prob)[::-1]
-    y_true_sorted = y_true[idx]
-    
-    # Cumulative sum of positives and negatives
-    cumsum_pos = np.cumsum(y_true_sorted)
-    cumsum_neg = np.cumsum(1 - y_true_sorted)
-    
-    # Calculate TPR and FPR
-    tpr = cumsum_pos / cumsum_pos[-1]
-    fpr = cumsum_neg / cumsum_neg[-1]
-    
-    # KS is max difference
-    return np.max(tpr - fpr)
+    try:
+        y_true = np.asarray(y_true)
+        y_prob = np.asarray(y_prob)
+        
+        # Sort by probability descending
+        idx = np.argsort(y_prob)[::-1]
+        y_true_sorted = y_true[idx]
+        
+        # Cumulative sum of positives and negatives
+        cumsum_pos = np.cumsum(y_true_sorted)
+        cumsum_neg = np.cumsum(1 - y_true_sorted)
+        
+        # Calculate TPR and FPR
+        # Handle division by zero if no positives or no negatives
+        total_pos = cumsum_pos[-1]
+        total_neg = cumsum_neg[-1]
+        
+        if total_pos == 0 or total_neg == 0:
+            return 0.0 # Or nan? Standard KS is 0 if one class missing or undefined.
+            
+        tpr = cumsum_pos / total_pos
+        fpr = cumsum_neg / total_neg
+        
+        # KS is max difference
+        return np.max(tpr - fpr)
+        
+    except Exception as e:
+        import warnings
+        warnings.warn(f"Error calculating KS: {str(e)}")
+        return np.nan

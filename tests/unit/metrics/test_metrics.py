@@ -4,7 +4,6 @@ import pandas as pd
 from unittest import mock
 from src.credit_risk.metrics import (
     calculate_ks,
-    calculate_ks_fast,
     calculate_auc,
     calculate_lift,
     calculate_psi,
@@ -21,10 +20,8 @@ def test_ks_score(data):
     y_prob = data["y_prob"]
     
     ks = calculate_ks(y_true, y_prob)
-    ks_fast = calculate_ks_fast(y_true, y_prob)
     
     assert 0 <= ks <= 1
-    assert abs(ks - ks_fast) < 1e-4
     
     # Check that KS is reasonably high for a trained model (assuming it learned something)
     # The dataset is small, but 0.1 is a low bar

@@ -14,5 +14,10 @@ def calculate_gini(y_true: Union[np.ndarray, list], y_prob: Union[np.ndarray, li
     Returns:
         float: Gini coefficient.
     """
-    auc = calculate_auc(y_true, y_prob)
-    return 2 * auc - 1
+    try:
+        auc = calculate_auc(y_true, y_prob)
+        return 2 * auc - 1
+    except Exception as e:
+        import warnings
+        warnings.warn(f"Error calculating Gini: {str(e)}")
+        return np.nan

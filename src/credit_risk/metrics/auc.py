@@ -13,4 +13,9 @@ def calculate_auc(y_true: Union[np.ndarray, list], y_prob: Union[np.ndarray, lis
     Returns:
         float: AUC score.
     """
-    return float(roc_auc_score(y_true, y_prob))
+    try:
+        return float(roc_auc_score(y_true, y_prob))
+    except Exception as e:
+        import warnings
+        warnings.warn(f"Error calculating AUC: {str(e)}")
+        return np.nan

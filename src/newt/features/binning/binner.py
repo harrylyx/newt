@@ -4,14 +4,14 @@ import numpy as np
 import pandas as pd
 
 from .base import BaseBinner
-from .supervised import ChiMergeBinner, DecisionTreeBinner
+from .supervised import ChiMergeBinner, DecisionTreeBinner, OptBinningBinner
 from .unsupervised import EqualFrequencyBinner, EqualWidthBinner, KMeansBinner
 
 
-class Combiner:
+class Binner:
     """
     A unified interface for binning multiple features using various algorithms.
-    Supported methods: 'chi', 'dt', 'kmean', 'quantile', 'step'.
+    Supported methods: 'chi', 'dt', 'kmean', 'quantile', 'step', 'opt'.
     """
 
     def __init__(self):
@@ -22,6 +22,7 @@ class Combiner:
             "kmean": KMeansBinner,
             "quantile": EqualFrequencyBinner,
             "step": EqualWidthBinner,
+            "opt": OptBinningBinner,
         }
         self.binners_: Dict[str, BaseBinner] = {}
 
@@ -33,8 +34,8 @@ class Combiner:
         n_bins: int = 5,
         min_samples: Union[int, float, None] = None,
         empty_separate: bool = False,
-        exclude: Optional[List[str]] = None,
-    ) -> "Combiner":
+        cols: Optional[List[str]] = None,
+    ) -> "Binner":
         """
         Fit the binning model.
 
@@ -45,7 +46,7 @@ class Combiner:
         y : str or pd.Series, optional
             Target data. Required for supervised methods ('chi', 'dt').
         method : str
-            Binning method. 'chi', 'dt', 'kmean', 'quantile', 'step'.
+            Binning method. 'chi', 'dt', 'kmean', 'quantile', 'step', 'opt'.
         n_bins : int
             Number of bins.
         min_samples : int, float
@@ -53,19 +54,22 @@ class Combiner:
         empty_separate : bool
             Whether to separate empty values - Not implemented yet
             (handled by pd.cut usually).
-        exclude : List[str]
-            Columns to exclude.
+        cols : List[str]
+            List of columns to bin. If None, selects all numeric columns.
         """
         if isinstance(y, str):
             y = X[y]
             if y.name in X.columns:
                 X = X.drop(columns=[y.name])
 
-        if exclude:
-            X = X.drop(columns=exclude, errors="ignore")
-
-        # Select numeric columns
-        numeric_cols = X.select_dtypes(include=[np.number]).columns
+        # Determine columns to bin
+        if cols:
+            # Use provided columns (filtered by existing columns)
+            numeric_cols = [c for c in cols if c in X.columns]
+            # Check for missing requested cols? Optional warn.
+        else:
+            # Select numeric columns automatically
+            numeric_cols = X.select_dtypes(include=[np.number]).columns
 
         for col in numeric_cols:
             binner_cls = self.method_map.get(method)
@@ -136,10 +140,6 @@ class Combiner:
 
         # We need to reconstruct binners to use them for transform
         # We can use BaseBinner with set_splits
-        # But we don't know the method used. It doesn't matter for transform,
-        # as long as we have splits.
-        # We can default to any Binner, or simple BaseBinner wrapper.
-
         # We'll use EqualWidthBinner as a generic container since it inherits BaseBinner
         # and doesn't enforce strict logic on transform other than splits.
         for col, splits in rules.items():

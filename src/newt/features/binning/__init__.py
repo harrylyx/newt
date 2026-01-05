@@ -1,13 +1,14 @@
 from .base import BaseBinner
-from .combiner import Combiner
-from .supervised import ChiMergeBinner, DecisionTreeBinner
+from .binner import Binner
+from .supervised import ChiMergeBinner, DecisionTreeBinner, OptBinningBinner
 from .unsupervised import EqualFrequencyBinner, EqualWidthBinner, KMeansBinner
 
 __all__ = [
     "BaseBinner",
-    "Combiner",
+    "Binner",
     "ChiMergeBinner",
     "DecisionTreeBinner",
+    "OptBinningBinner",
     "EqualWidthBinner",
     "EqualFrequencyBinner",
     "KMeansBinner",

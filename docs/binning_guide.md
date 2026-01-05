@@ -4,16 +4,16 @@ This guide describes how to use the `newt` library's binning module and visualiz
 
 ## 1. Feature Binning
 
-The `Combiner` class provides a unified interface for binning features using various algorithms. It supports both supervised and unsupervised binning methods.
+The `Binner` class provides a unified interface for binning features using various algorithms. It supports both supervised and unsupervised binning methods.
 
 ### Import
 ```python
-from newt.features.binning import Combiner
+from newt import Binner
 ```
 
 ### Initialization
 ```python
-c = Combiner()
+c = Binner()
 ```
 
 ### Methods
@@ -27,7 +27,7 @@ c.fit(
     method: str = "chi", 
     n_bins: int = 5,
     min_samples: Union[int, float] = None,
-    exclude: List[str] = None
+    cols: List[str] = None
 )
 ```
 - **method**:
@@ -36,8 +36,10 @@ c.fit(
     - `'kmean'`: K-Means Clustering (Unsupervised).
     - `'quantile'`: Equal Frequency (Unsupervised).
     - `'step'`: Equal Width (Unsupervised).
+    - `'opt'`: OptBinning (Supervised, optimal binning).
 - **n_bins**: Target number of bins.
 - **min_samples**: Minimum samples per leaf (for `'dt'` method).
+- **cols**: List of columns to bin. If None, auto-selects numeric columns.
 
 #### `transform`
 Applies binning rules to new data.
@@ -57,20 +59,20 @@ rules = c.export()
 # rules = {'feature_name': [split1, split2, ...]}
 
 # Load
-c_new = Combiner()
+c_new = Binner()
 c_new.load(rules)
 ```
 
 ### Example
 ```python
 import pandas as pd
-from newt.features.binning import Combiner
+from newt import Binner
 
 # Load data
 df = pd.read_csv('data.csv')
 
 # Fit
-c = Combiner()
+c = Binner()
 c.fit(df, y='target', method='chi', n_bins=5)
 
 # Transform
@@ -91,7 +93,7 @@ from newt.visualization import plot_binning
 ### Usage
 ```python
 plot_binning(
-    combiner: Combiner,
+    combiner: Binner,
     data: pd.DataFrame,
     feature: str,
     target: str,
@@ -102,7 +104,7 @@ plot_binning(
 )
 ```
 
-- **combiner**: A fitted `Combiner` object.
+- **combiner**: A fitted `Binner` object.
 - **data**: DataFrame containing feature and target.
 - **feature**: Name of the feature to plot.
 - **target**: Name of the target column.
@@ -114,11 +116,11 @@ plot_binning(
     - `'bad_dist'`: Show percentage of bad samples.
 
 ### Output
-Returns a Plotly `Figure` object which can be displayed in a notebook or saved to HTML.
+Returns a Matplotlib `Figure` object which can be displayed in a notebook or saved.
 
 ### Example
 ```python
-# Assuming 'c' is a fitted Combiner
+# Assuming 'c' is a fitted Binner
 fig = plot_binning(
     combiner=c,
     data=df,
@@ -128,7 +130,12 @@ fig = plot_binning(
     bar_mode='total_dist'
 )
 
-fig.show()
+# Display
+import matplotlib.pyplot as plt
+plt.show()
+
+# Save
+fig.savefig('binning_plot.png')
 ```
 ![Example Plot](https://via.placeholder.com/800x400?text=Bar+Line+Combo+Chart)
 *(Chart includes Bar for distribution and Line for bad rate, with IV in title)*

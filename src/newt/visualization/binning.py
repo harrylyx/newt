@@ -1,19 +1,20 @@
 import re
 from typing import TYPE_CHECKING
 
+import matplotlib.figure
+import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
-import plotly.graph_objects as go
-from plotly.subplots import make_subplots
+import seaborn as sns
 
 if TYPE_CHECKING:
-    from ..features.binning import Combiner
+    from ..features.binning import Binner
 
 from ..features.analysis.woe_calculator import WOEEncoder
 
 
 def plot_binning(
-    combiner: "Combiner",
+    combiner: "Binner",
     data: pd.DataFrame,
     feature: str,
     target: str,
@@ -21,14 +22,15 @@ def plot_binning(
     show_iv: bool = True,
     decimals: int = 2,
     bar_mode: str = "total",  # 'total', 'bad', 'total_dist', 'bad_dist'
-) -> go.Figure:
+    figsize: tuple = (10, 6),
+) -> matplotlib.figure.Figure:
     """
-    Visualize binning results for a specific feature using a fitted Combiner.
+    Visualize binning results for a specific feature using a fitted Binner.
 
     Parameters
     ----------
-    combiner : Combiner
-        Fitted Combiner object containing binning rules.
+    combiner : Binner
+        Fitted Binner object containing binning rules.
     data : pd.DataFrame
         Data containing the feature and target columns.
     feature : str
@@ -44,11 +46,13 @@ def plot_binning(
     bar_mode : str
         Metric for bar chart: 'total' (count), 'bad' (bad count),
         'total_dist' (percentage of total), 'bad_dist' (percentage of bads).
+    figsize : tuple
+        Figure size (width, height).
 
     Returns
     -------
-    go.Figure
-        Plotly figure.
+    matplotlib.figure.Figure
+        Matplotlib figure object.
     """
 
     # 1. Validation
@@ -57,9 +61,9 @@ def plot_binning(
     if target not in data.columns:
         raise ValueError(f"Target '{target}' not found in data.")
 
-    # Check if feature has rules in Combiner
+    # Check if feature has rules in Binner
     if feature not in combiner.rules_:
-        raise ValueError(f"No binning rules found for feature '{feature}' in Combiner.")
+        raise ValueError(f"No binning rules found for feature '{feature}' in Binner.")
 
     splits = combiner.rules_[feature]
 
@@ -74,52 +78,29 @@ def plot_binning(
     binned_series = pd.cut(data[feature], bins=bins, include_lowest=True)
 
     # 3. Calculate Stats using WOEEncoder for consistency
-    # WOEEncoder expects to bin data itself or receive categories.
-    # If we pass binned_series (Categorical), WOEEncoder will convert to string.
-
     # We use WOEEncoder to get IV and summary stats
     encoder = WOEEncoder()
-    # We pass the binned series.
-    # Note: WOEEncoder.fit converts non-numeric X to string.
+    # WOEEncoder.fit converts non-numeric X to string.
     encoder.fit(binned_series, data[target])
 
     stats = encoder.summary_  # Indexed by bin string (if converted)
     total_iv = encoder.iv_
 
     # Re-order stats to match bin order
-    # binned_series.cat.categories gives the correct order of intervals
     categories = binned_series.cat.categories
     # Convert categories to string format used by WOEEncoder (astype(str))
     cat_strings = categories.astype(str)
 
-    # Reindex stats
-    # Filter out empty bins that might not be in stats?
-    # WOEEncoder.fit only sees present values.
-    # But we want to show all bins defined by splits usually?
-    # If a bin is empty, it won't be in summary_.
-    # Let's reindex and fill 0.
+    # Reindex stats and fill 0
     stats = stats.reindex(cat_strings).fillna(0)
 
-    # Recalculate rates/dists for empty bins if needed (fillna 0 handles counts)
-    # But bad_rate needs calc
+    # Recalculate rates/dists for empty bins
     stats["bad_rate"] = stats["bad"] / stats["total"].replace(0, np.nan)
-    # If total is 0, bad_rate is NaN. fill with 0?
     stats["bad_rate"] = stats["bad_rate"].fillna(0)
 
-    # WOEEncoder calculates dist_bad and dist_good.
-    # It might use epsilon adjustment.
-    # The summary_ columns: total, bad, good, dist_good, dist_bad, woe, iv_contribution
-
     # 4. Format Labels
-    # We have the categories (Intervals).
     def format_interval(cat_str):
-        # We need to map back to Interval object or parse string?
-        # cat_strings corresponds to categories (Interval objects).
-        # We can map from index (string) back to Interval via dict?
-
-        # Simple parsing of string interval matching WOEEncoder's string conversion
-        # Interval str: "(-inf, 0.5]" or "(0.5, 10.0]"
-        # Regex to parse
+        # Regex to parse interval string
         m = re.match(r"[\[\(](.*), (.*)[\]\)]", str(cat_str))
         if not m:
             return str(cat_str)
@@ -136,78 +117,80 @@ def plot_binning(
             return str(cat_str)
 
     stats.index = stats.index.map(format_interval)
-
-    # 5. Plotting
-    fig = make_subplots(specs=[[{"secondary_y": True}]])
-
-    # Bar Chart (Histogram)
-    bar_y = stats[bar_mode] if bar_mode in stats.columns else stats["total"]
-
+    
+    # 5. Plotting with Seaborn/Matplotlib
+    # Set style temporarily? or use global defaults.
+    # We'll use object-oriented approach.
+    
+    fig, ax1 = plt.subplots(figsize=figsize)
+    
+    # Bar Chart Data
     bar_name_map = {
         "total": "Total Count",
         "bad": "Bad Count",
-        "dist_good": "Good Dist",  # WOEEncoder uses dist_good
+        "dist_good": "Good Dist",
         "dist_bad": "Bad Dist",
     }
-    # Map user bar_mode to WOEEncoder columns if different
-    # available: total, bad, good, dist_good, dist_bad, woe, iv_contribution
-    # user requested: 'total', 'bad', 'total_dist', 'bad_dist'
-
+    
     if bar_mode == "total_dist":
-        # Calculate manually if not in summary
         bar_y = stats["total"] / stats["total"].sum()
         bar_name = "Total %"
     elif bar_mode == "bad_dist":
-        bar_y = stats["dist_bad"]  # WOEEncoder has this
+        bar_y = stats["dist_bad"]
         bar_name = "Bad %"
     else:
         bar_y = stats.get(bar_mode, stats.get("total"))
         bar_name = bar_name_map.get(bar_mode, bar_mode)
 
-    fig.add_trace(
-        go.Bar(
-            x=stats.index,
-            y=bar_y,
-            name=bar_name,
-            marker_color="#636EFA",
-            opacity=0.6,
-            text=bar_y if bar_mode in ["total", "bad"] else [f"{v:.1%}" for v in bar_y],
-            textposition="auto",
-        ),
-        secondary_y=False,
+    # Bar Chart (Primary Axis)
+    sns.barplot(
+        x=stats.index, 
+        y=bar_y, 
+        ax=ax1, 
+        alpha=0.6, 
+        color="#636EFA",
+        label=bar_name
     )
+    
+    # Bar Labels
+    for i, v in enumerate(bar_y):
+        text = f"{v:.1%}" if bar_mode in ["total_dist", "bad_dist"] else f"{v:.0f}"
+        ax1.text(i, v, text, ha='center', va='bottom', fontsize=9)
 
-    # Line Chart (Bad Rate)
-    # Bad Rate calculation
-    # stats['bad_rate'] calculated above
-    fig.add_trace(
-        go.Scatter(
-            x=stats.index,
-            y=stats["bad_rate"],
-            name="Bad Rate",
-            mode="lines+markers+text",
-            line=dict(color="#EF553B", width=3),
-            text=[f"{v:.1%}" for v in stats["bad_rate"]],
-            textposition="top center",
-        ),
-        secondary_y=True,
+    ax1.set_ylabel(bar_name, color="#636EFA", fontsize=12)
+    ax1.set_xlabel("Bins", fontsize=12)
+    ax1.tick_params(axis='x', rotation=45)
+
+    # Line Chart (Secondary Axis - Bad Rate)
+    ax2 = ax1.twinx()
+    
+    sns.lineplot(
+        x=stats.index, 
+        y=stats["bad_rate"], 
+        ax=ax2, 
+        color="#EF553B",
+        marker="o",
+        linewidth=2,
+        label="Bad Rate"
     )
+    
+    # Line Labels
+    for i, v in enumerate(stats["bad_rate"]):
+        ax2.text(i, v, f"{v:.1%}", ha='center', va='bottom', color="#EF553B", fontsize=9, fontweight='bold')
 
-    # Layout
+    ax2.set_ylabel("Bad Rate", color="#EF553B", fontsize=12)
+    ax2.yaxis.set_major_formatter(plt.FuncFormatter(lambda y, _: '{:.0%}'.format(y)))
+    
+    # Clean up grid
+    ax2.grid(False) # Turn off secondary grid to avoid clutter
+    
+    # Title
     title_text = f"Binning Analysis: {feature}"
     if show_iv:
         title_text += f" (IV: {total_iv:.4f})"
-
-    fig.update_layout(
-        title=title_text,
-        xaxis_title="Bins",
-        legend=dict(x=0.5, y=1.1, orientation="h", xanchor="center"),
-        template="plotly_white",
-        hovermode="x unified",
-    )
-
-    # Axis formatting
-    fig.update_yaxes(title_text=bar_name, secondary_y=False)
-    fig.update_yaxes(title_text="Bad Rate", secondary_y=True, tickformat=".1%")
-
+    plt.title(title_text, fontsize=14, pad=20)
+    
+    # Layout adjustments
+    plt.tight_layout()
+    
     return fig

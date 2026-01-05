@@ -2,7 +2,13 @@ from typing import List, Optional
 
 import numpy as np
 import pandas as pd
+from scipy import stats
 from sklearn.tree import DecisionTreeClassifier
+
+try:
+    from optbinning import OptimalBinning
+except ImportError:
+    OptimalBinning = None
 
 from .base import BaseBinner
 
@@ -50,105 +56,257 @@ class DecisionTreeBinner(BaseBinner):
 
 class ChiMergeBinner(BaseBinner):
     """
-    Bins continuous data using ChiMerge algorithm (bottom-up merging).
+    Bins continuous data using Fast ChiMerge algorithm.
     """
 
     def __init__(
         self,
         n_bins: int = 5,
         force_monotonic: bool = False,
-        init_bins: int = 50,
-        confidence_level: float = 0.95,
+        alpha: float = 0.05,
+        min_samples: float = 0.05,
     ):
         super().__init__(n_bins=n_bins, force_monotonic=force_monotonic)
-        self.init_bins = init_bins
-        # Chi-square critical values (approximate or look up)
-        # For simplicity, we implement merging until n_bins is reached OR threshold met.
-        # User requested support for n_bins mainly?
-        # Usually ChiMerge stops when Chi2 > Threshold.
-        # Here we prioritize n_bins, but respect statistical difference if possible.
-        self.confidence_level = confidence_level
+        self.alpha = alpha
+        self.min_samples = min_samples
 
     def _fit_splits(self, X: pd.Series, y: Optional[pd.Series] = None) -> List[float]:
+        """
+        Fast ChiMerge Implementation.
+        """
         if y is None:
             raise ValueError("ChiMergeBinner requires target 'y'.")
 
-        # 1. Initial fine binning (Equal Frequency)
-        # We use strict quantiles to handle large data
-        try:
-            _, init_splits = pd.qcut(
-                X, q=self.init_bins, duplicates="drop", retbins=True
-            )
-            splits = list(init_splits[1:-1])
-        except Exception:
-            _, init_splits = pd.cut(X, bins=self.init_bins, retbins=True)
-            splits = list(init_splits[1:-1])
+        # 1. Prepare data
+        df = pd.DataFrame({"X": X, "y": y}).dropna()
+        X_arr = df["X"].values
+        y_arr = df["y"].values
 
-        if not splits:
+        if len(X_arr) == 0:
             return []
 
-        # 2. Iterative merging
-        while len(splits) + 1 > self.n_bins:
-            # Create current bins
-            bins = [-np.inf] + splits + [np.inf]
-            binned_X = pd.cut(X, bins=bins, include_lowest=True)
+        # 2. Sort
+        sort_idx = np.argsort(X_arr)
+        X_sorted = X_arr[sort_idx]
+        y_sorted = y_arr[sort_idx]
 
-            # Calculate counts
-            df = pd.DataFrame({"bin": binned_X, "target": y})
-            # Group by bin code/order to ensure adjacency
-            df["bin_code"] = df["bin"].cat.codes
+        # 3. Initial binning using unique values
+        unique_vals, counts = np.unique(X_sorted, return_counts=True)
+        
+        # Calculate event counts for each unique value
+        event_counts = []
+        start = 0
+        for count in counts:
+            end = start + count
+            event_counts.append(np.sum(y_sorted[start:end]))
+            start = end
+            
+        bins = list(zip(unique_vals, counts, event_counts))
 
-            grouped = df.groupby("bin_code", observed=False)["target"].agg(
-                ["count", "sum"]
-            )
-            grouped["bad"] = grouped["sum"]
-            grouped["good"] = grouped["count"] - grouped["bad"]
+        # 4. Merge Iterations
+        chi_squares = self._compute_chi_squares(bins)
+        max_bins = self.n_bins
 
-            if len(grouped) < 2:
+        # Threshold from user code logic:
+        # while len(bins) > max_bins AND min_chi < threshold
+        threshold = stats.chi2.ppf(1 - self.alpha, 1)
+
+        while len(bins) > max_bins:
+            if len(chi_squares) == 0:
                 break
+                
+            min_chi2 = np.min(chi_squares)
+            
+            # If we satisfy bin count but not threshold? 
+            # The user code had `while len > max AND min < thresh`.
+            # This means it stops if EITHER len <= max OR all chi >= thresh.
+            # But if we want exactly n_bins (or close to), we might want to continue merging 
+            # if we have too many bins, even if distinct?
+            # Usually ChiMerge stops when differences are significant.
+            # But here we treat n_bins as a hard constraint closer to 'max_bins'.
+            
+            # Let's strictly follow user logic:
+            if min_chi2 >= threshold and len(bins) <= max_bins:
+                break
+            
+            # If we have too many bins, we MUST merge, even if chi2 is high?
+            # The logic `while len > max and min < thresh` implies:
+            # If len > max but min >= thresh -> Stop. Result: More bins than max.
+            # This might be unexpected if user sets n_bins=5 and gets 50.
+            
+            # Let's modify to: Merge if (len > max) OR (min < thresh)
+            # Actually, typically we prioritize significant difference (threshold).
+            # But if we want to enforce n_bins, we should continue merging lowest chi2.
+            
+            # For BaseBinner 'n_bins', usually implies "approximate target".
+            # I will use: Merge until len <= max_bins. disregarding threshold if needed to reduce count?
+            # Or use user logic strictly?
+            # User Code: `while len(bins) > self.max_bins and np.min(chi_squares) < stats.chi2.ppf`
+            # This allows returning more bins than max_bins if they are all significant.
+            
+            if min_chi2 >= threshold:
+                 # If all adjacent bins are significantly different
+                 if len(bins) <= max_bins:
+                     break
+                 # If still too many bins, force merge the most similar one?
+                 # Standard ChiMerge implementations often stop here.
+                 # I'll stick to user logic: stop if significant.
+                 if len(chi_squares) > 0 and min_chi2 >= threshold:
+                     # Force merge if strictly required? User code stops.
+                     break
 
-            chi2_values = self._calculate_chi2_values(grouped)
+            min_idx = np.argmin(chi_squares)
+            bins = self._merge_bins(bins, min_idx)
+            chi_squares = self._compute_chi_squares(bins)
 
-            # Find min chi2 (most similar adjacent intervals)
-            min_chi2_idx = np.argmin(chi2_values)
-            splits.pop(min_chi2_idx)
+        # 5. Extract splits
+        # bins[i][0] is the value. 
+        # If we merged, the value is the representative (first one).
+        # We need the cut points. 
+        # For unique values v1, v2... cut point is usually (v1+v2)/2 or just v1.
+        # User code: `self.cut_points_ = np.array([b[0] for b in bins[:-1]])`
+        # This uses the value itself as cut point. 
+        # np.digitize(x, cuts) means: if x < cut[0] -> bin 0.
+        # So cuts should be upper bounds? or lower bounds?
+        # digitize: bins[i-1] <= x < bins[i] (if right=False default).
+        # user `np.digitize(X, cuts)`
+        # If cuts = [10, 20], x=5 -> 0. x=10 -> 1.
+        # So bins define the lower bound of the next bin.
+        # This implies splits are "Start of Bin 1, Start of Bin 2..."
+        # BaseBinner expects splits to be Upper Bounds of bins (for pd.cut).
+        # pd.cut(x, [-inf, s1, s2, inf]).
+        # If user code returns [b[0] for b in bins[:-1]], these are values in the bins.
+        # E.g. bins val: 10, 20, 30.
+        # splits: 10, 20.
+        # digitize puts <10 in 0. 10..19 in 1. >=20 in 2.
+        # So splits are Lower bounds of bin 1, bin 2...
+        
+        # We need Upper bounds for bin 0, bin 1...
+        # Upper bound of bin 0 is Lower bound of bin 1.
+        # So we can use the same values.
+        
+        # Taking [b[0] for b in bins[1:]] gives the start of next bin.
+        # This serves as Upper Bound for current bin (conceptually).
+        
+        # User code used `bins[:-1]` which is strange for digitize usually.
+        # If bins are [10, 20, 30]. digitize with [10, 20].
+        # x=5 (<10) -> 0.
+        # x=15 (>=10, <20) -> 1.
+        # x=25 (>=20) -> 2.
+        # So bin 0 is x < 10. Split 10 is upper bound of bin 0.
+        # Bin 0 representative was 10? No, 10 is rep of bin 1?
+        # User initialization: `bins = list(zip(unique_vals...))`
+        # Bin 0 has val unique_vals[0].
+        # If we return bins[:-1], we include unique_vals[0] as a split.
+        # If min val is 10. Split is 10.
+        # x=5 -> 0.
+        # x=10 -> 1.
+        # So <10 is bin 0. but min val is 10. So bin 0 is empty?
+        # Correct logic for BaseBinner:
+        # We want splits s1, s2... such that (-inf, s1], (s1, s2]...
+        # If unique vals are 10, 20, 30.
+        # Ideal splits: 15, 25.
+        # User logic seems to pick exact values.
+        # I will use (val_i + val_{i+1}) / 2 for cut points if possible,
+        # Or just use the start of the next bin as the split.
+        
+        if len(bins) < 2:
+            return []
+            
+        final_splits = []
+        for i in range(len(bins) - 1):
+             # Split should be betweeen bin i and bin i+1
+             # bin i val: bins[i][0]
+             # bin i+1 val: bins[i+1][0]
+             # simple avg
+             split = (bins[i][0] + bins[i+1][0]) / 2
+             final_splits.append(split)
+             
+        return final_splits
 
-        return splits
+    def _compute_chi_squares(self, bins):
+        if len(bins) < 2:
+            return np.array([])
+            
+        n_bins = len(bins)
+        chi_squares = np.zeros(n_bins - 1)
+        
+        for i in range(n_bins - 1):
+            n1, e1 = bins[i][1], bins[i][2]
+            n2, e2 = bins[i+1][1], bins[i+1][2]
+            
+            total_n = n1 + n2
+            total_e = e1 + e2
+            total_ne = total_n - total_e
+            
+            if total_n == 0:
+                chi_squares[i] = 0
+                continue
+                
+            e1_expected = n1 * total_e / total_n
+            e2_expected = n2 * total_e / total_n
+            ne1_expected = n1 * total_ne / total_n
+            ne2_expected = n2 * total_ne / total_n
+            
+            # Add eps to avoid div by zero
+            e1_expected = max(e1_expected, 1e-9)
+            e2_expected = max(e2_expected, 1e-9)
+            ne1_expected = max(ne1_expected, 1e-9)
+            ne2_expected = max(ne2_expected, 1e-9)
+            
+            chi2 = (
+                (abs(e1 - e1_expected) - 0.5)**2 / e1_expected +
+                (abs(e2 - e2_expected) - 0.5)**2 / e2_expected +
+                (abs(n1 - e1 - ne1_expected) - 0.5)**2 / ne1_expected +
+                (abs(n2 - e2 - ne2_expected) - 0.5)**2 / ne2_expected
+            )
+            chi_squares[i] = chi2
+            
+        return chi_squares
 
-    def _calculate_chi2_values(self, grouped: pd.DataFrame) -> List[float]:
-        """Calculate Chi2 values for all adjacent pairs."""
-        chi2_values = []
-        indices = grouped.index
-        for i in range(len(indices) - 1):
-            idx1, idx2 = indices[i], indices[i + 1]
-            bad1, good1 = grouped.loc[idx1, "bad"], grouped.loc[idx1, "good"]
-            bad2, good2 = grouped.loc[idx2, "bad"], grouped.loc[idx2, "good"]
+    def _merge_bins(self, bins, idx):
+        val1, n1, e1 = bins[idx]
+        val2, n2, e2 = bins[idx+1]
+        
+        merged = (val1, n1 + n2, e1 + e2)
+        new_bins = bins[:idx] + [merged] + bins[idx+2:]
+        return new_bins
 
-            total1 = bad1 + good1
-            total2 = bad2 + good2
 
-            if total1 == 0 or total2 == 0:
-                chi2 = 0
-            else:
-                total_bad = bad1 + bad2
-                total_good = good1 + good2
-                total_count = total1 + total2
+class OptBinningBinner(BaseBinner):
+    """
+    Bins using the OptBinning library.
+    """
+    def __init__(
+        self, 
+        n_bins: int = 5, 
+        force_monotonic: bool = False,
+        **kwargs
+    ):
+        super().__init__(n_bins=n_bins, force_monotonic=force_monotonic)
+        self.kwargs = kwargs
 
-                exp_bad1 = total_bad * (total1 / total_count)
-                exp_good1 = total_good * (total1 / total_count)
-                exp_bad2 = total_bad * (total2 / total_count)
-                exp_good2 = total_good * (total2 / total_count)
-
-                def safe_chi(obs, exp):
-                    if exp < 1e-6:
-                        return 0.0
-                    return (obs - exp) ** 2 / exp
-
-                chi2 = (
-                    safe_chi(bad1, exp_bad1)
-                    + safe_chi(good1, exp_good1)
-                    + safe_chi(bad2, exp_bad2)
-                    + safe_chi(good2, exp_good2)
-                )
-            chi2_values.append(chi2)
-        return chi2_values
+    def _fit_splits(self, X: pd.Series, y: Optional[pd.Series] = None) -> List[float]:
+        if OptimalBinning is None:
+            raise ImportError(
+                "optbinning is not installed. Please install it via `pip install optbinning`."
+            )
+        
+        if y is None:
+            raise ValueError("OptBinningBinner requires target 'y'.")
+            
+        # Prepare OptBinning
+        # Map n_bins to max_n_bins?
+        # OptBinning uses max_n_prebins, max_n_bins.
+        opt = OptimalBinning(
+            name="feature",
+            dtype="numerical",
+            max_n_bins=self.n_bins,
+            monotonic_trend="auto_asc_desc" if self.force_monotonic else "auto",
+            **self.kwargs
+        )
+        
+        opt.fit(X.values, y.values)
+        
+        # Get splits
+        return sorted(opt.splits.tolist())

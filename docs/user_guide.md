@@ -4,11 +4,12 @@ This guide covers the end-to-end workflow for feature engineering using `newt`, 
 
 ## 1. Feature Binning (分箱)
 
-The core class for binning is `newt.features.binning.Combiner`. It provides a unified interface for various binning algorithms.
+The core class for binning is `newt.Binner` (or `newt.features.binning.Binner`). It provides a unified interface for various binning algorithms.
 
 ### Supported Methods
 - `'chi'`: ChiMerge (Chi-square binning) - **Default**, supervised.
 - `'dt'`: Decision Tree binning - Supervised, finds optimal splits.
+- `'opt'`: OptBinning (Optimal Binning via Constraints) - Supervised, requires `optbinning`.
 - `'kmean'`: K-Means clustering - Unsupervised.
 - `'quantile'`: Equal frequency binning - Unsupervised.
 - `'step'`: Equal width binning - Unsupervised.
@@ -17,14 +18,14 @@ The core class for binning is `newt.features.binning.Combiner`. It provides a un
 
 ```python
 import pandas as pd
-from newt.features.binning import Combiner
+from newt import Binner
 
 # Load your data
 df = pd.read_csv('data.csv')
 target = 'target' # Binary target (0/1)
 
-# Initialize Combiner
-c = Combiner()
+# Initialize Binner
+c = Binner()
 
 # Fit binning model
 # Auto-selects numeric columns and bins them using ChiMerge
@@ -39,7 +40,7 @@ df_labels = c.transform(df, labels=True)
 
 ## 2. WOE & IV Analysis
 
-While the `Combiner` handles binning, the `WOEEncoder` handles Weight of Evidence (WOE) and Information Value (IV) calculation.
+While the `Binner` handles binning, the `WOEEncoder` handles Weight of Evidence (WOE) and Information Value (IV) calculation.
 *Note: The visualization module automatically calculates IV for you.*
 
 If you want to calculate WOE/IV programmatically:
@@ -47,7 +48,7 @@ If you want to calculate WOE/IV programmatically:
 ```python
 from newt.features.analysis.woe_calculator import WOEEncoder
 
-# Use the binned labels from Combiner
+# Use the binned labels from Binner
 encoder = WOEEncoder()
 encoder.fit(df_labels['feature_name'], df[target])
 
@@ -63,13 +64,13 @@ df_woe = encoder.transform(df_labels['feature_name'])
 
 ## 3. Binning Visualization (可视化)
 
-Use `plot_binning` to visualize the quality of your bins. It generates a combo chart (Histogram + Line) using Plotly.
+Use `plot_binning` to visualize the quality of your bins. It generates a combo chart (Histogram + Line) using Seaborn/Matplotlib.
 
 ```python
 from newt.visualization import plot_binning
 
 # Plot a specific feature
-# Requires the fitted Combiner 'c'
+# Requires the fitted Binner 'c'
 fig = plot_binning(
     combiner=c,
     data=df,
@@ -80,7 +81,9 @@ fig = plot_binning(
     show_iv=True           # Show IV in title
 )
 
-fig.show()
+# Display
+import matplotlib.pyplot as plt
+plt.show()
 ```
 **Charts:**
 - **Bar**: Sample distribution (Total count or Percentage).
@@ -92,7 +95,7 @@ fig.show()
 Sometimes automated binning isn't perfect (e.g., non-monotonic bad rates, business logic constraints). You can manually adjust the splits.
 
 ### Step 1: Export Rules
-Export the learned splits from the Combiner.
+Export the learned splits from the Binner.
 ```python
 rules = c.export()
 # Output example:
@@ -116,16 +119,17 @@ rules['age'] = [40.0, 55.0]
 Load the modified rules back into the Combiner (or a new one) and check the result.
 
 ```python
-# Update existing combiner
+# Update existing Binner
 c.load(rules)
 
 # Or create a new one
-c_adjusted = Combiner()
+c_adjusted = Binner()
 c_adjusted.load(rules)
 
 # Verify with visualization
 fig = plot_binning(c_adjusted, df, 'age', target)
-fig.show()
+import matplotlib.pyplot as plt
+plt.show()
 ```
 
 ## 5. Deployment / Pipeline
@@ -143,9 +147,9 @@ with open('binning_rules.json', 'w') as f:
 with open('binning_rules.json', 'r') as f:
     rules = json.load(f)
 
-production_combiner = Combiner()
-production_combiner.load(rules)
+production_binner = Binner()
+production_binner.load(rules)
 
 # Transform new data
-df_new_binned = production_combiner.transform(df_new)
+df_new_binned = production_binner.transform(df_new)
 ```

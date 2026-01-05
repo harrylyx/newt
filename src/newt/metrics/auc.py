@@ -4,7 +4,9 @@ from typing import Union
 
 
 def calculate_auc(
-    y_true: Union[np.ndarray, list], y_prob: Union[np.ndarray, list]
+    y_true: Union[np.ndarray, list],
+    y_prob: Union[np.ndarray, list],
+    sample_weight: Union[np.ndarray, list, None] = None,
 ) -> float:
     """
     Calculate Area Under the ROC Curve (AUC).
@@ -12,12 +14,13 @@ def calculate_auc(
     Args:
         y_true: True binary labels.
         y_prob: Predicted probabilities.
+        sample_weight: Optional sample weights.
 
     Returns:
         float: AUC score.
     """
     try:
-        return float(roc_auc_score(y_true, y_prob))
+        return float(roc_auc_score(y_true, y_prob, sample_weight=sample_weight))
     except Exception as e:
         import warnings
 

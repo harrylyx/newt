@@ -2,44 +2,32 @@ import numpy as np
 from typing import Union
 
 
+from sklearn.metrics import roc_curve
+
+
 def calculate_ks(
-    y_true: Union[np.ndarray, list], y_prob: Union[np.ndarray, list]
+    y_true: Union[np.ndarray, list],
+    y_prob: Union[np.ndarray, list],
+    sample_weight: Union[np.ndarray, list, None] = None,
 ) -> float:
     """
-    Calculate the Kolmogorov-Smirnov (KS) statistic using efficient sorting.
+    Calculate the Kolmogorov-Smirnov (KS) statistic.
+    Uses roc_curve to handle weighted calculation efficiently.
 
     Args:
         y_true: True binary labels (0 or 1).
         y_prob: Predicted probabilities.
+        sample_weight: Optional sample weights.
 
     Returns:
         float: KS statistic.
     """
     try:
-        y_true = np.asarray(y_true)
-        y_prob = np.asarray(y_prob)
+        # roc_curve returns thresholds in descending order
+        fpr, tpr, _ = roc_curve(y_true, y_prob, sample_weight=sample_weight)
 
-        # Sort by probability descending
-        idx = np.argsort(y_prob)[::-1]
-        y_true_sorted = y_true[idx]
-
-        # Cumulative sum of positives and negatives
-        cumsum_pos = np.cumsum(y_true_sorted)
-        cumsum_neg = np.cumsum(1 - y_true_sorted)
-
-        # Calculate TPR and FPR
-        # Handle division by zero if no positives or no negatives
-        total_pos = cumsum_pos[-1]
-        total_neg = cumsum_neg[-1]
-
-        if total_pos == 0 or total_neg == 0:
-            return 0.0  # Or nan? Standard KS is 0 if one class missing or undefined.
-
-        tpr = cumsum_pos / total_pos
-        fpr = cumsum_neg / total_neg
-
-        # KS is max difference
-        return np.max(tpr - fpr)
+        # KS is max difference between TPR and FPR
+        return float(np.max(np.abs(tpr - fpr)))
 
     except Exception as e:
         import warnings

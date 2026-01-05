@@ -10,5 +10,5 @@ __all__ = [
     "calculate_lift",
     "calculate_lift_at_k",
     "calculate_psi",
-    "calculate_gini"
+    "calculate_gini",
 ]

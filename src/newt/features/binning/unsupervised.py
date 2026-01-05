@@ -1,7 +1,8 @@
-import pandas as pd
-
 from typing import List, Optional
+
+import pandas as pd
 from sklearn.cluster import KMeans
+
 from .base import BaseBinner
 
 
@@ -10,9 +11,7 @@ class EqualWidthBinner(BaseBinner):
     Bins continuous data into intervals of equal size (width).
     """
 
-    def _fit_splits(
-        self, X: pd.Series, y: Optional[pd.Series] = None
-    ) -> List[float]:
+    def _fit_splits(self, X: pd.Series, y: Optional[pd.Series] = None) -> List[float]:
         # Use pd.cut with retbins to get splits including edges
         _, bins = pd.cut(X, bins=self.n_bins, retbins=True)
         # bins includes min and max. We only need internal splits.
@@ -30,14 +29,10 @@ class EqualFrequencyBinner(BaseBinner):
     Bins continuous data into intervals with equal number of samples (quantiles).
     """
 
-    def _fit_splits(
-        self, X: pd.Series, y: Optional[pd.Series] = None
-    ) -> List[float]:
+    def _fit_splits(self, X: pd.Series, y: Optional[pd.Series] = None) -> List[float]:
         # Use pd.qcut
         try:
-            _, bins = pd.qcut(
-                X, q=self.n_bins, duplicates="drop", retbins=True
-            )
+            _, bins = pd.qcut(X, q=self.n_bins, duplicates="drop", retbins=True)
         except Exception:
             # Fallback to cut if qcut fails (e.g. all same values)
             _, bins = pd.cut(X, bins=self.n_bins, retbins=True)
@@ -54,9 +49,7 @@ class KMeansBinner(BaseBinner):
     Usually KMeans binning uses the boundaries between clusters.
     """
 
-    def _fit_splits(
-        self, X: pd.Series, y: Optional[pd.Series] = None
-    ) -> List[float]:
+    def _fit_splits(self, X: pd.Series, y: Optional[pd.Series] = None) -> List[float]:
         # Reshape for sklearn
         mask = ~X.isna()
         X_clean = X[mask].values.reshape(-1, 1)
@@ -70,7 +63,5 @@ class KMeansBinner(BaseBinner):
 
         # The splits are usually defined as the midpoints between cluster centers.
         centers = sorted(kmeans.cluster_centers_.flatten())
-        splits = [
-            (centers[i] + centers[i + 1]) / 2 for i in range(len(centers) - 1)
-        ]
+        splits = [(centers[i] + centers[i + 1]) / 2 for i in range(len(centers) - 1)]
         return splits

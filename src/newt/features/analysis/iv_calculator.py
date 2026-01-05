@@ -1,6 +1,7 @@
+from typing import Dict, Union
+
 import pandas as pd
 
-from typing import Union, Dict
 from .woe_calculator import WOEEncoder
 
 

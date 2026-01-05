@@ -1,7 +1,9 @@
-import pandas as pd
-import numpy as np
 from typing import List, Optional
+
+import numpy as np
+import pandas as pd
 from sklearn.tree import DecisionTreeClassifier
+
 from .base import BaseBinner
 
 
@@ -19,9 +21,7 @@ class DecisionTreeBinner(BaseBinner):
         super().__init__(n_bins=n_bins, force_monotonic=force_monotonic)
         self.min_samples_leaf = min_samples_leaf
 
-    def _fit_splits(
-        self, X: pd.Series, y: Optional[pd.Series] = None
-    ) -> List[float]:
+    def _fit_splits(self, X: pd.Series, y: Optional[pd.Series] = None) -> List[float]:
         if y is None:
             raise ValueError("DecisionTreeBinner requires target 'y'.")
 
@@ -69,9 +69,7 @@ class ChiMergeBinner(BaseBinner):
         # Here we prioritize n_bins, but respect statistical difference if possible.
         self.confidence_level = confidence_level
 
-    def _fit_splits(
-        self, X: pd.Series, y: Optional[pd.Series] = None
-    ) -> List[float]:
+    def _fit_splits(self, X: pd.Series, y: Optional[pd.Series] = None) -> List[float]:
         if y is None:
             raise ValueError("ChiMergeBinner requires target 'y'.")
 

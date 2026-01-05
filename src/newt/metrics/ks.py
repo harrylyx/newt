@@ -1,7 +1,6 @@
-import numpy as np
 from typing import Union
 
-
+import numpy as np
 from sklearn.metrics import roc_curve
 
 

@@ -1,12 +1,12 @@
-import pytest
 import numpy as np
 import pandas as pd
+import pytest
 
-from src.newt.metrics.ks import calculate_ks
 from src.newt.metrics.auc import calculate_auc
+from src.newt.metrics.gini import calculate_gini
+from src.newt.metrics.ks import calculate_ks
 from src.newt.metrics.lift import calculate_lift
 from src.newt.metrics.psi import calculate_psi
-from src.newt.metrics.gini import calculate_gini
 
 
 # Use the fixture defined in conftest.py
@@ -99,9 +99,7 @@ def test_ks_edge_cases():
 
 def test_lift_bins():
     y_true = np.zeros(100)
-    y_true[-20:] = (
-        1  # 20% event rate (indices 80-99), correlated with high prob
-    )
+    y_true[-20:] = 1  # 20% event rate (indices 80-99), correlated with high prob
     y_prob = np.linspace(0, 1, 100)  # perfectly correlated
 
     # With 10 bins, 10 samples per bin.

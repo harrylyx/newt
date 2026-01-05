@@ -1,9 +1,11 @@
-import pandas as pd
+from typing import Dict, List, Optional, Union
+
 import numpy as np
-from typing import Dict, List, Optional, Union, Any
+import pandas as pd
+
 from .base import BaseBinner
 from .supervised import ChiMergeBinner, DecisionTreeBinner
-from .unsupervised import EqualWidthBinner, EqualFrequencyBinner, KMeansBinner
+from .unsupervised import EqualFrequencyBinner, EqualWidthBinner, KMeansBinner
 
 
 class Combiner:
@@ -49,14 +51,15 @@ class Combiner:
         min_samples : int, float
             Minimum samples per leaf (for decision tree).
         empty_separate : bool
-            Whether to separate empty values - Not implemented yet (handled by pd.cut usually).
+            Whether to separate empty values - Not implemented yet
+            (handled by pd.cut usually).
         exclude : List[str]
             Columns to exclude.
         """
         if isinstance(y, str):
             y = X[y]
             if y.name in X.columns:
-                 X = X.drop(columns=[y.name])
+                X = X.drop(columns=[y.name])
 
         if exclude:
             X = X.drop(columns=exclude, errors="ignore")
@@ -72,13 +75,13 @@ class Combiner:
             # Instantiate binner
             # Adjust params based on method
             kwargs = {"n_bins": n_bins}
-            
+
             # Specific params
             if method == "dt" and min_samples is not None:
                 kwargs["min_samples_leaf"] = min_samples
 
             binner = binner_cls(**kwargs)
-            
+
             # Fit
             try:
                 binner.fit(X[col], y)
@@ -90,9 +93,7 @@ class Combiner:
 
         return self
 
-    def transform(
-        self, X: pd.DataFrame, labels: bool = False
-    ) -> pd.DataFrame:
+    def transform(self, X: pd.DataFrame, labels: bool = False) -> pd.DataFrame:
         """
         Apply binning rules to the data.
 
@@ -114,14 +115,14 @@ class Combiner:
             if col in X_new.columns:
                 # BaseBinner.transform returns Categorical (Intervals)
                 binned = binner.transform(X[col])
-                
+
                 if labels:
                     # Convert to string or keep as interval
                     X_new[col] = binned.astype(str)
                 else:
                     # Return codes
                     X_new[col] = binned.cat.codes
-        
+
         return X_new
 
     def export(self) -> Dict[str, List[float]]:
@@ -132,13 +133,13 @@ class Combiner:
         """Load binning rules manually."""
         self.rules_ = rules
         self.binners_ = {}
-        
+
         # We need to reconstruct binners to use them for transform
         # We can use BaseBinner with set_splits
         # But we don't know the method used. It doesn't matter for transform,
         # as long as we have splits.
         # We can default to any Binner, or simple BaseBinner wrapper.
-        
+
         # We'll use EqualWidthBinner as a generic container since it inherits BaseBinner
         # and doesn't enforce strict logic on transform other than splits.
         for col, splits in rules.items():

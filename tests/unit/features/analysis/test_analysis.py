@@ -1,15 +1,16 @@
-import pytest
-import pandas as pd
 import numpy as np
+import pandas as pd
+import pytest
+
 from src.newt.features.analysis.correlation import (
     calculate_correlation_matrix,
     get_high_correlation_pairs,
 )
 from src.newt.features.analysis.iv_calculator import calculate_iv
 from src.newt.features.analysis.woe_calculator import (
-    calculate_woe_mapping,
-    apply_woe_transform,
     WOEEncoder,
+    apply_woe_transform,
+    calculate_woe_mapping,
 )
 
 
@@ -143,9 +144,7 @@ def test_woe_encoder_class(analysis_data):
     # Use raw numeric column, encoder should handle binning using stored bins
     transformed = encoder.transform(df["x1"])
     assert len(transformed) == len(df)
-    assert transformed.dtype == float or np.issubdtype(
-        transformed.dtype, np.number
-    )
+    assert transformed.dtype == float or np.issubdtype(transformed.dtype, np.number)
 
     # Check consistency
     # Transform on same data should yield values present in woe_map_

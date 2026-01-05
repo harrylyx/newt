@@ -1,9 +1,9 @@
-
 import numpy as np
 from sklearn.metrics import roc_auc_score, roc_curve
+
 from src.newt.metrics.auc import calculate_auc
-from src.newt.metrics.ks import calculate_ks
 from src.newt.metrics.gini import calculate_gini
+from src.newt.metrics.ks import calculate_ks
 
 
 def test_weighted_auc():

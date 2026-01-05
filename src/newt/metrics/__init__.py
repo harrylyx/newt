@@ -1,8 +1,8 @@
-from .ks import calculate_ks
 from .auc import calculate_auc
+from .gini import calculate_gini
+from .ks import calculate_ks
 from .lift import calculate_lift, calculate_lift_at_k
 from .psi import calculate_psi
-from .gini import calculate_gini
 
 __all__ = [
     "calculate_ks",

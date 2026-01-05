@@ -1,10 +1,10 @@
-from .woe_calculator import (
-    WOEEncoder,
-    calculate_woe_mapping,
-    apply_woe_transform,
-)  # noqa: F401
-from .correlation import (
+from .correlation import (  # noqa: F401
     calculate_correlation_matrix,
     get_high_correlation_pairs,
-)  # noqa: F401
+)
 from .iv_calculator import calculate_iv  # noqa: F401
+from .woe_calculator import (  # noqa: F401
+    WOEEncoder,
+    apply_woe_transform,
+    calculate_woe_mapping,
+)

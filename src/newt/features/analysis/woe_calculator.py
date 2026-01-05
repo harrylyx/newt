@@ -1,6 +1,7 @@
-import pandas as pd
+from typing import Any, Dict, Optional
+
 import numpy as np
-from typing import Dict, Any, Optional
+import pandas as pd
 
 
 class WOEEncoder:
@@ -54,9 +55,7 @@ class WOEEncoder:
         df = pd.DataFrame({"bin": X_binned, "target": y})
 
         # Calculate Good/Bad stats
-        grouped = df.groupby("bin", observed=True)["target"].agg(
-            ["count", "sum"]
-        )
+        grouped = df.groupby("bin", observed=True)["target"].agg(["count", "sum"])
         grouped = grouped.rename(columns={"count": "total", "sum": "bad"})
         grouped["good"] = grouped["total"] - grouped["bad"]
 
@@ -110,9 +109,7 @@ class WOEEncoder:
             X_binned = pd.cut(X, bins=self.bins_, include_lowest=True)
         else:
             # Categorical - direct map
-            if (
-                self.is_numeric_
-            ):  # Was numeric but low cardinality treated as cat
+            if self.is_numeric_:  # Was numeric but low cardinality treated as cat
                 X_binned = X.astype(
                     str
                 )  # wait, fit converted low card num to str? Yes line 45.
@@ -160,9 +157,7 @@ def calculate_woe_mapping(
     epsilon: float = 1e-8,
 ) -> Dict[Any, float]:
     """Wrapper using WOEEncoder for backward compatibility."""
-    encoder = WOEEncoder(
-        buckets=bins if isinstance(bins, int) else 10, epsilon=epsilon
-    )
+    encoder = WOEEncoder(buckets=bins if isinstance(bins, int) else 10, epsilon=epsilon)
     encoder.fit(df[feature], df[target])
     return encoder.woe_map_
 

@@ -1,6 +1,7 @@
+from typing import Union
+
 import numpy as np
 import pandas as pd
-from typing import Union
 
 
 def calculate_lift(
@@ -27,9 +28,7 @@ def calculate_lift(
         data = pd.DataFrame({"true": y_true, "prob": y_prob})
 
         # Create bins using qcut
-        data["bin"] = pd.qcut(
-            data["prob"], q=bins, duplicates="drop", labels=False
-        )
+        data["bin"] = pd.qcut(data["prob"], q=bins, duplicates="drop", labels=False)
 
         # If bins are collapsed due to duplicates, we might have fewer bins.
         # Reverse bin labels so 0 is highest probability (top decile) if preferred,
@@ -43,9 +42,7 @@ def calculate_lift(
         )
 
         agg.columns = ["min_prob", "max_prob", "count", "events"]
-        agg = agg.sort_index(
-            ascending=False
-        ).reset_index()  # Highest prob first
+        agg = agg.sort_index(ascending=False).reset_index()  # Highest prob first
 
         global_event_rate = y_true.sum() / len(y_true)
         agg["event_rate"] = agg["events"] / agg["count"]

@@ -1,13 +1,14 @@
-import pytest
-import pandas as pd
 import numpy as np
-from src.newt.features.binning.unsupervised import (
-    EqualWidthBinner,
-    EqualFrequencyBinner,
-)
+import pandas as pd
+import pytest
+
 from src.newt.features.binning.supervised import (
-    DecisionTreeBinner,
     ChiMergeBinner,
+    DecisionTreeBinner,
+)
+from src.newt.features.binning.unsupervised import (
+    EqualFrequencyBinner,
+    EqualWidthBinner,
 )
 
 

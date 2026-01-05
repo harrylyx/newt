@@ -1,7 +1,8 @@
-import pandas as pd
-import numpy as np
-from typing import List, Optional
 from abc import ABC, abstractmethod
+from typing import List, Optional
+
+import numpy as np
+import pandas as pd
 
 
 class BaseBinner(ABC):
@@ -17,9 +18,7 @@ class BaseBinner(ABC):
         self.is_fitted_ = False
 
     @abstractmethod
-    def _fit_splits(
-        self, X: pd.Series, y: Optional[pd.Series] = None
-    ) -> List[float]:
+    def _fit_splits(self, X: pd.Series, y: Optional[pd.Series] = None) -> List[float]:
         """Calculate initial splits."""
         pass
 

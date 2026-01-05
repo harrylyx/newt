@@ -1,6 +1,7 @@
-import pandas as pd
+from typing import Dict, List, Union  # noqa: F401
+
 import numpy as np  # noqa: F401
-from typing import Union, List, Dict  # noqa: F401
+import pandas as pd
 
 
 def calculate_correlation_matrix(
@@ -55,9 +56,7 @@ def get_high_correlation_pairs(
     high_corr = pairs[pairs.abs() >= threshold]
 
     for (var1, var2), val in high_corr.items():
-        high_corr_pairs.append(
-            {"var1": var1, "var2": var2, "correlation": float(val)}
-        )
+        high_corr_pairs.append({"var1": var1, "var2": var2, "correlation": float(val)})
 
     # Sort by absolute correlation descending
     high_corr_pairs.sort(key=lambda x: abs(x["correlation"]), reverse=True)

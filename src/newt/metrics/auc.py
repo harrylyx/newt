@@ -1,6 +1,7 @@
+from typing import Union
+
 import numpy as np
 from sklearn.metrics import roc_auc_score
-from typing import Union
 
 
 def calculate_auc(

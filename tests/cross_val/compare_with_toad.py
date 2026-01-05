@@ -1,6 +1,7 @@
-import pandas as pd
 import numpy as np
+import pandas as pd
 import toad
+
 from src.newt.features.analysis.iv_calculator import calculate_iv
 from src.newt.features.binning.supervised import ChiMergeBinner
 
@@ -45,9 +46,7 @@ def compare_iv(df):
     # 2. Newt IV
     features = [c for c in df.columns if c != "target"]
 
-    print(
-        f"{'Feature':<20} | {'Toad IV':<10} | {'Newt IV':<10} | {'Diff':<10}"
-    )
+    print(f"{'Feature':<20} | {'Toad IV':<10} | {'Newt IV':<10} | {'Diff':<10}")
     print("-" * 60)
 
     match_count = 0
@@ -63,9 +62,7 @@ def compare_iv(df):
             toad_val = toad_iv_dict.get(feat, np.nan)
 
             diff = abs(newt_val - toad_val)
-            print(
-                f"{feat:<20} | {toad_val:.4f}     | {newt_val:.4f}     | {diff:.4f}"
-            )
+            print(f"{feat:<20} | {toad_val:.4f}     | {newt_val:.4f}     | {diff:.4f}")
 
             # Allow some difference due to binning strategies
             # Toad quality default likely uses Chi or DT or just quantiles?
@@ -112,9 +109,7 @@ def compare_binning(df):
 
 
 def run():
-    path = (
-        "d:/Project/newt/examples/data/statlog+german+credit+data/german.data"
-    )
+    path = "d:/Project/newt/examples/data/statlog+german+credit+data/german.data"
     df = load_german_data(path)
 
     iv_score = compare_iv(df)

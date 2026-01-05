@@ -1,6 +1,7 @@
 import pandas as pd
 
 from typing import List, Optional
+from sklearn.cluster import KMeans
 from .base import BaseBinner
 
 
@@ -44,3 +45,32 @@ class EqualFrequencyBinner(BaseBinner):
         if len(bins) <= 2:
             return []
         return list(bins[1:-1])
+
+
+class KMeansBinner(BaseBinner):
+    """
+    Bins continuous data using K-Means clustering.
+    Center of clusters are used to define bins?
+    Usually KMeans binning uses the boundaries between clusters.
+    """
+
+    def _fit_splits(
+        self, X: pd.Series, y: Optional[pd.Series] = None
+    ) -> List[float]:
+        # Reshape for sklearn
+        mask = ~X.isna()
+        X_clean = X[mask].values.reshape(-1, 1)
+
+        if len(X_clean) < self.n_bins:
+            # Not enough data
+            return []
+
+        kmeans = KMeans(n_clusters=self.n_bins, random_state=42, n_init=10)
+        kmeans.fit(X_clean)
+
+        # The splits are usually defined as the midpoints between cluster centers.
+        centers = sorted(kmeans.cluster_centers_.flatten())
+        splits = [
+            (centers[i] + centers[i + 1]) / 2 for i in range(len(centers) - 1)
+        ]
+        return splits

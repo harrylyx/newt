@@ -117,13 +117,13 @@ def plot_binning(
             return str(cat_str)
 
     stats.index = stats.index.map(format_interval)
-    
+
     # 5. Plotting with Seaborn/Matplotlib
     # Set style temporarily? or use global defaults.
     # We'll use object-oriented approach.
-    
+
     fig, ax1 = plt.subplots(figsize=figsize)
-    
+
     # Bar Chart Data
     bar_name_map = {
         "total": "Total Count",
@@ -131,7 +131,7 @@ def plot_binning(
         "dist_good": "Good Dist",
         "dist_bad": "Bad Dist",
     }
-    
+
     if bar_mode == "total_dist":
         bar_y = stats["total"] / stats["total"].sum()
         bar_name = "Total %"
@@ -144,53 +144,57 @@ def plot_binning(
 
     # Bar Chart (Primary Axis)
     sns.barplot(
-        x=stats.index, 
-        y=bar_y, 
-        ax=ax1, 
-        alpha=0.6, 
-        color="#636EFA",
-        label=bar_name
+        x=stats.index, y=bar_y, ax=ax1, alpha=0.6, color="#636EFA", label=bar_name
     )
-    
+
     # Bar Labels
     for i, v in enumerate(bar_y):
         text = f"{v:.1%}" if bar_mode in ["total_dist", "bad_dist"] else f"{v:.0f}"
-        ax1.text(i, v, text, ha='center', va='bottom', fontsize=9)
+        ax1.text(i, v, text, ha="center", va="bottom", fontsize=9)
 
     ax1.set_ylabel(bar_name, color="#636EFA", fontsize=12)
     ax1.set_xlabel("Bins", fontsize=12)
-    ax1.tick_params(axis='x', rotation=45)
+    ax1.tick_params(axis="x", rotation=45)
 
     # Line Chart (Secondary Axis - Bad Rate)
     ax2 = ax1.twinx()
-    
+
     sns.lineplot(
-        x=stats.index, 
-        y=stats["bad_rate"], 
-        ax=ax2, 
+        x=stats.index,
+        y=stats["bad_rate"],
+        ax=ax2,
         color="#EF553B",
         marker="o",
         linewidth=2,
-        label="Bad Rate"
+        label="Bad Rate",
     )
-    
+
     # Line Labels
     for i, v in enumerate(stats["bad_rate"]):
-        ax2.text(i, v, f"{v:.1%}", ha='center', va='bottom', color="#EF553B", fontsize=9, fontweight='bold')
+        ax2.text(
+            i,
+            v,
+            f"{v:.1%}",
+            ha="center",
+            va="bottom",
+            color="#EF553B",
+            fontsize=9,
+            fontweight="bold",
+        )
 
     ax2.set_ylabel("Bad Rate", color="#EF553B", fontsize=12)
-    ax2.yaxis.set_major_formatter(plt.FuncFormatter(lambda y, _: '{:.0%}'.format(y)))
-    
+    ax2.yaxis.set_major_formatter(plt.FuncFormatter(lambda y, _: "{:.0%}".format(y)))
+
     # Clean up grid
-    ax2.grid(False) # Turn off secondary grid to avoid clutter
-    
+    ax2.grid(False)  # Turn off secondary grid to avoid clutter
+
     # Title
     title_text = f"Binning Analysis: {feature}"
     if show_iv:
         title_text += f" (IV: {total_iv:.4f})"
     plt.title(title_text, fontsize=14, pad=20)
-    
+
     # Layout adjustments
     plt.tight_layout()
-    
+
     return fig

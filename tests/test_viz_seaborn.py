@@ -1,44 +1,48 @@
-import pandas as pd
-import numpy as np
-import sys
 import os
+import sys
+
 import matplotlib.figure
-import matplotlib.pyplot as plt
+
+import numpy as np
+import pandas as pd
 
 # Add src to path
-sys.path.append(os.path.abspath('src'))
+sys.path.append(os.path.abspath("src"))
 
-from newt import Binner
-from newt.visualization import plot_binning
+from newt import Binner  # noqa: E402
+from newt.visualization import plot_binning  # noqa: E402
+
 
 def test_viz_seaborn():
     # Generate synthetic data
     np.random.seed(42)
     N = 1000
-    X = pd.DataFrame({
-        'score': np.random.normal(0, 1, N),
-    })
+    X = pd.DataFrame(
+        {
+            "score": np.random.normal(0, 1, N),
+        }
+    )
     # Target related to score
-    y_prob = 1 / (1 + np.exp(-(X['score'] * 0.5 + np.random.normal(0, 0.5, N))))
+    y_prob = 1 / (1 + np.exp(-(X["score"] * 0.5 + np.random.normal(0, 0.5, N))))
     y = (y_prob > 0.5).astype(int)
-    X['target'] = y
-    
+    X["target"] = y
+
     # 1. Fit Binner
     c = Binner()
-    c.fit(X, y='target', method='chi', n_bins=5)
-    
+    c.fit(X, y="target", method="chi", n_bins=5)
+
     # 2. Plot
     print("Generating plot...")
     try:
         fig = plot_binning(
             combiner=c,
             data=X,
-            feature='score',
-            target='target',
+            feature="score",
+            target="target",
             decimals=3,
-            bar_mode='total_dist'
+            bar_mode="total_dist",
         )
-        
+
         # Verify type
         if isinstance(fig, matplotlib.figure.Figure):
             print("Success: Return type is matplotlib.figure.Figure")
@@ -47,14 +51,16 @@ def test_viz_seaborn():
             return
 
         # Save to PNG
-        output_file = 'test_seaborn_plot.png'
+        output_file = "test_seaborn_plot.png"
         fig.savefig(output_file)
         print(f"Plot saved to {output_file}")
-        
+
     except Exception as e:
         print(f"Error during plotting: {e}")
         import traceback
+
         traceback.print_exc()
+
 
 if __name__ == "__main__":
     test_viz_seaborn()

@@ -2,13 +2,11 @@ import pytest
 import numpy as np
 import pandas as pd
 from unittest import mock
-from src.credit_risk.metrics import (
-    calculate_ks,
-    calculate_auc,
-    calculate_lift,
-    calculate_psi,
-    calculate_gini
-)
+from src.newt.metrics.ks import calculate_ks
+from src.newt.metrics.auc import calculate_auc
+from src.newt.metrics.lift import calculate_lift
+from src.newt.metrics.psi import calculate_psi
+from src.newt.metrics.gini import calculate_gini
 
 # Use the fixture defined in conftest.py
 @pytest.fixture

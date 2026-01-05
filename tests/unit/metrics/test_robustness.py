@@ -1,15 +1,13 @@
+```python
 
 import pytest
 import numpy as np
 import pandas as pd
-from src.credit_risk.metrics import (
-    calculate_auc,
-    calculate_gini,
-    calculate_ks,
-    calculate_lift,
-    calculate_psi,
-    calculate_lift_at_k
-)
+from src.newt.metrics.psi import calculate_psi
+from src.newt.metrics.ks import calculate_ks
+from src.newt.metrics.lift import calculate_lift, calculate_lift_at_k
+from src.newt.metrics.auc import calculate_auc
+from src.newt.metrics.gini import calculate_gini
 
 def test_psi_nan_bucket():
     # Case 1: NaNs in expected and actual. specific pattern.

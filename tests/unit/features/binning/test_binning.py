@@ -2,8 +2,8 @@
 import pytest
 import pandas as pd
 import numpy as np
-from src.credit_risk.features.binning.unsupervised import EqualWidthBinner, EqualFrequencyBinner
-from src.credit_risk.features.binning.supervised import DecisionTreeBinner, ChiMergeBinner
+from src.newt.features.binning.unsupervised import EqualWidthBinner, EqualFrequencyBinner
+from src.newt.features.binning.supervised import DecisionTreeBinner, ChiMergeBinner
 
 @pytest.fixture
 def binning_data():

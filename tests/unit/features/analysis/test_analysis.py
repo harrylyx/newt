@@ -2,9 +2,9 @@
 import pytest
 import pandas as pd
 import numpy as np
-from src.credit_risk.features.analysis.correlation import calculate_correlation_matrix, get_high_correlation_pairs
-from src.credit_risk.features.analysis.iv_calculator import calculate_iv
-from src.credit_risk.features.analysis.woe_calculator import calculate_woe_mapping, apply_woe_transform, WOEEncoder
+from src.newt.features.analysis.correlation import calculate_correlation_matrix, get_high_correlation_pairs
+from src.newt.features.analysis.iv_calculator import calculate_iv
+from src.newt.features.analysis.woe_calculator import calculate_woe_mapping, apply_woe_transform, WOEEncoder
 
 @pytest.fixture
 def analysis_data():

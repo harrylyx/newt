@@ -1,6 +1,6 @@
 import pandas as pd
 import numpy as np
-from typing import List, Union, Optional, Tuple
+from typing import List, Optional
 from abc import ABC, abstractmethod
 
 
@@ -102,7 +102,7 @@ class BaseBinner(ABC):
             # If correlation is low, we might be far from monotonic.
 
             # Identify violation
-            # For simplicity, we just check if sorted(rates) == rates (asc) or sorted(rates, rev) == rates (desc)
+            # For simplicity, we just check if sorted(rates) == rates.
             is_increasing = np.all(np.diff(rates) >= 0)
             is_decreasing = np.all(np.diff(rates) <= 0)
 
@@ -110,13 +110,12 @@ class BaseBinner(ABC):
                 break  # Satisfied
 
             # Not monotonic. Find the pair causing violation (simplest heuristic)
-            # We need to decide direction. Usually determined by overall trend (first vs last, or correlation).
+            # We need to decide direction. Usually determined by overall trend.
             # Let's use correlation with bin index to decide intended direction.
             # Assuming bin index 0..N
             # If target vs X is positive corr, we want increasing rates.
-            import scipy.stats
 
-            # corr, _ = scipy.stats.spearmanr(np.arange(len(rates)), rates) # Deprecated input
+            # corr, _ = scipy.stats.spearmanr(...) # Deprecated input
             # Use X vs y correlation?
             # Let's assume direction from first and last bin comparison
             direction = 1 if rates[-1] > rates[0] else -1
@@ -142,7 +141,7 @@ class BaseBinner(ABC):
                 # rates[i] corresponds to (si-1, si]
                 # violation at i means bin i and bin i+1 need merge.
                 # bin i: boundary at index i (in splits list).
-                # Wait, splits[i] is the UPPER bound of bin i (if 0-indexed matches splits)
+                # Wait, splits[i] is the UPPER bound of bin i (if 0-indexed).
                 # bins: -inf (idx -1), split0 (idx 0), split1 (idx 1)...
                 # bin 0 uses split0 as upper.
                 # bin i uses split_i as upper.

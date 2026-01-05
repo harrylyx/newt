@@ -98,7 +98,6 @@ class ChiMergeBinner(BaseBinner):
             # Calculate counts
             df = pd.DataFrame({"bin": binned_X, "target": y})
             # Group by bin code/order to ensure adjacency
-            # Cat codes are 0..N-1
             df["bin_code"] = df["bin"].cat.codes
 
             grouped = df.groupby("bin_code", observed=False)["target"].agg(
@@ -107,73 +106,51 @@ class ChiMergeBinner(BaseBinner):
             grouped["bad"] = grouped["sum"]
             grouped["good"] = grouped["count"] - grouped["bad"]
 
-            # grouped index corresponds to intervals defined by splits
-            # Interval i corresponds to index i.
-            # Adjacent pairs: (0,1), (1,2)...
-
-            chi2_values = []
-            indices = grouped.index
-
-            if len(indices) < 2:
+            if len(grouped) < 2:
                 break
 
-            for i in range(len(indices) - 1):
-                # Chi square for pair (i, i+1)
-                idx1, idx2 = indices[i], indices[i + 1]
-
-                bad1, good1 = (
-                    grouped.loc[idx1, "bad"],
-                    grouped.loc[idx1, "good"],
-                )
-                bad2, good2 = (
-                    grouped.loc[idx2, "bad"],
-                    grouped.loc[idx2, "good"],
-                )
-
-                total1 = bad1 + good1
-                total2 = bad2 + good2
-
-                if total1 == 0 or total2 == 0:
-                    chi2 = 0  # Merge empty bins immediately
-                else:
-                    # Expected
-                    total_bad = bad1 + bad2
-                    total_good = good1 + good2
-                    total_count = total1 + total2
-
-                    exp_bad1 = total_bad * (total1 / total_count)
-                    exp_good1 = total_good * (total1 / total_count)
-                    exp_bad2 = total_bad * (total2 / total_count)
-                    exp_good2 = total_good * (total2 / total_count)
-
-                    # Avoid div by zero in chi calculation
-                    def safe_chi(obs, exp):
-                        if exp < 1e-6:
-                            return 0.0
-                        return (obs - exp) ** 2 / exp
-
-                    chi2 = (
-                        safe_chi(bad1, exp_bad1)
-                        + safe_chi(good1, exp_good1)
-                        + safe_chi(bad2, exp_bad2)
-                        + safe_chi(good2, exp_good2)
-                    )
-
-                chi2_values.append(chi2)
+            chi2_values = self._calculate_chi2_values(grouped)
 
             # Find min chi2 (most similar adjacent intervals)
             min_chi2_idx = np.argmin(chi2_values)
-
-            # Merge interval min_chi2_idx and min_chi2_idx+1
-            # Interval i ends at splits[i]. Interval i+1 ends at splits[i+1].
-            # Removing split at splits[i] merges them.
-            # indices correspond to bins:
-            # i=0 -> bin 0 (ends at splits[0])
-            # i=1 -> bin 1 (ends at splits[1])
-            # ...
-            # pair (i, i+1) uses boundary splits[i] as the separator.
-            # So removing splits[min_chi2_idx] is correct.
-
             splits.pop(min_chi2_idx)
 
         return splits
+
+    def _calculate_chi2_values(self, grouped: pd.DataFrame) -> List[float]:
+        """Calculate Chi2 values for all adjacent pairs."""
+        chi2_values = []
+        indices = grouped.index
+        for i in range(len(indices) - 1):
+            idx1, idx2 = indices[i], indices[i + 1]
+            bad1, good1 = grouped.loc[idx1, "bad"], grouped.loc[idx1, "good"]
+            bad2, good2 = grouped.loc[idx2, "bad"], grouped.loc[idx2, "good"]
+
+            total1 = bad1 + good1
+            total2 = bad2 + good2
+
+            if total1 == 0 or total2 == 0:
+                chi2 = 0
+            else:
+                total_bad = bad1 + bad2
+                total_good = good1 + good2
+                total_count = total1 + total2
+
+                exp_bad1 = total_bad * (total1 / total_count)
+                exp_good1 = total_good * (total1 / total_count)
+                exp_bad2 = total_bad * (total2 / total_count)
+                exp_good2 = total_good * (total2 / total_count)
+
+                def safe_chi(obs, exp):
+                    if exp < 1e-6:
+                        return 0.0
+                    return (obs - exp) ** 2 / exp
+
+                chi2 = (
+                    safe_chi(bad1, exp_bad1)
+                    + safe_chi(good1, exp_good1)
+                    + safe_chi(bad2, exp_bad2)
+                    + safe_chi(good2, exp_good2)
+                )
+            chi2_values.append(chi2)
+        return chi2_values

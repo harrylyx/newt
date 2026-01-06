@@ -1,2 +1,0 @@
-class MonitoringPipeline:
-    pass

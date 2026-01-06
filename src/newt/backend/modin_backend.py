@@ -1,2 +1,0 @@
-class ModinBackend:
-    pass

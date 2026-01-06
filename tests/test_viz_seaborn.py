@@ -2,7 +2,6 @@ import os
 import sys
 
 import matplotlib.figure
-
 import numpy as np
 import pandas as pd
 
@@ -10,7 +9,7 @@ import pandas as pd
 sys.path.append(os.path.abspath("src"))
 
 from newt import Binner  # noqa: E402
-from newt.visualization import plot_binning  # noqa: E402
+from newt.visualization import plot_binning_result as plot_binning  # noqa: E402
 
 
 def test_viz_seaborn():

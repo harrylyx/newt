@@ -26,7 +26,21 @@ def calculate_iv(
     Returns:
         Dict containing 'iv' (float) and 'woe_table' (pd.DataFrame).
     """
-    encoder = WOEEncoder(buckets=buckets, epsilon=epsilon)
-    encoder.fit(df[feature], df[target])
+    # If feature is numeric and has many unique values, bin it
+    if pd.api.types.is_numeric_dtype(df[feature]) and df[feature].nunique() > buckets:
+        try:
+            # Try quantile binning first
+            binned = pd.qcut(df[feature], q=buckets, duplicates="drop").astype(str)
+        except ValueError:
+            # Fallback to equal-width binning if quantiles fail (e.g. skewed distribution)
+            binned = pd.cut(df[feature], bins=buckets).astype(str)
+        
+        feature_data = binned
+    else:
+        # Categorical or low-cardinality numeric
+        feature_data = df[feature]
+
+    encoder = WOEEncoder(epsilon=epsilon)
+    encoder.fit(feature_data, df[target])
 
     return {"iv": float(encoder.iv_), "woe_table": encoder.summary_}

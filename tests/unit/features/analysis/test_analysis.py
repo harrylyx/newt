@@ -85,45 +85,25 @@ def test_iv_calculator(analysis_data):
 
 def test_woe_calculator(analysis_data):
     df = analysis_data
-    # 1. Mapping
-    woe_map = calculate_woe_mapping(df, target="target", feature="x1", bins=5)
+    # First bin the data, then use WOE
+    df["x1_bin"] = pd.qcut(df["x1"], q=5, duplicates="drop")
+
+    # 1. Mapping on binned data
+    woe_map = calculate_woe_mapping(df, target="target", feature="x1_bin")
 
     assert isinstance(woe_map, dict)
     assert len(woe_map) > 0
 
     # 2. Transform
-    # We need to bin first if we want to use the map directly on raw data?
-    # My implementation of calculate_woe_mapping returns map of *bin_label* -> woe.
-    # calculate_woe_mapping bins internally. Returns map keyed by Intervals.
-    # apply_woe_transform does .map() directly.
-    # If the column is numeric x1, it won't have Interval values.
-    # So apply_woe_transform as implemented assumes the input column matches the keys.
-    # To test meaningful transform, we should bin the column first in test, or check if
-    # calculate_woe_mapping returns data we can use.
-
-    # Actually my implementation of apply_woe_transform:
-    # "Simplified: assume input is already binned or categorical matches keys exactly."
-    # So I must bin the data first to test applies.
-
-    df["x1_bin"] = pd.qcut(df["x1"], q=5, duplicates="drop")
-    woe_map_binned = calculate_woe_mapping(
-        df, target="target", feature="x1_bin", bins=None
-    )
-
-    # Now transform
-    # calculate_woe_mapping returns string keys for non-numeric (Intervals).
-    # apply_woe_transform requires input column to match keys (strings).
     df["x1_bin_str"] = df["x1_bin"].astype(str)
-    df_transformed = apply_woe_transform(
-        df, feature="x1_bin_str", woe_map=woe_map_binned
-    )
+    df_transformed = apply_woe_transform(df, feature="x1_bin_str", woe_map=woe_map)
 
     col_name = "x1_bin_str_woe"
     assert col_name in df_transformed.columns
     assert not df_transformed[col_name].isnull().all()
     # Check values match map
     sample_val = df["x1_bin"].iloc[0]
-    expected_woe = woe_map_binned[str(sample_val)]
+    expected_woe = woe_map[str(sample_val)]
     # Handle possible float mismatch or if key missing?
     # Should match exactly for categorical/interval objects
     assert abs(df_transformed[col_name].iloc[0] - expected_woe) < 1e-6
@@ -131,29 +111,35 @@ def test_woe_calculator(analysis_data):
 
 def test_woe_encoder_class(analysis_data):
     df = analysis_data
-    encoder = WOEEncoder(buckets=5)
 
-    # Test fit
-    encoder.fit(df["x1"], df["target"])
+    # WOEEncoder now works with pre-binned data
+    # First bin the data
+    df["x1_bin"] = pd.qcut(df["x1"], q=5, duplicates="drop")
+
+    encoder = WOEEncoder()
+
+    # Test fit with binned data
+    encoder.fit(df["x1_bin"], df["target"])
     assert encoder.iv_ > 0.02
-    assert not encoder.woe_map_ == {}
+    assert encoder.woe_map_ != {}
     assert not encoder.summary_.empty
-    assert encoder.bins_ is not None  # x1 is numeric
 
     # Test transform
-    # Use raw numeric column, encoder should handle binning using stored bins
-    transformed = encoder.transform(df["x1"])
+    transformed = encoder.transform(df["x1_bin"])
     assert len(transformed) == len(df)
     assert transformed.dtype == float or np.issubdtype(transformed.dtype, np.number)
 
     # Check consistency
     # Transform on same data should yield values present in woe_map_
-    # Note: transformation maps bins to values.
-    # We can check simple presence
     unique_vals = transformed.unique()
     assert len(unique_vals) <= 6  # 5 bins + potential nan/0 fallback
 
     # Fit transform
-    enc2 = WOEEncoder(buckets=5)
-    trans2 = enc2.fit_transform(df["x1"], df["target"])
+    enc2 = WOEEncoder()
+    trans2 = enc2.fit_transform(df["x1_bin"], df["target"])
     assert (transformed == trans2).all()
+
+    # Test new methods
+    assert encoder.get_iv() > 0
+    assert len(encoder.get_woe_map()) > 0
+    assert not encoder.get_summary().empty

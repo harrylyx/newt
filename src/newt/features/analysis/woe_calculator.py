@@ -1,3 +1,9 @@
+"""
+WOE (Weight of Evidence) calculation and encoding.
+
+Provides WOE transformation for binned/categorical features.
+"""
+
 from typing import Any, Dict, Optional
 
 import numpy as np
@@ -9,50 +15,62 @@ class WOEEncoder:
     Weight of Evidence (WoE) Encoder.
 
     Encodes features using WoE values based on a binary target.
-    Can handle both numerical (via binning) and categorical features.
+    Designed to work with already binned data (from Binner) or categorical features.
+
+    For numeric data, first use Binner to bin the data, then apply WOEEncoder.
+
+    Examples
+    --------
+    >>> # With already binned data
+    >>> woe = WOEEncoder()
+    >>> woe.fit(X_binned, y)
+    >>> X_woe = woe.transform(X_binned)
+    >>>
+    >>> # With categorical data
+    >>> woe = WOEEncoder()
+    >>> woe.fit(df['category_col'], df['target'])
     """
 
-    def __init__(self, buckets: int = 10, epsilon: float = 1e-8):
-        self.buckets = buckets
+    def __init__(self, epsilon: float = 1e-8):
+        """
+        Initialize WOEEncoder.
+
+        Parameters
+        ----------
+        epsilon : float
+            Smoothing factor to avoid division by zero. Default 1e-8.
+        """
         self.epsilon = epsilon
-        self.woe_map_ = {}
-        self.iv_ = 0.0
-        self.summary_ = pd.DataFrame()
-        self.bins_ = None
-        self.is_numeric_ = False
+        self.woe_map_: Dict[Any, float] = {}
+        self.iv_: float = 0.0
+        self.summary_: pd.DataFrame = pd.DataFrame()
+        self.is_fitted_: bool = False
 
     def fit(self, X: pd.Series, y: pd.Series) -> "WOEEncoder":
         """
         Fit the WoE encoder to the data.
 
-        Args:
-            X: Feature data (pandas Series).
-            y: Target data (pandas Series, binary 0/1).
+        Parameters
+        ----------
+        X : pd.Series
+            Feature data - can be binned numeric (codes or intervals) or categorical.
+        y : pd.Series
+            Target data (binary 0/1).
+
+        Returns
+        -------
+        WOEEncoder
+            Fitted instance.
         """
         X = X.copy()
         y = y.copy()
 
-        self.is_numeric_ = pd.api.types.is_numeric_dtype(X)
-
-        # Binning logic
-        if self.is_numeric_ and X.nunique() > 20:
-            # Use qcut for equal frequency, fallback to cut
-            try:
-                # Store the retbins=True to get edges for transform
-                _, self.bins_ = pd.qcut(
-                    X, q=self.buckets, duplicates="drop", retbins=True
-                )
-                X_binned = pd.cut(X, bins=self.bins_, include_lowest=True)
-            except Exception:
-                # Fallback
-                _, self.bins_ = pd.cut(X, bins=self.buckets, retbins=True)
-                X_binned = pd.cut(X, bins=self.bins_, include_lowest=True)
-        else:
-            X_binned = X.astype(str)
-            self.bins_ = None
+        # Convert to string for consistent mapping
+        # This handles: integers, floats, categories, intervals, strings
+        X_str = X.astype(str)
 
         # Create temporary dataframe for aggregation
-        df = pd.DataFrame({"bin": X_binned, "target": y})
+        df = pd.DataFrame({"bin": X_str, "target": y})
 
         # Calculate Good/Bad stats
         grouped = df.groupby("bin", observed=True)["target"].agg(["count", "sum"])
@@ -66,6 +84,8 @@ class WOEEncoder:
             # Degenerate case, set everything to 0
             self.iv_ = 0.0
             self.woe_map_ = {k: 0.0 for k in grouped.index}
+            self.summary_ = grouped.copy()
+            self.is_fitted_ = True
             return self
 
         # Distributions with smoothing
@@ -78,7 +98,7 @@ class WOEEncoder:
 
         # Store results
         self.woe_map_ = woe.to_dict()
-        self.iv_ = iv_contrib.sum()
+        self.iv_ = float(iv_contrib.sum())
 
         # Create summary table
         self.summary_ = grouped.copy()
@@ -87,65 +107,60 @@ class WOEEncoder:
         self.summary_["woe"] = woe
         self.summary_["iv_contribution"] = iv_contrib
 
+        self.is_fitted_ = True
         return self
 
     def transform(self, X: pd.Series) -> pd.Series:
         """
         Transform X using the learned WoE mapping.
 
-        Args:
-            X: Feature data to transform.
+        Parameters
+        ----------
+        X : pd.Series
+            Feature data to transform.
 
-        Returns:
+        Returns
+        -------
+        pd.Series
             Transformed data (WoE values).
         """
-        if not self.woe_map_:
+        if not self.is_fitted_:
             raise ValueError("Encoder is not fitted. Call fit() first.")
 
         X = X.copy()
 
-        if self.is_numeric_ and self.bins_ is not None:
-            # Use stored bins
-            X_binned = pd.cut(X, bins=self.bins_, include_lowest=True)
-        else:
-            # Categorical - direct map
-            if self.is_numeric_:  # Was numeric but low cardinality treated as cat
-                X_binned = X.astype(
-                    str
-                )  # wait, fit converted low card num to str? Yes line 45.
-                # If X here is numeric, we must convert to str to match keys
-                # Actually line 45: X_binned = X.astype(str)
-                # But X passed to fit was numeric low cardinality.
-                # So we should convert input to str if bins is None but numeric is True?
-                # Actually if it was treated as categorical, keys are likely strings.
-                pass
-            # If original was not numeric, keys are strings.
-            # If original was numeric low card, keys are strings from line 45.
-            # So we ensure X is converted to str if we didn't bin it?
-            # Or better, just map.
-            if self.bins_ is None:
-                X_binned = X.astype(str)
-            else:
-                # Should have been handled by numerical block
-                pass
+        # Convert to string for consistent mapping
+        X_str = X.astype(str)
 
         # Map values
-        # Note: If X_binned contains categories not in woe_map_, map returns NaN.
+        # Note: If X_str contains categories not in woe_map_, map returns NaN.
         # We fill with 0 (neutral WoE) as standard fallback.
-        mapped = X_binned.map(self.woe_map_)
+        mapped = X_str.map(self.woe_map_)
 
-        # Ensure float
-        try:
-            mapped = mapped.astype(float)
-        except ValueError:
-            pass
-
-        return mapped.fillna(0.0)
+        return mapped.fillna(0.0).astype(float)
 
     def fit_transform(self, X: pd.Series, y: pd.Series) -> pd.Series:
         """Fit and transform in one step."""
         self.fit(X, y)
         return self.transform(X)
+
+    def get_iv(self) -> float:
+        """Get the Information Value."""
+        if not self.is_fitted_:
+            raise ValueError("Encoder is not fitted. Call fit() first.")
+        return self.iv_
+
+    def get_woe_map(self) -> Dict[Any, float]:
+        """Get the WOE mapping dictionary."""
+        if not self.is_fitted_:
+            raise ValueError("Encoder is not fitted. Call fit() first.")
+        return self.woe_map_.copy()
+
+    def get_summary(self) -> pd.DataFrame:
+        """Get the WOE summary table."""
+        if not self.is_fitted_:
+            raise ValueError("Encoder is not fitted. Call fit() first.")
+        return self.summary_.copy()
 
 
 # Backward compatibility functions (wrappers)
@@ -153,11 +168,14 @@ def calculate_woe_mapping(
     df: pd.DataFrame,
     target: str,
     feature: str,
-    bins: int = 10,
     epsilon: float = 1e-8,
 ) -> Dict[Any, float]:
-    """Wrapper using WOEEncoder for backward compatibility."""
-    encoder = WOEEncoder(buckets=bins if isinstance(bins, int) else 10, epsilon=epsilon)
+    """
+    Wrapper using WOEEncoder for backward compatibility.
+
+    Note: This function assumes the feature is already binned or categorical.
+    """
+    encoder = WOEEncoder(epsilon=epsilon)
     encoder.fit(df[feature], df[target])
     return encoder.woe_map_
 
@@ -169,20 +187,28 @@ def apply_woe_transform(
     new_col_name: Optional[str] = None,
 ) -> pd.DataFrame:
     """
-    Wrapper for applying WoE transform.
-    NOTE: This legacy function assumes the input matches the map keys
-    (e.g. already binned if necessary), OR it does a direct map.
-    It does NOT use the WOEEncoder's binning logic because it receives a raw dict.
-    Use WOEEncoder class for robust transformation of raw numeric data.
+    Apply WoE transform using a pre-computed WoE mapping.
+
+    Parameters
+    ----------
+    df : pd.DataFrame
+        Input dataframe.
+    feature : str
+        Feature column name.
+    woe_map : Dict[Any, float]
+        WoE mapping dictionary.
+    new_col_name : str, optional
+        Name for the new WoE column. Default: "{feature}_woe".
+
+    Returns
+    -------
+    pd.DataFrame
+        DataFrame with new WoE column.
     """
     if new_col_name is None:
         new_col_name = f"{feature}_woe"
 
     df_out = df.copy()
-    mapped = df_out[feature].map(woe_map)
-    try:
-        mapped = mapped.astype(float)
-    except ValueError:
-        pass
-    df_out[new_col_name] = mapped.fillna(0.0)
+    mapped = df_out[feature].astype(str).map(woe_map)
+    df_out[new_col_name] = mapped.fillna(0.0).astype(float)
     return df_out

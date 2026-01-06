@@ -11,6 +11,9 @@ class EqualWidthBinner(BaseBinner):
     Bins continuous data into intervals of equal size (width).
     """
 
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+
     def _fit_splits(self, X: pd.Series, y: Optional[pd.Series] = None) -> List[float]:
         # Use pd.cut with retbins to get splits including edges
         _, bins = pd.cut(X, bins=self.n_bins, retbins=True)
@@ -28,6 +31,9 @@ class EqualFrequencyBinner(BaseBinner):
     """
     Bins continuous data into intervals with equal number of samples (quantiles).
     """
+
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
 
     def _fit_splits(self, X: pd.Series, y: Optional[pd.Series] = None) -> List[float]:
         # Use pd.qcut
@@ -48,6 +54,9 @@ class KMeansBinner(BaseBinner):
     Center of clusters are used to define bins?
     Usually KMeans binning uses the boundaries between clusters.
     """
+
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
 
     def _fit_splits(self, X: pd.Series, y: Optional[pd.Series] = None) -> List[float]:
         # Reshape for sklearn

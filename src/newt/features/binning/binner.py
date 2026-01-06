@@ -35,6 +35,7 @@ class Binner:
         min_samples: Union[int, float, None] = None,
         empty_separate: bool = False,
         cols: Optional[List[str]] = None,
+        **kwargs,
     ) -> "Binner":
         """
         Fit the binning model.
@@ -78,13 +79,16 @@ class Binner:
 
             # Instantiate binner
             # Adjust params based on method
-            kwargs = {"n_bins": n_bins}
+            kwargs_binner = {"n_bins": n_bins}
 
             # Specific params
             if method == "dt" and min_samples is not None:
-                kwargs["min_samples_leaf"] = min_samples
+                kwargs_binner["min_samples_leaf"] = min_samples
 
-            binner = binner_cls(**kwargs)
+            # Merge with user kwargs
+            kwargs_binner.update(kwargs)
+
+            binner = binner_cls(**kwargs_binner)
 
             # Fit
             try:
@@ -93,7 +97,7 @@ class Binner:
                 self.rules_[col] = binner.splits_
             except Exception as e:
                 print(f"Failed to bin column {col}: {e}")
-                # Keep fitting other columns
+                raise e
 
         return self
 

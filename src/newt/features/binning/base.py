@@ -11,7 +11,7 @@ class BaseBinner(ABC):
     Supports monotonicity adjustment and custom splits.
     """
 
-    def __init__(self, n_bins: int = 5, force_monotonic: bool = False):
+    def __init__(self, n_bins: int = 5, force_monotonic: bool = False, **kwargs):
         self.n_bins = n_bins
         self.force_monotonic = force_monotonic
         self.splits_ = []  # List of break points (float)

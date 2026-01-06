@@ -23,8 +23,9 @@ class DecisionTreeBinner(BaseBinner):
         n_bins: int = 5,
         force_monotonic: bool = False,
         min_samples_leaf: float = 0.05,
+        **kwargs,
     ):
-        super().__init__(n_bins=n_bins, force_monotonic=force_monotonic)
+        super().__init__(n_bins=n_bins, force_monotonic=force_monotonic, **kwargs)
         self.min_samples_leaf = min_samples_leaf
 
     def _fit_splits(self, X: pd.Series, y: Optional[pd.Series] = None) -> List[float]:
@@ -65,8 +66,9 @@ class ChiMergeBinner(BaseBinner):
         force_monotonic: bool = False,
         alpha: float = 0.05,
         min_samples: float = 0.05,
+        **kwargs,
     ):
-        super().__init__(n_bins=n_bins, force_monotonic=force_monotonic)
+        super().__init__(n_bins=n_bins, force_monotonic=force_monotonic, **kwargs)
         self.alpha = alpha
         self.min_samples = min_samples
 

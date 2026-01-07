@@ -10,11 +10,13 @@ from typing import Dict, List, Tuple
 import numpy as np
 import pandas as pd
 
+from newt.config import BINNING, FILTERING
 from newt.features.analysis.correlation import (
     calculate_correlation_matrix,
     get_high_correlation_pairs,
 )
 from newt.features.binning import Binner
+from newt.utils.decorators import requires_fit
 
 
 class PreFilter:
@@ -35,10 +37,10 @@ class PreFilter:
 
     def __init__(
         self,
-        iv_threshold: float = 0.02,
-        missing_threshold: float = 0.9,
-        corr_threshold: float = 0.8,
-        iv_bins: int = 10,
+        iv_threshold: float = FILTERING.DEFAULT_IV_THRESHOLD,
+        missing_threshold: float = FILTERING.DEFAULT_MISSING_THRESHOLD,
+        corr_threshold: float = FILTERING.DEFAULT_CORR_THRESHOLD,
+        iv_bins: int = BINNING.DEFAULT_BUCKETS,
         corr_method: str = "pearson",
     ):
         """
@@ -136,6 +138,7 @@ class PreFilter:
         self.is_fitted_ = True
         return self
 
+    @requires_fit()
     def transform(self, X: pd.DataFrame) -> pd.DataFrame:
         """
         Filter columns based on fitted selection.
@@ -150,9 +153,6 @@ class PreFilter:
         pd.DataFrame
             Filtered data with only selected features.
         """
-        if not self.is_fitted_:
-            raise ValueError("PreFilter is not fitted. Call fit() first.")
-
         # Keep only selected features that exist in X
         cols_to_keep = [c for c in self.selected_features_ if c in X.columns]
         return X[cols_to_keep]
@@ -162,6 +162,7 @@ class PreFilter:
         self.fit(X, y)
         return self.transform(X)
 
+    @requires_fit()
     def report(self) -> pd.DataFrame:
         """
         Generate a filtering report.
@@ -171,9 +172,6 @@ class PreFilter:
         pd.DataFrame
             Report with columns: feature, missing_rate, iv, status, reason
         """
-        if not self.is_fitted_:
-            raise ValueError("PreFilter is not fitted. Call fit() first.")
-
         all_features = list(self.missing_dict_.keys())
         records = []
 

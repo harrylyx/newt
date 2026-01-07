@@ -9,6 +9,8 @@ from typing import Any, Dict, Optional, Tuple
 import numpy as np
 import pandas as pd
 
+from newt.config import FILTERING
+
 # Optional imports for visualization
 try:
     import matplotlib.patches as mpatches
@@ -152,7 +154,7 @@ def plot_iv_ranking(
     top_n: int = 20,
     figsize: Tuple[int, int] = (10, 8),
     title: Optional[str] = None,
-    threshold: float = 0.02,
+    threshold: float = FILTERING.DEFAULT_IV_THRESHOLD,
 ) -> Any:
     """
     Plot IV ranking bar chart.
@@ -317,7 +319,7 @@ def plot_woe_pattern(
 
 def plot_psi_comparison(
     psi_dict: Dict[str, float],
-    threshold: float = 0.25,
+    threshold: float = FILTERING.DEFAULT_PSI_THRESHOLD,
     figsize: Tuple[int, int] = (10, 6),
     title: Optional[str] = None,
 ) -> Any:

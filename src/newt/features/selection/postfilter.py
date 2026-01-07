@@ -9,8 +9,10 @@ from typing import Dict, List, Optional
 import numpy as np
 import pandas as pd
 
+from newt.config import BINNING, FILTERING
 from newt.metrics.psi import calculate_psi
 from newt.metrics.vif import calculate_vif
+from newt.utils.decorators import requires_fit
 
 
 class PostFilter:
@@ -30,9 +32,9 @@ class PostFilter:
 
     def __init__(
         self,
-        psi_threshold: float = 0.25,
-        vif_threshold: float = 10.0,
-        psi_buckets: int = 10,
+        psi_threshold: float = FILTERING.DEFAULT_PSI_THRESHOLD,
+        vif_threshold: float = FILTERING.DEFAULT_VIF_THRESHOLD,
+        psi_buckets: int = BINNING.DEFAULT_BUCKETS,
         remove_high_vif_iteratively: bool = True,
     ):
         """
@@ -215,6 +217,7 @@ class PostFilter:
         self.is_fitted_ = True
         return self
 
+    @requires_fit()
     def transform(self, X: pd.DataFrame) -> pd.DataFrame:
         """
         Filter columns based on fitted selection.
@@ -229,9 +232,6 @@ class PostFilter:
         pd.DataFrame
             Filtered data with only selected features.
         """
-        if not self.is_fitted_:
-            raise ValueError("PostFilter is not fitted. Call fit() first.")
-
         cols_to_keep = [c for c in self.selected_features_ if c in X.columns]
         return X[cols_to_keep]
 
@@ -244,6 +244,7 @@ class PostFilter:
         self.fit(X_train, X_test)
         return self.transform(X_train)
 
+    @requires_fit()
     def report(self) -> Dict[str, pd.DataFrame]:
         """
         Generate filtering reports.
@@ -256,9 +257,6 @@ class PostFilter:
             - 'psi': PSI values for each feature
             - 'vif': VIF values for selected features
         """
-        if not self.is_fitted_:
-            raise ValueError("PostFilter is not fitted. Call fit() first.")
-
         # Summary report
         all_features = set(self.psi_dict_.keys())
         if len(self.vif_df_) > 0:

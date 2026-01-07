@@ -9,6 +9,9 @@ from typing import Any, Dict, Optional
 import numpy as np
 import pandas as pd
 
+from newt.config import MODELING
+from newt.utils.decorators import requires_fit
+
 
 class LogisticModel:
     """
@@ -168,6 +171,7 @@ class LogisticModel:
 
         self.coefficients_ = coef_df
 
+    @requires_fit()
     def predict_proba(self, X: pd.DataFrame) -> np.ndarray:
         """
         Predict probability of positive class.
@@ -182,8 +186,6 @@ class LogisticModel:
         np.ndarray
             Predicted probabilities for positive class.
         """
-        if not self.is_fitted_:
-            raise ValueError("Model is not fitted. Call fit() first.")
 
         try:
             import statsmodels.api as sm
@@ -203,7 +205,7 @@ class LogisticModel:
     def predict(
         self,
         X: pd.DataFrame,
-        threshold: float = 0.5,
+        threshold: float = MODELING.DEFAULT_CLASSIFICATION_THRESHOLD,
     ) -> np.ndarray:
         """
         Predict class labels.
@@ -223,6 +225,7 @@ class LogisticModel:
         proba = self.predict_proba(X)
         return (proba >= threshold).astype(int)
 
+    @requires_fit()
     def summary(self) -> str:
         """
         Get statsmodels summary.
@@ -232,11 +235,9 @@ class LogisticModel:
         str
             Model summary as string.
         """
-        if not self.is_fitted_:
-            raise ValueError("Model is not fitted. Call fit() first.")
-
         return self.result_.summary().as_text()
 
+    @requires_fit()
     def get_coefficients(self) -> pd.DataFrame:
         """
         Get coefficients DataFrame.
@@ -246,14 +247,11 @@ class LogisticModel:
         pd.DataFrame
             DataFrame with coefficient details.
         """
-        if not self.is_fitted_:
-            raise ValueError("Model is not fitted. Call fit() first.")
-
         return self.coefficients_.copy()
 
     def get_significant_features(
         self,
-        p_threshold: float = 0.05,
+        p_threshold: float = MODELING.DEFAULT_P_ENTER,
     ) -> pd.DataFrame:
         """
         Get features with p-value below threshold.
@@ -271,6 +269,7 @@ class LogisticModel:
         coef = self.get_coefficients()
         return coef[coef["p_value"] < p_threshold]
 
+    @requires_fit()
     def to_dict(self) -> Dict[str, Any]:
         """
         Export model parameters as dictionary.
@@ -280,8 +279,6 @@ class LogisticModel:
         Dict
             Model parameters including coefficients.
         """
-        if not self.is_fitted_:
-            raise ValueError("Model is not fitted. Call fit() first.")
 
         return {
             "intercept": (

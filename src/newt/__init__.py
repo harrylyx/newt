@@ -4,7 +4,7 @@ Newt - Credit Scorecard Development Toolkit
 A comprehensive Python library for building credit scorecards with:
 - Feature binning (supervised and unsupervised methods)
 - WOE/IV analysis
-- Variable selection (pre-filtering and post-filtering)
+- Variable selection (pre-filtering, post-filtering, stepwise)
 - Logistic regression modeling
 - Scorecard generation
 - Pipeline-style workflow
@@ -19,7 +19,17 @@ from newt.features.analysis import WOEEncoder
 from newt.features.binning import Binner
 
 # Feature selection
-from newt.features.selection import PostFilter, PreFilter
+from newt.features.selection import PostFilter, PreFilter, StepwiseSelector
+
+# Metrics
+from newt.metrics import (
+    calculate_auc,
+    calculate_gini,
+    calculate_ks,
+    calculate_lift,
+    calculate_psi,
+    calculate_vif,
+)
 
 # Modeling
 from newt.modeling import LogisticModel, Scorecard
@@ -37,6 +47,14 @@ __all__ = [
     # Selection
     "PreFilter",
     "PostFilter",
+    "StepwiseSelector",
+    # Metrics
+    "calculate_auc",
+    "calculate_ks",
+    "calculate_gini",
+    "calculate_psi",
+    "calculate_lift",
+    "calculate_vif",
     # Modeling
     "LogisticModel",
     "Scorecard",
@@ -45,3 +63,4 @@ __all__ = [
     # Statistics
     "EDAAnalyzer",
 ]
+

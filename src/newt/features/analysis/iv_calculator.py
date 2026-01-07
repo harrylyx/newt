@@ -2,6 +2,8 @@ from typing import Dict, Union
 
 import pandas as pd
 
+from newt.config import BINNING
+
 from .woe_calculator import WOEEncoder
 
 
@@ -9,8 +11,8 @@ def calculate_iv(
     df: pd.DataFrame,
     target: str,
     feature: str,
-    buckets: int = 10,
-    epsilon: float = 1e-8,
+    buckets: int = BINNING.DEFAULT_BUCKETS,
+    epsilon: float = BINNING.DEFAULT_EPSILON,
 ) -> Dict[str, Union[float, pd.DataFrame]]:
     """
     Calculate Information Value (IV) for a feature.

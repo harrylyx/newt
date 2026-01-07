@@ -7,11 +7,7 @@ from src.newt.features.analysis.correlation import (
     get_high_correlation_pairs,
 )
 from src.newt.features.analysis.iv_calculator import calculate_iv
-from src.newt.features.analysis.woe_calculator import (
-    WOEEncoder,
-    apply_woe_transform,
-    calculate_woe_mapping,
-)
+from src.newt.features.analysis.woe_calculator import WOEEncoder
 
 
 @pytest.fixture
@@ -88,25 +84,25 @@ def test_woe_calculator(analysis_data):
     # First bin the data, then use WOE
     df["x1_bin"] = pd.qcut(df["x1"], q=5, duplicates="drop")
 
-    # 1. Mapping on binned data
-    woe_map = calculate_woe_mapping(df, target="target", feature="x1_bin")
+    # 1. Use WOEEncoder directly to get mapping
+    encoder = WOEEncoder()
+    encoder.fit(df["x1_bin"], df["target"])
+    woe_map = encoder.get_woe_map()
 
     assert isinstance(woe_map, dict)
     assert len(woe_map) > 0
 
-    # 2. Transform
+    # 2. Transform using encoder
     df["x1_bin_str"] = df["x1_bin"].astype(str)
-    df_transformed = apply_woe_transform(df, feature="x1_bin_str", woe_map=woe_map)
+    transformed = encoder.transform(df["x1_bin"])
 
-    col_name = "x1_bin_str_woe"
-    assert col_name in df_transformed.columns
-    assert not df_transformed[col_name].isnull().all()
+    assert len(transformed) == len(df)
+    assert not transformed.isnull().all()
+
     # Check values match map
-    sample_val = df["x1_bin"].iloc[0]
-    expected_woe = woe_map[str(sample_val)]
-    # Handle possible float mismatch or if key missing?
-    # Should match exactly for categorical/interval objects
-    assert abs(df_transformed[col_name].iloc[0] - expected_woe) < 1e-6
+    sample_val = str(df["x1_bin"].iloc[0])
+    expected_woe = woe_map[sample_val]
+    assert abs(transformed.iloc[0] - expected_woe) < 1e-6
 
 
 def test_woe_encoder_class(analysis_data):

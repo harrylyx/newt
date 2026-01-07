@@ -10,6 +10,8 @@ from typing import Any, Dict, List
 import numpy as np
 import pandas as pd
 
+from newt.config import SCORECARD
+
 
 class Scorecard:
     """
@@ -35,9 +37,9 @@ class Scorecard:
 
     def __init__(
         self,
-        base_score: int = 600,
-        pdo: int = 50,
-        base_odds: float = 1 / 15,
+        base_score: int = SCORECARD.DEFAULT_BASE_SCORE,
+        pdo: int = SCORECARD.DEFAULT_PDO,
+        base_odds: float = SCORECARD.DEFAULT_BASE_ODDS,
     ):
         """
         Initialize Scorecard.

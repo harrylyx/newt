@@ -4,10 +4,14 @@ WOE (Weight of Evidence) calculation and encoding.
 Provides WOE transformation for binned/categorical features.
 """
 
+import warnings
 from typing import Any, Dict, Optional
 
 import numpy as np
 import pandas as pd
+
+from newt.config import BINNING
+from newt.utils.decorators import requires_fit
 
 
 class WOEEncoder:
@@ -31,7 +35,7 @@ class WOEEncoder:
     >>> woe.fit(df['category_col'], df['target'])
     """
 
-    def __init__(self, epsilon: float = 1e-8):
+    def __init__(self, epsilon: float = BINNING.DEFAULT_EPSILON):
         """
         Initialize WOEEncoder.
 
@@ -110,6 +114,7 @@ class WOEEncoder:
         self.is_fitted_ = True
         return self
 
+    @requires_fit()
     def transform(self, X: pd.Series) -> pd.Series:
         """
         Transform X using the learned WoE mapping.
@@ -124,9 +129,6 @@ class WOEEncoder:
         pd.Series
             Transformed data (WoE values).
         """
-        if not self.is_fitted_:
-            raise ValueError("Encoder is not fitted. Call fit() first.")
-
         X = X.copy()
 
         # Convert to string for consistent mapping
@@ -144,71 +146,19 @@ class WOEEncoder:
         self.fit(X, y)
         return self.transform(X)
 
+    @requires_fit()
     def get_iv(self) -> float:
         """Get the Information Value."""
-        if not self.is_fitted_:
-            raise ValueError("Encoder is not fitted. Call fit() first.")
         return self.iv_
 
+    @requires_fit()
     def get_woe_map(self) -> Dict[Any, float]:
         """Get the WOE mapping dictionary."""
-        if not self.is_fitted_:
-            raise ValueError("Encoder is not fitted. Call fit() first.")
         return self.woe_map_.copy()
 
+    @requires_fit()
     def get_summary(self) -> pd.DataFrame:
         """Get the WOE summary table."""
-        if not self.is_fitted_:
-            raise ValueError("Encoder is not fitted. Call fit() first.")
         return self.summary_.copy()
 
 
-# Backward compatibility functions (wrappers)
-def calculate_woe_mapping(
-    df: pd.DataFrame,
-    target: str,
-    feature: str,
-    epsilon: float = 1e-8,
-) -> Dict[Any, float]:
-    """
-    Wrapper using WOEEncoder for backward compatibility.
-
-    Note: This function assumes the feature is already binned or categorical.
-    """
-    encoder = WOEEncoder(epsilon=epsilon)
-    encoder.fit(df[feature], df[target])
-    return encoder.woe_map_
-
-
-def apply_woe_transform(
-    df: pd.DataFrame,
-    feature: str,
-    woe_map: Dict[Any, float],
-    new_col_name: Optional[str] = None,
-) -> pd.DataFrame:
-    """
-    Apply WoE transform using a pre-computed WoE mapping.
-
-    Parameters
-    ----------
-    df : pd.DataFrame
-        Input dataframe.
-    feature : str
-        Feature column name.
-    woe_map : Dict[Any, float]
-        WoE mapping dictionary.
-    new_col_name : str, optional
-        Name for the new WoE column. Default: "{feature}_woe".
-
-    Returns
-    -------
-    pd.DataFrame
-        DataFrame with new WoE column.
-    """
-    if new_col_name is None:
-        new_col_name = f"{feature}_woe"
-
-    df_out = df.copy()
-    mapped = df_out[feature].astype(str).map(woe_map)
-    df_out[new_col_name] = mapped.fillna(0.0).astype(float)
-    return df_out

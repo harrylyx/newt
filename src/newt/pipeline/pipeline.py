@@ -8,6 +8,8 @@ from typing import Any, Dict, List, Optional
 
 import pandas as pd
 
+from newt.config import BINNING, FILTERING, MODELING, SCORECARD
+
 
 class ScorecardPipeline:
     """
@@ -79,6 +81,7 @@ class ScorecardPipeline:
         self.binner_: Any = None
         self.woe_encoders_: Dict[str, Any] = {}
         self.postfilter_: Any = None
+        self.stepwise_: Any = None
         self.model_: Any = None
         self.scorecard_: Any = None
 
@@ -90,10 +93,10 @@ class ScorecardPipeline:
 
     def prefilter(
         self,
-        iv_threshold: float = 0.02,
-        missing_threshold: float = 0.9,
-        corr_threshold: float = 0.8,
-        iv_bins: int = 10,
+        iv_threshold: float = FILTERING.DEFAULT_IV_THRESHOLD,
+        missing_threshold: float = FILTERING.DEFAULT_MISSING_THRESHOLD,
+        corr_threshold: float = FILTERING.DEFAULT_CORR_THRESHOLD,
+        iv_bins: int = BINNING.DEFAULT_BUCKETS,
         **kwargs,
     ) -> "ScorecardPipeline":
         """
@@ -137,7 +140,7 @@ class ScorecardPipeline:
     def bin(
         self,
         method: str = "opt",
-        n_bins: int = 5,
+        n_bins: int = BINNING.DEFAULT_N_BINS,
         cols: Optional[List[str]] = None,
         **kwargs,
     ) -> "ScorecardPipeline":
@@ -184,7 +187,7 @@ class ScorecardPipeline:
 
     def woe_transform(
         self,
-        epsilon: float = 1e-8,
+        epsilon: float = BINNING.DEFAULT_EPSILON,
         **kwargs,
     ) -> "ScorecardPipeline":
         """
@@ -233,8 +236,8 @@ class ScorecardPipeline:
 
     def postfilter(
         self,
-        psi_threshold: float = 0.25,
-        vif_threshold: float = 10.0,
+        psi_threshold: float = FILTERING.DEFAULT_PSI_THRESHOLD,
+        vif_threshold: float = FILTERING.DEFAULT_VIF_THRESHOLD,
         X_test: Optional[pd.DataFrame] = None,
         **kwargs,
     ) -> "ScorecardPipeline":
@@ -274,6 +277,58 @@ class ScorecardPipeline:
         self.steps_.append("postfilter")
         return self
 
+    def stepwise(
+        self,
+        direction: str = "both",
+        criterion: str = "aic",
+        p_enter: float = MODELING.DEFAULT_P_ENTER,
+        p_remove: float = MODELING.DEFAULT_P_REMOVE,
+        exclude: Optional[List[str]] = None,
+        **kwargs,
+    ) -> "ScorecardPipeline":
+        """
+        Apply stepwise regression feature selection.
+
+        Parameters
+        ----------
+        direction : str
+            Selection direction: 'forward', 'backward', or 'both'.
+            Default 'both'.
+        criterion : str
+            Selection criterion: 'pvalue', 'aic', or 'bic'.
+            Default 'aic'.
+        p_enter : float
+            P-value threshold for entering. Default 0.05.
+        p_remove : float
+            P-value threshold for removing. Default 0.10.
+        exclude : List[str], optional
+            Features to force include.
+
+        Returns
+        -------
+        ScorecardPipeline
+            Self for chaining.
+        """
+        from newt.features.selection.stepwise import StepwiseSelector
+
+        self.stepwise_ = StepwiseSelector(
+            direction=direction,
+            criterion=criterion,
+            p_enter=p_enter,
+            p_remove=p_remove,
+            exclude=exclude,
+            **kwargs,
+        )
+
+        self.X_current = self.stepwise_.fit_transform(self.X_current, self.y_train)
+
+        # Apply same filtering to test data
+        if self.X_test_current is not None:
+            self.X_test_current = self.stepwise_.transform(self.X_test_current)
+
+        self.steps_.append("stepwise")
+        return self
+
     def build_model(
         self,
         fit_intercept: bool = True,
@@ -302,9 +357,9 @@ class ScorecardPipeline:
 
     def generate_scorecard(
         self,
-        base_score: int = 600,
-        pdo: int = 50,
-        base_odds: float = 1 / 15,
+        base_score: int = SCORECARD.DEFAULT_BASE_SCORE,
+        pdo: int = SCORECARD.DEFAULT_PDO,
+        base_odds: float = SCORECARD.DEFAULT_BASE_ODDS,
         **kwargs,
     ) -> "ScorecardPipeline":
         """

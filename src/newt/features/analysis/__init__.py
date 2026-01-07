@@ -3,8 +3,5 @@ from .correlation import (  # noqa: F401
     get_high_correlation_pairs,
 )
 from .iv_calculator import calculate_iv  # noqa: F401
-from .woe_calculator import (  # noqa: F401
-    WOEEncoder,
-    apply_woe_transform,
-    calculate_woe_mapping,
-)
+from .woe_calculator import WOEEncoder  # noqa: F401
+

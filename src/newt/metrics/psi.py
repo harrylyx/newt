@@ -2,11 +2,13 @@ from typing import Union
 
 import numpy as np
 
+from newt.config import BINNING
+
 
 def calculate_psi(
     expected: Union[np.ndarray, list],
     actual: Union[np.ndarray, list],
-    buckets: int = 10,
+    buckets: int = BINNING.DEFAULT_BUCKETS,
     include_nan: bool = True,
 ) -> float:
     """
@@ -75,7 +77,7 @@ def calculate_psi(
         actual_percents = actual_counts / actual_total
 
         # Avoid division by zero
-        epsilon = 1e-8
+        epsilon = BINNING.DEFAULT_EPSILON
         expected_percents = np.maximum(expected_percents, epsilon)
         actual_percents = np.maximum(actual_percents, epsilon)
 

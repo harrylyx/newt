@@ -1,17 +1,40 @@
-from typing import Dict, List, Optional, Union
+"""
+Unified binning interface.
+
+Provides a single entry point for binning features using various algorithms.
+"""
+
+from typing import Any, Dict, List, Optional, Union
 
 import numpy as np
 import pandas as pd
 
+from newt.config import BINNING
+
 from .base import BaseBinner
+from .binner_mixins import BinnerIOMixin, BinnerStatsMixin, BinnerWOEMixin
 from .supervised import ChiMergeBinner, DecisionTreeBinner, OptBinningBinner
 from .unsupervised import EqualFrequencyBinner, EqualWidthBinner, KMeansBinner
+from .woe_storage import WOEStorage
 
 
-class Binner:
+class Binner(BinnerStatsMixin, BinnerIOMixin, BinnerWOEMixin):
     """
     A unified interface for binning multiple features using various algorithms.
+
     Supported methods: 'chi', 'dt', 'kmean', 'quantile', 'step', 'opt'.
+
+    Features:
+    - Access binning info with binner['feature_name'] after fitting
+    - Missing values are automatically binned separately
+    - WOE encoders are stored for scorecard generation
+
+    Examples
+    --------
+    >>> binner = Binner()
+    >>> binner.fit(X, y, method='opt', n_bins=5)
+    >>> print(binner['age'])  # View binning stats
+    >>> binner.set_splits('age', [25, 35, 45, 55])  # Adjust splits
     """
 
     def __init__(self):
@@ -25,20 +48,32 @@ class Binner:
             "opt": OptBinningBinner,
         }
         self.binners_: Dict[str, BaseBinner] = {}
+        self.woe_storage = WOEStorage()
+        self.stats_: Dict[str, pd.DataFrame] = {}
+        self._X: Optional[pd.DataFrame] = None
+        self._y: Optional[pd.Series] = None
+        self._features: List[str] = []
+        self._missing_label = "Missing"
+
+    @property
+    def woe_encoders_(self) -> Dict[str, Any]:
+        """Get WOE encoders dictionary (for backward compatibility)."""
+        return self.woe_storage.encoders_
 
     def fit(
         self,
         X: pd.DataFrame,
         y: Optional[Union[pd.Series, str]] = None,
         method: str = "chi",
-        n_bins: int = 5,
+        n_bins: int = BINNING.DEFAULT_N_BINS,
         min_samples: Union[int, float, None] = None,
-        empty_separate: bool = False,
         cols: Optional[List[str]] = None,
         **kwargs,
     ) -> "Binner":
         """
         Fit the binning model.
+
+        Missing values are automatically handled as a separate bin.
 
         Parameters
         ----------
@@ -52,58 +87,75 @@ class Binner:
             Number of bins.
         min_samples : int, float
             Minimum samples per leaf (for decision tree).
-        empty_separate : bool
-            Whether to separate empty values - Not implemented yet
-            (handled by pd.cut usually).
         cols : List[str]
             List of columns to bin. If None, selects all numeric columns.
+
+        Returns
+        -------
+        Binner
+            Fitted binner instance.
         """
+        y_series = y
         if isinstance(y, str):
-            y = X[y]
-            if y.name in X.columns:
-                X = X.drop(columns=[y.name])
+            y_series = X[y]
+            if y in X.columns:
+                X = X.drop(columns=[y])
+
+        # Store references for later use
+        self._X = X.copy()
+        self._y = y_series.copy() if y_series is not None else None
 
         # Determine columns to bin
         if cols:
-            # Use provided columns (filtered by existing columns)
             numeric_cols = [c for c in cols if c in X.columns]
-            # Check for missing requested cols? Optional warn.
         else:
-            # Select numeric columns automatically
-            numeric_cols = X.select_dtypes(include=[np.number]).columns
+            numeric_cols = list(X.select_dtypes(include=[np.number]).columns)
+
+        self._features = numeric_cols
 
         for col in numeric_cols:
             binner_cls = self.method_map.get(method)
             if not binner_cls:
-                raise ValueError(f"Unknown method ensure: {method}")
+                raise ValueError(f"Unknown method: {method}")
 
-            # Instantiate binner
-            # Adjust params based on method
             kwargs_binner = {"n_bins": n_bins}
 
-            # Specific params
             if method == "dt" and min_samples is not None:
                 kwargs_binner["min_samples_leaf"] = min_samples
 
-            # Merge with user kwargs
             kwargs_binner.update(kwargs)
 
             binner = binner_cls(**kwargs_binner)
 
-            # Fit
+            # For fitting, drop missing values
+            col_data = X[col]
+            valid_mask = col_data.notna()
+
+            if valid_mask.sum() == 0:
+                continue
+
             try:
-                binner.fit(X[col], y)
+                binner.fit(col_data[valid_mask], y_series[valid_mask])
                 self.binners_[col] = binner
                 self.rules_[col] = binner.splits_
             except Exception as e:
                 print(f"Failed to bin column {col}: {e}")
                 raise e
 
+        # Calculate and store statistics
+        self._update_all_stats()
+
         return self
 
-    def transform(self, X: pd.DataFrame, labels: bool = False) -> pd.DataFrame:
+    def transform(
+        self,
+        X: pd.DataFrame,
+        labels: bool = False,
+    ) -> pd.DataFrame:
         """
         Apply binning rules to the data.
+
+        Missing values are placed in 'Missing' bin.
 
         Parameters
         ----------
@@ -119,36 +171,72 @@ class Binner:
             Transformed data.
         """
         X_new = X.copy()
+
         for col, binner in self.binners_.items():
-            if col in X_new.columns:
-                # BaseBinner.transform returns Categorical (Intervals)
-                binned = binner.transform(X[col])
+            if col not in X_new.columns:
+                continue
+
+            col_data = X[col]
+            valid_mask = col_data.notna()
+
+            # Transform valid values
+            binned = pd.Series(index=col_data.index, dtype=object)
+
+            if valid_mask.any():
+                valid_binned = binner.transform(col_data[valid_mask])
 
                 if labels:
-                    # Convert to string or keep as interval
-                    X_new[col] = binned.astype(str)
+                    binned[valid_mask] = valid_binned.astype(str)
                 else:
-                    # Return codes
-                    X_new[col] = binned.cat.codes
+                    binned[valid_mask] = valid_binned.cat.codes
+
+            # Handle missing values - separate bin
+            binned[~valid_mask] = self._missing_label if labels else -1
+
+            X_new[col] = binned
 
         return X_new
 
-    def export(self) -> Dict[str, List[float]]:
-        """Export binning rules."""
-        return self.rules_
+    def __getitem__(self, feature: str) -> pd.DataFrame:
+        """
+        Get binning statistics for a feature.
 
-    def load(self, rules: Dict[str, List[float]]):
-        """Load binning rules manually."""
-        self.rules_ = rules
-        self.binners_ = {}
+        Parameters
+        ----------
+        feature : str
+            Feature name.
 
-        # We need to reconstruct binners to use them for transform
-        # We can use BaseBinner with set_splits
-        # We'll use EqualWidthBinner as a generic container since it inherits BaseBinner
-        # and doesn't enforce strict logic on transform other than splits.
-        for col, splits in rules.items():
-            binner = EqualWidthBinner()
-            binner.set_splits(splits)
-            self.binners_[col] = binner
+        Returns
+        -------
+        pd.DataFrame
+            Binning statistics for the feature.
 
-        return self
+        Examples
+        --------
+        >>> binner.fit(X, y, method='opt')
+        >>> print(binner['age'])
+        """
+        if feature not in self.binners_:
+            raise KeyError(f"Feature '{feature}' not found in binner.")
+
+        if feature not in self.stats_:
+            self._calculate_and_store_stats(feature)
+
+        return self.stats_.get(feature, pd.DataFrame())
+
+    def __contains__(self, feature: str) -> bool:
+        """Check if feature is in binner."""
+        return feature in self.binners_
+
+    def __iter__(self):
+        """Iterate over feature names."""
+        return iter(self._features)
+
+    def __len__(self) -> int:
+        """Number of binned features."""
+        return len(self.binners_)
+
+    def features(self) -> List[str]:
+        """Get list of binned feature names."""
+        return list(self.binners_.keys())
+

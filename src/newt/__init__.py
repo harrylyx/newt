@@ -19,7 +19,7 @@ from newt.features.analysis import WOEEncoder
 from newt.features.binning import Binner
 
 # Feature selection
-from newt.features.selection import PostFilter, PreFilter, StepwiseSelector
+from newt.features.selection import FeatureSelector, PostFilter, StepwiseSelector
 
 # Metrics
 from newt.metrics import (
@@ -37,15 +37,12 @@ from newt.modeling import LogisticModel, Scorecard
 # Pipeline
 from newt.pipeline import ScorecardPipeline
 
-# Statistics
-from newt.statistics import EDAAnalyzer
-
 __all__ = [
     # Core
     "Binner",
     "WOEEncoder",
     # Selection
-    "PreFilter",
+    "FeatureSelector",
     "PostFilter",
     "StepwiseSelector",
     # Metrics
@@ -60,7 +57,5 @@ __all__ = [
     "Scorecard",
     # Pipeline
     "ScorecardPipeline",
-    # Statistics
-    "EDAAnalyzer",
 ]
 

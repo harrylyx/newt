@@ -118,17 +118,26 @@ class ScorecardPipeline:
         ScorecardPipeline
             Self for chaining.
         """
-        from newt.features.selection.prefilter import PreFilter
+        from newt.features.selection.selector import FeatureSelector
 
-        self.prefilter_ = PreFilter(
-            iv_threshold=iv_threshold,
-            missing_threshold=missing_threshold,
-            corr_threshold=corr_threshold,
+        self.prefilter_ = FeatureSelector(
             iv_bins=iv_bins,
+            metrics=["iv", "missing_rate", "correlation"],  # Explicitly request required metrics
             **kwargs,
         )
 
-        self.X_current = self.prefilter_.fit_transform(self.X_current, self.y_train)
+        # Fit to calculate stats
+        self.prefilter_.fit(self.X_current, self.y_train)
+        
+        # Apply selection
+        self.prefilter_.select(
+            iv_threshold=iv_threshold, 
+            missing_threshold=missing_threshold, 
+            corr_threshold=corr_threshold
+        )
+        
+        # Transform data
+        self.X_current = self.prefilter_.transform(self.X_current)
 
         # Apply same filtering to test data
         if self.X_test_current is not None:

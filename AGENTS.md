@@ -14,9 +14,29 @@ Newt is a lightweight Python toolkit for efficient feature analysis and statisti
   - Scorecard generation
   - Pipeline-style workflow
 
-## 2. Project Architecture
+## 2. Development Environment
 
-### 2.1 Directory Structure
+**IMPORTANT:** Always use `python -m poetry` prefix for all commands - no environment variables configured.
+
+- **OS**: Windows 11
+- **Terminal**: PowerShell
+- **Environment**: No global environment variables configured
+- **Command Prefix**: Always use `python -m` for all Python commands
+
+```bash
+# ❌ Do NOT use direct poetry commands
+poetry run pytest
+poetry run python -m pytest
+pytest
+
+# ✅ Always use python -m prefix
+python -m pytest
+python -m poetry
+```
+
+## 3. Project Architecture
+
+### 3.1 Directory Structure
 
 ```
 newt/
@@ -38,7 +58,7 @@ newt/
 └── examples/            # Examples (currently empty)
 ```
 
-### 2.2 Core Modules
+### 3.2 Core Modules
 
 #### features/binning/
 - `base.py`: BaseBinner (abstract class, defines binning interface)
@@ -50,7 +70,7 @@ newt/
 - `unsupervised.py`: EqualWidthBinner, EqualFrequencyBinner, KMeansBinner
 
 #### features/selection/
-- `prefilter.py`: PreFilter (IV, missing rate, correlation)
+- `selector.py`: FeatureSelector (Unified EDA and filtering: IV, missing rate, correlation)
 - `postfilter.py`: PostFilter (PSI, VIF)
 - `stepwise.py`: StepwiseSelector (forward, backward, bidirectional)
 
@@ -84,9 +104,9 @@ Configuration constants (dataclasses):
 - `ModelingConfig`: DEFAULT_P_ENTER, DEFAULT_P_REMOVE, DEFAULT_CLASSIFICATION_THRESHOLD
 - `ScorecardConfig`: DEFAULT_PDO, DEFAULT_BASE_SCORE, DEFAULT_BASE_ODDS
 
-## 3. Development Standards
+## 4. Development Standards
 
-### 3.1 Naming Conventions
+### 4.1 Naming Conventions
 
 **Strict conventions:**
 
@@ -134,7 +154,7 @@ Configuration constants (dataclasses):
       pass
   ```
 
-### 3.2 Type Annotations
+### 4.2 Type Annotations
 
 **Use typing module:**
 
@@ -157,7 +177,7 @@ Configuration constants (dataclasses):
 
 - **Avoid Any** unless absolutely necessary
 
-### 3.3 Docstrings
+### 4.3 Docstrings
 
 **Use Google-style consistently:**
 
@@ -183,14 +203,14 @@ def calculate_iv(
     """
 ```
 
-### 3.4 Code Formatting
+### 4.4 Code Formatting
 
 - Use `black` for code formatting
 - Use `isort` for import sorting
 - Pass `flake8` checks
 - Pre-commit automation enabled
 
-### 3.5 Configuration Usage
+### 4.5 Configuration Usage
 
 **Use constants from config.py to avoid magic numbers:**
 
@@ -206,9 +226,9 @@ def __init__(self, n_bins: int = 5):
     self.n_bins = n_bins
 ```
 
-## 4. Testing Standards
+## 5. Testing Standards
 
-### 4.1 Test Structure
+### 5.1 Test Structure
 
 ```
 tests/
@@ -225,26 +245,26 @@ tests/
     └── test_pipeline.py
 ```
 
-### 4.2 Test Naming
+### 5.2 Test Naming
 
 - Use `test_<function>_<scenario>` format
 - Use parametrized tests with `@pytest.mark.parametrize`
 
-### 4.3 Coverage Target
+### 5.3 Coverage Target
 
 - **Target**: 70% coverage
 - New features must have tests with >60% coverage
 - Bug fixes must include regression tests
 
-## 5. Git Standards
+## 6. Git Standards
 
-### 5.1 Branch Strategy
+### 6.1 Branch Strategy
 
 - `main`: Primary branch
 - `feature/<name>`: Feature development branches
 - `bugfix/<num>`: Bugfix branches
 
-### 5.2 Commit Messages
+### 6.2 Commit Messages
 
 - Format: `<type>(<scope>): <subject>`
 - Types: `feat`, `fix`, `docs`, `refactor`, `test`
@@ -253,7 +273,7 @@ tests/
   - `fix(woe): handle missing values in transform`
   - `docs: update AGENTS.md`
 
-### 5.3 PR Process
+### 6.3 PR Process
 
 1. Create branch from `main`
 2. Develop and test
@@ -262,33 +282,33 @@ tests/
 5. Code review
 6. Merge to `main`
 
-## 6. Common Commands
+## 7. Common Commands
 
 ```bash
 # Install dependencies
-poetry install
+python -m poetry install
 
 # Format code
-poetry run black .
-poetry run isort .
+python -m poetry run black .
+python -m poetry run isort .
 
 # Run linter
-poetry run flake8 src tests
+python -m poetry run flake8 src tests
 
 # Run all tests
-poetry run pytest
+python -m poetry run pytest
 
 # Run specific test
-poetry run pytest tests/unit/features/binning/test_binning.py
+python -m poetry run pytest tests/unit/features/binning/test_binning.py
 
 # Run tests with coverage
-poetry run pytest --cov=src/newt --cov-report=html
+python -m poetry run pytest --cov=src/newt --cov-report=html
 
 # Run pre-commit checks
 pre-commit run --all-files
 ```
 
-## 7. CI/CD
+## 8. CI/CD
 
 **GitHub Actions Workflows:**
 

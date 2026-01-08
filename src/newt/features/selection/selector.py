@@ -63,16 +63,23 @@ class FeatureSelector:
     Workflow:
     1. Initialize with desired metrics.
     2. Call `fit(X, y)` to calculate statistics (EDA).
-    3. Call `report()` to view the analysis credentials.
+    3. Call `report()` to view the analysis results.
     4. Call `select()` with thresholds to filter features.
     5. Call `transform(X)` to apply the selection.
+
+    Notes
+    -----
+    - The 'correlation' metric calculates correlation between each feature (X) and target (y).
+    - Feature-to-feature correlation matrix is computed in `fit()` and accessible via `corr_matrix` property.
+    - In `select()`, `corr_threshold` removes highly correlated feature pairs, keeping the one with higher IV.
 
     Examples
     --------
     >>> fs = FeatureSelector(metrics=['iv', 'missing_rate', 'ks'])
     >>> fs.fit(X, y)
     >>> print(fs.report())
-    >>> fs.select(iv_threshold=0.02, missing_threshold=0.9)
+    >>> print(fs.corr_matrix)  # View feature-to-feature correlations
+    >>> fs.select(iv_threshold=0.02, missing_threshold=0.9, corr_threshold=0.8)
     >>> X_filtered = fs.transform(X)
     """
 
@@ -157,7 +164,9 @@ class FeatureSelector:
         Args:
             iv_threshold: Minimum IV to keep a feature.
             missing_threshold: Maximum missing rate to keep a feature.
-            corr_threshold: Maximum correlation allowed between features.
+            corr_threshold: Maximum absolute correlation allowed between features.
+                When two features have correlation >= threshold, the one with
+                lower IV is removed.
 
         Returns:
             self
@@ -350,7 +359,9 @@ class FeatureSelector:
         sub_matrix = self.corr_matrix_.loc[valid_candidates, valid_candidates]
         high_corr_pairs = get_high_correlation_pairs(sub_matrix, threshold)
         
-        to_remove = set()
+        to_remove: Set[str] = set()
+        # Track all high-correlation relationships for each removed feature
+        corr_reasons: Dict[str, List[Tuple[str, float]]] = {}
         
         # Create a mapping of IVs for decision making
         iv_map = self.eda_summary_.set_index("feature")["iv"].to_dict()
@@ -361,6 +372,11 @@ class FeatureSelector:
             corr = pair["correlation"]
             
             if var1 in to_remove or var2 in to_remove:
+                # Still record the correlation for detailed reason
+                if var1 in to_remove:
+                    corr_reasons.setdefault(var1, []).append((var2, corr))
+                if var2 in to_remove:
+                    corr_reasons.setdefault(var2, []).append((var1, corr))
                 continue
                 
             iv1 = iv_map.get(var1, 0)
@@ -369,11 +385,18 @@ class FeatureSelector:
             if iv1 >= iv2:
                 to_remove.add(var2)
                 self.corr_removed_.append((var2, var1, corr))
-                self.removed_features_[var2] = f"corr_with_{var1}={corr:.3f}"
+                corr_reasons.setdefault(var2, []).append((var1, corr))
             else:
                 to_remove.add(var1)
                 self.corr_removed_.append((var1, var2, corr))
-                self.removed_features_[var1] = f"corr_with_{var2}={corr:.3f}"
+                corr_reasons.setdefault(var1, []).append((var2, corr))
+
+        # Build detailed reason strings
+        for removed_var, related_vars in corr_reasons.items():
+            # Sort by correlation descending
+            related_vars.sort(key=lambda x: abs(x[1]), reverse=True)
+            reason_parts = [f"{v}({c:.3f})" for v, c in related_vars]
+            self.removed_features_[removed_var] = f"high_corr: {', '.join(reason_parts)}"
 
         final_selection.extend([c for c in valid_candidates if c not in to_remove])
         return final_selection
@@ -401,3 +424,18 @@ class FeatureSelector:
         # But commonly transform follows select.
         available = [c for c in self.selected_features_ if c in X.columns]
         return X[available]
+
+    @property
+    @requires_fit()
+    def corr_matrix(self) -> pd.DataFrame:
+        """
+        Get the feature-to-feature correlation matrix.
+
+        This matrix is computed during `fit()` for all numeric features.
+        It shows pairwise correlations between features (X columns),
+        NOT the correlation between features and target (y).
+
+        Returns:
+            pd.DataFrame: Correlation matrix of shape (n_features, n_features).
+        """
+        return self.corr_matrix_.copy()

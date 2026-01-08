@@ -4,7 +4,7 @@ Binning visualization utilities.
 Provides visualization for binning results, WOE/IV analysis, etc.
 """
 
-from typing import Any, Dict, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple, Union
 
 import numpy as np
 import pandas as pd
@@ -38,28 +38,37 @@ def plot_binning_result(
     woe_encoder: Optional[Any] = None,
     figsize: Tuple[int, int] = (12, 6),
     title: Optional[str] = None,
+    x_col: str = "bin",
+    y_col: Union[str, List[str]] = ["bad_prop"],
+    secondary_y_col: Optional[Union[str, List[str]]] = "bad_rate",
 ) -> Any:
     """
     Plot binning result for a single feature.
 
-    Shows bar chart of sample counts per bin with event rate line overlay.
+    Supports generic columns for axes. Defaults to Good/Bad bars and Event Rate line.
 
     Parameters
     ----------
     binner : Binner
         Fitted Binner object.
     X : pd.DataFrame
-        Feature data.
+        Feature data (preserved for API compatibility, not used if binner has stats).
     y : pd.Series
-        Target variable.
+        Target variable (preserved for API compatibility).
     feature : str
         Feature name to plot.
     woe_encoder : WOEEncoder, optional
-        WOE encoder for showing WOE values.
+        WOE encoder (preserved for API compatibility).
     figsize : Tuple[int, int]
         Figure size. Default (12, 6).
     title : str, optional
         Plot title.
+    x_col : str
+        Column to use for x-axis labels. Default 'bin'.
+    y_col : str or list
+        Column(s) to plot as bars on primary y-axis. Default ['bad_prop'].
+    secondary_y_col : str or list, optional
+        Column(s) to plot as lines on secondary y-axis. Default 'bad_rate'.
 
     Returns
     -------
@@ -68,83 +77,106 @@ def plot_binning_result(
     """
     _check_matplotlib()
 
-    if feature not in X.columns:
-        raise ValueError(f"Feature '{feature}' not in X columns.")
+    if feature not in binner.binners_:
+        raise ValueError(f"Feature '{feature}' not found in binner.")
 
-    # Get binned data
-    X_binned = binner.transform(X[[feature]], labels=True)
-    binned_col = X_binned[feature]
-
-    # Create stats DataFrame
-    df = pd.DataFrame({"bin": binned_col, "target": y})
-    stats = (
-        df.groupby("bin", observed=True)
-        .agg(
-            count=("target", "count"),
-            bad=("target", "sum"),
-        )
-        .reset_index()
-    )
-    stats["good"] = stats["count"] - stats["bad"]
-    stats["event_rate"] = stats["bad"] / stats["count"]
-
-    # Add WOE if encoder provided
-    if woe_encoder is not None:
-        # Get WOE map for lookup
-        _binned_codes = binner.transform(X[[feature]], labels=False)  # noqa: F841
-        woe_map = woe_encoder.woe_map_ if hasattr(woe_encoder, "woe_map_") else {}
-        stats["woe"] = (
-            stats["bin"]
-            .astype(str)
-            .map(lambda x: woe_map.get(x, 0) if isinstance(x, str) else 0)
-        )
-
-    # Sort by bin
-    stats = stats.sort_values("bin").reset_index(drop=True)
-
+    # Get pre-calculated statistics
+    stats = binner[feature].stats.copy()
+    
+    # Ensure stats sorted by bin index if present, else just use as is
+    # stats usually comes sorted from binner
+    
     # Create figure
     fig, ax1 = plt.subplots(figsize=figsize)
 
-    # Bar chart for counts
     x_pos = np.arange(len(stats))
-    width = 0.35
+    
+    # Handle primary Y (Bars)
+    if isinstance(y_col, str):
+        y_cols = [y_col]
+    else:
+        y_cols = y_col
 
-    ax1.bar(
-        x_pos - width / 2,
-        stats["good"],
-        width,
-        label="Good",
-        color="steelblue",
-        alpha=0.8,
-    )
-    ax1.bar(
-        x_pos + width / 2, stats["bad"], width, label="Bad", color="coral", alpha=0.8
-    )
+    # Plot bars
+    width = 0.8 / len(y_cols)
+    colors = ["steelblue", "coral", "gold", "forestgreen", "purple"] # Default color cycle
+    
+    for i, col in enumerate(y_cols):
+        if col not in stats.columns:
+            print(f"Warning: Column '{col}' not in stats, skipping.")
+            continue
+            
+        offset = (i - len(y_cols) / 2) * width + width / 2
+        ax1.bar(
+            x_pos + offset,
+            stats[col],
+            width,
+            label=col,
+            color=colors[i % len(colors)],
+            alpha=0.8,
+        )
 
-    ax1.set_xlabel("Bin")
-    ax1.set_ylabel("Count")
+    ax1.set_xlabel(x_col)
+    ax1.set_ylabel(" / ".join(y_cols))
     ax1.set_xticks(x_pos)
-    ax1.set_xticklabels([str(b)[:20] for b in stats["bin"]], rotation=45, ha="right")
+    
+    # Format x-labels
+    x_labels = [str(x)[:20] for x in stats[x_col]]
+    ax1.set_xticklabels(x_labels, rotation=45, ha="right")
 
-    # Event rate line on secondary axis
-    ax2 = ax1.twinx()
-    ax2.plot(
-        x_pos, stats["event_rate"], "g-o", label="Event Rate", linewidth=2, markersize=8
-    )
-    ax2.set_ylabel("Event Rate", color="green")
-    ax2.tick_params(axis="y", labelcolor="green")
-    ax2.set_ylim(0, max(stats["event_rate"]) * 1.2 + 0.01)
-
-    # Legend
+    # Legend 1
     handles1, labels1 = ax1.get_legend_handles_labels()
-    handles2, labels2 = ax2.get_legend_handles_labels()
-    ax1.legend(handles1 + handles2, labels1 + labels2, loc="upper right")
+    
+    # Handle secondary Y (Line)
+    if secondary_y_col:
+        if isinstance(secondary_y_col, str):
+            sec_cols = [secondary_y_col]
+        else:
+            sec_cols = secondary_y_col
+            
+        ax2 = ax1.twinx()
+        line_colors = ["green", "red", "blue", "black"]
+        
+        for i, col in enumerate(sec_cols):
+            if col not in stats.columns:
+                print(f"Warning: Column '{col}' not in stats, skipping.")
+                continue
+                
+            ax2.plot(
+                x_pos, 
+                stats[col], 
+                marker="o", 
+                linewidth=2, 
+                label=col,
+                color=line_colors[i % len(line_colors)]
+            )
+            
+            # Auto-scale Y2 to look nice (start from 0)
+            if all(stats[col] >= 0) and all(stats[col] <= 1):
+                 ax2.set_ylim(0, max(stats[col].max() * 1.2, 0.01))
+            else:
+                 # Generic scaling
+                 ymin, ymax = stats[col].min(), stats[col].max()
+                 span = ymax - ymin
+                 ax2.set_ylim(ymin - span*0.1, ymax + span*0.1)
+
+        ax2.set_ylabel(" / ".join(sec_cols))
+        
+        # Merge legends
+        handles2, labels2 = ax2.get_legend_handles_labels()
+        ax1.legend(handles1 + handles2, labels1 + labels2, loc="upper left")
+    else:
+        ax1.legend(handles1, labels1, loc="upper left")
 
     # Title
     if title is None:
         title = f"Binning Result: {feature}"
     plt.title(title)
     plt.tight_layout()
+
+    # Close the figure to prevent automatic display in notebooks (double plotting)
+    # The figure object is still returned and can be displayed explicitly or by notebook cell return
+    plt.close(fig)
 
     return fig
 

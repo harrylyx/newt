@@ -1,4 +1,4 @@
-from typing import List, Optional
+from typing import List, Optional, Union
 
 import numpy as np
 import pandas as pd
@@ -21,11 +21,11 @@ class DecisionTreeBinner(BaseBinner):
     def __init__(
         self,
         n_bins: int = 5,
-        force_monotonic: bool = False,
+        monotonic: Union[bool, str, None] = None,
         min_samples_leaf: float = 0.05,
         **kwargs,
     ):
-        super().__init__(n_bins=n_bins, force_monotonic=force_monotonic, **kwargs)
+        super().__init__(n_bins=n_bins, monotonic=monotonic, **kwargs)
         self.min_samples_leaf = min_samples_leaf
 
     def _fit_splits(self, X: pd.Series, y: Optional[pd.Series] = None) -> List[float]:
@@ -63,12 +63,12 @@ class ChiMergeBinner(BaseBinner):
     def __init__(
         self,
         n_bins: int = 5,
-        force_monotonic: bool = False,
+        monotonic: Union[bool, str, None] = None,
         alpha: float = 0.05,
         min_samples: float = 0.05,
         **kwargs,
     ):
-        super().__init__(n_bins=n_bins, force_monotonic=force_monotonic, **kwargs)
+        super().__init__(n_bins=n_bins, monotonic=monotonic, **kwargs)
         self.alpha = alpha
         self.min_samples = min_samples
 
@@ -254,10 +254,23 @@ class ChiMergeBinner(BaseBinner):
 class OptBinningBinner(BaseBinner):
     """
     Bins using the OptBinning library.
+    
+    Supports monotonic constraints via the monotonic parameter:
+    - None/False: no constraint (monotonic_trend="auto")
+    - True/"auto": auto-detect direction (monotonic_trend="auto_asc_desc")
+    - "ascending": force increasing bad rate (monotonic_trend="ascending")
+    - "descending": force decreasing bad rate (monotonic_trend="descending")
     """
 
-    def __init__(self, n_bins: int = 5, force_monotonic: bool = False, **kwargs):
-        super().__init__(n_bins=n_bins, force_monotonic=force_monotonic)
+    def __init__(
+        self,
+        n_bins: int = 5,
+        monotonic: Union[bool, str, None] = None,
+        **kwargs,
+    ):
+        # OptBinning handles monotonicity internally, so we don't pass to base
+        super().__init__(n_bins=n_bins, monotonic=None)
+        self.monotonic_setting = monotonic
         self.kwargs = kwargs
 
     def _fit_splits(self, X: pd.Series, y: Optional[pd.Series] = None) -> List[float]:
@@ -270,14 +283,23 @@ class OptBinningBinner(BaseBinner):
         if y is None:
             raise ValueError("OptBinningBinner requires target 'y'.")
 
-        # Prepare OptBinning
-        # Map n_bins to max_n_bins?
-        # OptBinning uses max_n_prebins, max_n_bins.
+        # Map monotonic parameter to OptBinning's monotonic_trend
+        if self.monotonic_setting is None or self.monotonic_setting is False:
+            monotonic_trend = "auto"
+        elif self.monotonic_setting is True or self.monotonic_setting == "auto":
+            monotonic_trend = "auto_asc_desc"
+        elif self.monotonic_setting == "ascending":
+            monotonic_trend = "ascending"
+        elif self.monotonic_setting == "descending":
+            monotonic_trend = "descending"
+        else:
+            monotonic_trend = "auto"
+
         opt = OptimalBinning(
             name="feature",
             dtype="numerical",
             max_n_bins=self.n_bins,
-            monotonic_trend="auto_asc_desc" if self.force_monotonic else "auto",
+            monotonic_trend=monotonic_trend,
             **self.kwargs,
         )
 

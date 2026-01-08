@@ -1,10 +1,13 @@
 from abc import ABC, abstractmethod
-from typing import List, Optional
+from typing import List, Optional, Union
 
 import numpy as np
 import pandas as pd
 
 from newt.config import BINNING
+
+# Valid monotonic trend values
+MONOTONIC_TRENDS = frozenset(["ascending", "descending", "auto"])
 
 
 class BaseBinner(ABC):
@@ -14,10 +17,13 @@ class BaseBinner(ABC):
     """
 
     def __init__(
-        self, n_bins: int = BINNING.DEFAULT_N_BINS, force_monotonic: bool = False, **kwargs
+        self,
+        n_bins: int = BINNING.DEFAULT_N_BINS,
+        monotonic: Union[bool, str, None] = None,
+        **kwargs,
     ):
         self.n_bins = n_bins
-        self.force_monotonic = force_monotonic
+        self.monotonic = monotonic
         self.splits_ = []  # List of break points (float)
         self.is_fitted_ = False
 
@@ -39,7 +45,7 @@ class BaseBinner(ABC):
         splits = sorted(list(set(splits)))  # Ensure unique and sorted
 
         # 2. Monotonicity adjustment if requested
-        if self.force_monotonic and y is not None:
+        if self.monotonic and y is not None:
             splits = self._adjust_monotonicity(X, y, splits)
 
         # 3. Finalize splits
@@ -77,6 +83,12 @@ class BaseBinner(ABC):
     ) -> List[float]:
         """
         Iteratively merge bins to ensure monotonic event rate.
+        
+        Uses PAVA (Pool Adjacent Violators Algorithm) approach.
+        Direction is determined by:
+        - monotonic="ascending": force increasing bad rate
+        - monotonic="descending": force decreasing bad rate  
+        - monotonic=True or "auto": auto-detect from data
         """
         if not splits:
             return []
@@ -99,29 +111,23 @@ class BaseBinner(ABC):
                 break
 
             # Check increasing or decreasing
-            # We assume Spearman correlation determines direction,
-            # or we check if it's strictly monotonic.
-            # Simple check: calculate Spearman
-            # If correlation is low, we might be far from monotonic.
-
-            # Identify violation
-            # For simplicity, we just check if sorted(rates) == rates.
             is_increasing = np.all(np.diff(rates) >= 0)
             is_decreasing = np.all(np.diff(rates) <= 0)
 
             if is_increasing or is_decreasing:
                 break  # Satisfied
 
-            # Not monotonic. Find the pair causing violation (simplest heuristic)
-            # We need to decide direction. Usually determined by overall trend.
-            # Let's use correlation with bin index to decide intended direction.
-            # Assuming bin index 0..N
-            # If target vs X is positive corr, we want increasing rates.
-
-            # corr, _ = scipy.stats.spearmanr(...) # Deprecated input
-            # Use X vs y correlation?
-            # Let's assume direction from first and last bin comparison
-            direction = 1 if rates[-1] > rates[0] else -1
+            # Determine intended direction
+            if isinstance(self.monotonic, str):
+                if self.monotonic == "ascending":
+                    direction = 1
+                elif self.monotonic == "descending":
+                    direction = -1
+                else:  # "auto"
+                    direction = 1 if rates[-1] > rates[0] else -1
+            else:
+                # monotonic=True, auto-detect
+                direction = 1 if rates[-1] > rates[0] else -1
 
             # Find first violation
             violation_idx = -1
@@ -137,20 +143,7 @@ class BaseBinner(ABC):
                         break
 
             if violation_idx != -1:
-                # Merge bin i and i+1
-                # This means removing the split between them.
-                # bins are defined by boundaries: -inf, s0, s1, ... sn, inf
-                # rates[0] corresponds to (-inf, s0]
-                # rates[i] corresponds to (si-1, si]
-                # violation at i means bin i and bin i+1 need merge.
-                # bin i: boundary at index i (in splits list).
-                # Wait, splits[i] is the UPPER bound of bin i (if 0-indexed).
-                # bins: -inf (idx -1), split0 (idx 0), split1 (idx 1)...
-                # bin 0 uses split0 as upper.
-                # bin i uses split_i as upper.
-                # removing split_i merges bin i and bin i+1.
-
-                # So we remove current_splits[violation_idx]
+                # Merge bin i and i+1 by removing the split between them
                 current_splits.pop(violation_idx)
             else:
                 # Should have found violation if not monotonic

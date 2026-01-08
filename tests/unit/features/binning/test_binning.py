@@ -77,13 +77,13 @@ def test_chimerge(binning_data):
 def test_monotonicity_adjustment(binning_data):
     X, y = binning_data
     # 1. Fit without monotonic
-    binner = EqualFrequencyBinner(n_bins=10, force_monotonic=False)
+    binner = EqualFrequencyBinner(n_bins=10, monotonic=False)
     binner.fit(X, y)
 
     splits_non_mono = binner.splits_
 
     # 2. Fit with monotonic
-    binner_mono = EqualFrequencyBinner(n_bins=10, force_monotonic=True)
+    binner_mono = EqualFrequencyBinner(n_bins=10, monotonic=True)
     binner_mono.fit(X, y)
 
     splits_mono = binner_mono.splits_

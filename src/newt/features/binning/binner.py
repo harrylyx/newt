@@ -18,6 +18,70 @@ from .unsupervised import EqualFrequencyBinner, EqualWidthBinner, KMeansBinner
 from .woe_storage import WOEStorage
 
 
+
+class BinningResult:
+    """
+    Proxy object for accessing binning results of a single feature.
+    
+    Attributes
+    ----------
+    stats : pd.DataFrame
+        Binning statistics.
+    """
+    def __init__(self, binner: "Binner", feature: str):
+        self._binner = binner
+        self._feature = feature
+        
+        # Ensure stats are calculated
+        if feature not in binner.stats_:
+            binner._calculate_and_store_stats(feature)
+        
+        self.stats = binner.stats_[feature]
+
+    def plot(self, x: str = "bin", y: Union[str, List[str]] = ["bad_prop"], secondary_y: Optional[Union[str, List[str]]] = "bad_rate", **kwargs):
+        """
+        Plot binning results for this feature.
+        
+        Parameters
+        ----------
+        x : str
+            Column for x-axis. Default 'bin'.
+        y : str or list
+            Column(s) for primary y-axis (bar). Default ['bad_prop'].
+        secondary_y : str or list, optional
+            Column(s) for secondary y-axis (line). Default 'bad_rate'.
+        **kwargs : 
+            Arguments passed to plot_binning_result.
+        """
+        from newt.visualization.binning_viz import plot_binning_result
+        
+        if self._binner._X is None or self._binner._y is None:
+             print("Plotting requires X and y data to be present in Binner.")
+             return
+
+        return plot_binning_result(
+            binner=self._binner,
+            X=self._binner._X,
+            y=self._binner._y,
+            feature=self._feature,
+            woe_encoder=self._binner.woe_storage.get(self._feature),
+            x_col=x,
+            y_col=y,
+            secondary_y_col=secondary_y,
+            **kwargs
+        )
+
+    def woe_map(self) -> Dict[Any, float]:
+        """Get WOE mapping for this feature."""
+        return self._binner.get_woe_map(self._feature)
+    
+    def __repr__(self):
+        return self.stats.__repr__()
+    
+    def _repr_html_(self):
+        return self.stats._repr_html_()
+
+
 class Binner(BinnerStatsMixin, BinnerIOMixin, BinnerWOEMixin):
     """
     A unified interface for binning multiple features using various algorithms.
@@ -25,7 +89,7 @@ class Binner(BinnerStatsMixin, BinnerIOMixin, BinnerWOEMixin):
     Supported methods: 'chi', 'dt', 'kmean', 'quantile', 'step', 'opt'.
 
     Features:
-    - Access binning info with binner['feature_name'] after fitting
+    - Access binning info with binner['feature_name'] -> returns BinningResult
     - Missing values are automatically binned separately
     - WOE encoders are stored for scorecard generation
 
@@ -33,8 +97,9 @@ class Binner(BinnerStatsMixin, BinnerIOMixin, BinnerWOEMixin):
     --------
     >>> binner = Binner()
     >>> binner.fit(X, y, method='opt', n_bins=5)
-    >>> print(binner['age'])  # View binning stats
-    >>> binner.set_splits('age', [25, 35, 45, 55])  # Adjust splits
+    >>> binner['age'].stats         # View stats DataFrame
+    >>> binner['age'].plot()        # Plot results
+    >>> binner['age'].woe_map()     # View WOE map
     """
 
     def __init__(self):
@@ -68,6 +133,7 @@ class Binner(BinnerStatsMixin, BinnerIOMixin, BinnerWOEMixin):
         n_bins: int = BINNING.DEFAULT_N_BINS,
         min_samples: Union[int, float, None] = None,
         cols: Optional[List[str]] = None,
+        monotonic: Union[bool, str, None] = None,
         **kwargs,
     ) -> "Binner":
         """
@@ -89,6 +155,12 @@ class Binner(BinnerStatsMixin, BinnerIOMixin, BinnerWOEMixin):
             Minimum samples per leaf (for decision tree).
         cols : List[str]
             List of columns to bin. If None, selects all numeric columns.
+        monotonic : bool, str, or None
+            Enforce monotonic bad rate across bins.
+            - None/False: no constraint
+            - True/"auto": auto-detect direction and enforce monotonicity
+            - "ascending": force bad rate to increase with bin value
+            - "descending": force bad rate to decrease with bin value
 
         Returns
         -------
@@ -118,7 +190,7 @@ class Binner(BinnerStatsMixin, BinnerIOMixin, BinnerWOEMixin):
             if not binner_cls:
                 raise ValueError(f"Unknown method: {method}")
 
-            kwargs_binner = {"n_bins": n_bins}
+            kwargs_binner = {"n_bins": n_bins, "monotonic": monotonic}
 
             if method == "dt" and min_samples is not None:
                 kwargs_binner["min_samples_leaf"] = min_samples
@@ -197,9 +269,59 @@ class Binner(BinnerStatsMixin, BinnerIOMixin, BinnerWOEMixin):
 
         return X_new
 
-    def __getitem__(self, feature: str) -> pd.DataFrame:
+    def woe_transform(self, X: pd.DataFrame) -> pd.DataFrame:
         """
-        Get binning statistics for a feature.
+        Apply WOE transformation to the data.
+
+        Uses the WOE values computed during fit(). This is a convenient
+        method that combines binning and WOE transformation in one step.
+
+        Parameters
+        ----------
+        X : pd.DataFrame
+            Data to transform.
+
+        Returns
+        -------
+        pd.DataFrame
+            WOE-transformed data.
+
+        Examples
+        --------
+        >>> binner = Binner()
+        >>> binner.fit(X_train, y_train, method='opt', n_bins=5)
+        >>> X_woe = binner.woe_transform(X_train)
+        """
+        X_new = X.copy()
+
+        for col in self.binners_.keys():
+            if col not in X_new.columns:
+                continue
+
+            # Get WOE encoder for this feature
+            woe_encoder = self.woe_storage.get(col)
+            if woe_encoder is None:
+                continue
+
+            # First bin the data
+            col_data = X[col]
+            valid_mask = col_data.notna()
+            binned = pd.Series(index=col_data.index, dtype=object)
+
+            if valid_mask.any():
+                valid_binned = self.binners_[col].transform(col_data[valid_mask])
+                binned[valid_mask] = valid_binned.astype(str)
+
+            binned[~valid_mask] = self._missing_label
+
+            # Apply WOE transformation
+            X_new[col] = woe_encoder.transform(binned)
+
+        return X_new
+
+    def __getitem__(self, feature: str) -> Union[BinningResult, pd.DataFrame]:
+        """
+        Get binning result proxy for a feature.
 
         Parameters
         ----------
@@ -208,21 +330,72 @@ class Binner(BinnerStatsMixin, BinnerIOMixin, BinnerWOEMixin):
 
         Returns
         -------
-        pd.DataFrame
-            Binning statistics for the feature.
-
-        Examples
-        --------
-        >>> binner.fit(X, y, method='opt')
-        >>> print(binner['age'])
+        BinningResult
+            Proxy object with stats and plot methods.
         """
         if feature not in self.binners_:
             raise KeyError(f"Feature '{feature}' not found in binner.")
 
-        if feature not in self.stats_:
-            self._calculate_and_store_stats(feature)
+        return BinningResult(self, feature)
 
-        return self.stats_.get(feature, pd.DataFrame())
+    def stats(self) -> Dict[str, pd.DataFrame]:
+        """Get dictionary of statistics for all features."""
+        try:
+            from IPython.display import display
+            HAS_IPYTHON = True
+        except ImportError:
+            HAS_IPYTHON = False
+        
+        result = {}
+        for feat in self._features:
+            if feat in self.binners_:
+                result[feat] = self[feat].stats
+                print(f"--- Binning Result: {feat} ---")
+                
+                # Render stats table
+                if HAS_IPYTHON:
+                    display(self[feat].stats)
+                else:
+                    print(self[feat].stats)
+        
+        return result
+
+    def stats_plot(self):
+        """Display stats and plot for all features."""
+        try:
+            from IPython.display import display, HTML
+            HAS_IPYTHON = True
+        except ImportError:
+            HAS_IPYTHON = False
+        
+        for feat in self._features:
+            if feat in self.binners_:
+                print(f"--- Binning Result: {feat} ---")
+                
+                # Render stats table
+                if HAS_IPYTHON:
+                    display(self[feat].stats)
+                else:
+                    print(self[feat].stats)
+                
+                # Plot
+                fig = self[feat].plot()
+                if HAS_IPYTHON:
+                    display(fig)
+                else:
+                    try:
+                        import matplotlib.pyplot as plt
+                        plt.show()
+                    except ImportError:
+                        pass
+
+    def woe_map(self) -> Dict[str, Dict[Any, float]]:
+        """Get WOE maps for all features."""
+        return {
+            feat: self.get_woe_map(feat) 
+            for feat in self._features 
+            if feat in self.binners_
+        }
 
     def __contains__(self, feature: str) -> bool:
         """Check if feature is in binner."""

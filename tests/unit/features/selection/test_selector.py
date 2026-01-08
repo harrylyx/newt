@@ -50,7 +50,8 @@ def test_select_filtering(sample_data):
     
     # 1. Test missing rate filtering
     # x4 has 100% missing, should be removed
-    fs.select(missing_threshold=0.5)
+    # Set corr_threshold=1.01 to disable correlation filtering for this step
+    fs.select(missing_threshold=0.5, corr_threshold=1.01)
     print(f"\nMissing filter results: Removed={fs.removed_features_}")
     assert "x4" in fs.removed_features_, f"x4 should be removed (missing=1.0). Removed: {fs.removed_features_}"
     assert "x1" not in fs.removed_features_, f"x1 should not be removed. Removed: {fs.removed_features_}"
@@ -61,7 +62,8 @@ def test_select_filtering(sample_data):
     # x1 values: 1->0, 2->0, 3->0, 4->1, 5->1.
     # x2 values: A, B. A corresponds to 1, 3, 5... Mixed. 
     # With 100 samples, x2 might have non-zero IV but much lower than x1.
-    fs.select(iv_threshold=0.1) 
+    # Set corr_threshold=1.01 to disable correlation filtering for this step
+    fs.select(iv_threshold=0.1, corr_threshold=1.01) 
     print(f"IV filter results: Removed={fs.removed_features_}")
     
     # x1 and x3 should be kept (IV high)
@@ -106,10 +108,34 @@ def test_select_without_fit_raises_error():
 
 def test_select_missing_metrics_raises_error(sample_data):
     X, y = sample_data
-    # Initialize without IV
-    fs = FeatureSelector(metrics=["mean"])
+    # Initialize without IV but with missing_rate (which is checked first)
+    fs = FeatureSelector(metrics=["mean", "missing_rate"])
     fs.fit(X, y)
     
     with pytest.raises(ValueError, match="Metric 'iv' was not calculated"):
         fs.select()
+
+
+def test_corr_matrix_property(sample_data):
+    """Test that corr_matrix property returns feature-to-feature correlations."""
+    X, y = sample_data
+    fs = FeatureSelector()
+    fs.fit(X, y)
+    
+    # Access the corr_matrix property
+    corr_matrix = fs.corr_matrix
+    
+    # Should be a DataFrame
+    assert isinstance(corr_matrix, pd.DataFrame)
+    
+    # Should only contain numeric columns (x1, x3 - x2 is categorical, x4 is all NaN)
+    assert "x1" in corr_matrix.columns
+    assert "x3" in corr_matrix.columns
+    
+    # x1 and x3 are perfectly correlated
+    assert corr_matrix.loc["x1", "x3"] == pytest.approx(1.0)
+    
+    # corr_matrix is feature-to-feature, NOT feature-to-target
+    # So it should NOT contain target (y) as a column
+    assert "y" not in corr_matrix.columns
 

@@ -20,7 +20,6 @@ from newt.metrics.ks import calculate_ks
 from newt.metrics.lift import calculate_lift_at_k
 from newt.utils.decorators import requires_fit
 
-
 # Default metrics that do not require a label
 BASIC_METRICS = frozenset(
     [
@@ -110,18 +109,17 @@ class FeatureSelector:
             invalid = set(metrics) - ALL_METRICS
             if invalid:
                 raise ValueError(
-                    f"Invalid metrics: {invalid}. "
-                    f"Available metrics: {sorted(ALL_METRICS)}"
+                    f"Invalid metrics: {invalid}. " f"Available metrics: {sorted(ALL_METRICS)}"
                 )
             self.metrics = set(metrics)
-        
+
         # Ensure mandatory metrics for filtering are present if they might be used
         # We don't force them here, but `select` will complain if they are missing
-        
+
         # Analysis Results
         self.eda_summary_: pd.DataFrame = pd.DataFrame()
         self._last_results: Dict[str, Dict[str, Any]] = {}
-        
+
         # Selection Results
         self.selected_features_: List[str] = []
         self.removed_features_: Dict[str, str] = {}
@@ -142,14 +140,16 @@ class FeatureSelector:
         """
         self._analyze_dataframe(X, y)
         self.is_fitted_ = True
-        
+
         # Initialize selected features to all features initially (before any select call)
         # This allows user to see full report or transform (keeping all) if they skip select
-        self.selected_features_ = list(self.eda_summary_["feature"]) if not self.eda_summary_.empty else []
+        self.selected_features_ = (
+            list(self.eda_summary_["feature"]) if not self.eda_summary_.empty else []
+        )
         self.removed_features_ = {}
         self.corr_removed_ = []
         self.is_selected_ = False
-        
+
         return self
 
     def select(
@@ -177,9 +177,11 @@ class FeatureSelector:
         # Check if required metrics are available
         available_cols = self.eda_summary_.columns
         if "missing_rate" not in available_cols:
-             raise ValueError("Metric 'missing_rate' was not calculated. Cannot filter by missing rate.")
+            raise ValueError(
+                "Metric 'missing_rate' was not calculated. Cannot filter by missing rate."
+            )
         if "iv" not in available_cols:
-             raise ValueError("Metric 'iv' was not calculated. Cannot filter by IV.")
+            raise ValueError("Metric 'iv' was not calculated. Cannot filter by IV.")
 
         df = self.eda_summary_.set_index("feature")
         self.removed_features_ = {}
@@ -189,11 +191,11 @@ class FeatureSelector:
         for feature in df.index:
             missing_rate = df.loc[feature, "missing_rate"]
             iv = df.loc[feature, "iv"]
-            
+
             # Handle NaN IV (e.g. calculation failed)
             if pd.isna(iv):
-                 self.removed_features_[feature] = "iv_nan"
-                 continue
+                self.removed_features_[feature] = "iv_nan"
+                continue
 
             if missing_rate > missing_threshold:
                 self.removed_features_[feature] = f"missing_rate={missing_rate:.3f}"
@@ -205,44 +207,44 @@ class FeatureSelector:
         # Step 2: Correlation Filter (Pairwise)
         # We need the original data for this, but we don't store X in self to save memory.
         # This presents a challenge: select() separates the thresholding from data access.
-        # However, typically `select` is called right after `fit`. 
-        # But if we strictly follow the requested flow "init -> fit -> report -> select", 
+        # However, typically `select` is called right after `fit`.
+        # But if we strictly follow the requested flow "init -> fit -> report -> select",
         # `select` doesn't strictly take X as input.
-        
+
         # NOTE: Standard sklearn selectors (like SelectFromModel) usually do selection in fit.
         # If we want dynamic selection without re-fitting (re-calculating stats), we need X for correlation.
         # OR we could pre-calculate the correlation matrix in fit() if 'correlation' is in metrics?
         # But 'correlation' metric usually means feature-target correlation.
         # Pairwise correlation matrix is heavy to store for wide datasets.
-        
+
         # Compromise: We will NOT do pairwise correlation filtering inside `select` if we don't have X.
         # BUT, to properly support the user request "PreFilter... delete thresholds... select",
         # we realistically need X to remove correlated pairs.
         # Let's change `select` signature to *allow* passing X, or warn if correlation filtering is requested but X is missing?
-        # A better approach given the constraints: 
-        # We can store the correlation matrix in `fit` if the dataset isn't massive, or just compute it on the fly if 
+        # A better approach given the constraints:
+        # We can store the correlation matrix in `fit` if the dataset isn't massive, or just compute it on the fly if
         # the user passes X to select.
-        
+
         # Let's check `PreFilter` standard usage. It usually does everything in fit.
         # To support "dynamic selection", we have two options:
         # 1. Pass X to select(X, ...)
         # 2. Store X (or corr matrix) in fit.
-        
+
         # Given this is "Newt", a "lightweight" toolkit, let's try to not store X.
-        # However, calculating corr matrix is expensive. 
-        # Let's assume for this step we ONLY do IV/Missing filter if X is not provided, 
-        # but since I must implement the file now, I'll update the docstring to say "Correlation filtering requires providing X" 
+        # However, calculating corr matrix is expensive.
+        # Let's assume for this step we ONLY do IV/Missing filter if X is not provided,
+        # but since I must implement the file now, I'll update the docstring to say "Correlation filtering requires providing X"
         # or I will assume the user will call `fit_transform` or we just rely on the user understanding this limitation.
-        
+
         # Wait, the user said "directly combine... user selects thresholds... then report".
         # If I want to support correlation filtering, I need the correlation matrix.
         # I will calculate and store the correlation matrix in `fit` if `corr_threshold` is relevant?
         # No, `fit` doesn't know the threshold yet.
         # I will calculate the correlation matrix in `fit` and store it. It's usually manageable (N_features^2).
-        
+
         # But wait, `fit` receives X. I can compute the correlation matrix there.
         # It's better than storing X.
-        pass # Placeholder for thought process, continuing code implementation below.
+        pass  # Placeholder for thought process, continuing code implementation below.
 
         # Note: I am writing the file content now.
         # I will implement `_calculate_pairwise_corr` in `fit` and store `self.corr_matrix_`.
@@ -251,8 +253,8 @@ class FeatureSelector:
         self.selected_features_ = candidates
         # Perform correlation filtering on candidates
         if len(candidates) > 1:
-             self.selected_features_ = self._remove_correlated(candidates, corr_threshold)
-             
+            self.selected_features_ = self._remove_correlated(candidates, corr_threshold)
+
         self.is_selected_ = True
         return self
 
@@ -267,7 +269,7 @@ class FeatureSelector:
         # Only for numeric columns
         numeric_df = X.select_dtypes(include=[np.number])
         self.corr_matrix_ = calculate_correlation_matrix(numeric_df, method=self.corr_method)
-        
+
         cols = X.columns
         for feat in cols:
             # Analyze single feature
@@ -276,10 +278,10 @@ class FeatureSelector:
 
         self.eda_summary_ = pd.DataFrame(results)
         if not self.eda_summary_.empty:
-             # Reorder columns
-             cols_order = ["feature", "dtype", "count"]
-             other_cols = [c for c in self.eda_summary_.columns if c not in cols_order]
-             self.eda_summary_ = self.eda_summary_[cols_order + sorted(other_cols)]
+            # Reorder columns
+            cols_order = ["feature", "dtype", "count"]
+            other_cols = [c for c in self.eda_summary_.columns if c not in cols_order]
+            self.eda_summary_ = self.eda_summary_[cols_order + sorted(other_cols)]
 
     def _analyze_single(
         self,
@@ -291,16 +293,16 @@ class FeatureSelector:
         # This logic is copied/adapted from EDAAnalyzer
         # (Simplified for brevity but retaining all functionality)
         if not isinstance(X, pd.Series):
-             X = pd.Series(X)
-        
+            X = pd.Series(X)
+
         name = feature_name or X.name or "feature"
         result = {"feature": name}
-        
+
         n_total = len(X)
         is_numeric = pd.api.types.is_numeric_dtype(X)
         result["dtype"] = "numeric" if is_numeric else "categorical"
         result["count"] = n_total
-        
+
         n_missing = X.isna().sum()
         missing_rate = n_missing / n_total if n_total > 0 else 0.0
         if "missing_rate" in self.metrics:
@@ -308,44 +310,60 @@ class FeatureSelector:
 
         X_valid = X.dropna()
         n_valid = len(X_valid)
-        
+
         # Numeric Stats
         if is_numeric and n_valid > 0:
             X_num = X_valid.astype(float)
-            if "min" in self.metrics: result["min"] = float(X_num.min())
-            if "max" in self.metrics: result["max"] = float(X_num.max())
-            if "mean" in self.metrics: result["mean"] = float(X_num.mean())
-            if "median" in self.metrics: result["median"] = float(X_num.median())
-            if "std" in self.metrics: result["std"] = float(X_num.std())
-            if "skewness" in self.metrics: result["skewness"] = float(stats.skew(X_num, nan_policy='omit'))
-            if "kurtosis" in self.metrics: result["kurtosis"] = float(stats.kurtosis(X_num, nan_policy='omit'))
+            if "min" in self.metrics:
+                result["min"] = float(X_num.min())
+            if "max" in self.metrics:
+                result["max"] = float(X_num.max())
+            if "mean" in self.metrics:
+                result["mean"] = float(X_num.mean())
+            if "median" in self.metrics:
+                result["median"] = float(X_num.median())
+            if "std" in self.metrics:
+                result["std"] = float(X_num.std())
+            if "skewness" in self.metrics:
+                result["skewness"] = float(stats.skew(X_num, nan_policy="omit"))
+            if "kurtosis" in self.metrics:
+                result["kurtosis"] = float(stats.kurtosis(X_num, nan_policy="omit"))
             # ... and so on for others if needed
 
         # Label metrics
         if y is not None:
-             mask = ~(X.isna() | y.isna())
-             X_a = X[mask]
-             y_a = y[mask]
-             if len(X_a) > 0:
-                 if "ks" in self.metrics and is_numeric:
-                     try: 
-                         result["ks"] = float(calculate_ks(y_a.values, X_a.astype(float).values))
-                     except: result["ks"] = np.nan
-                 
-                 if "iv" in self.metrics:
-                     try:
-                         iv_res = calculate_iv(pd.DataFrame({"f": X_a, "t": y_a}), "t", "f", buckets=self.iv_bins)
-                         result["iv"] = float(iv_res["iv"])
-                     except: result["iv"] = np.nan
+            mask = ~(X.isna() | y.isna())
+            X_a = X[mask]
+            y_a = y[mask]
+            if len(X_a) > 0:
+                if "ks" in self.metrics and is_numeric:
+                    try:
+                        result["ks"] = float(calculate_ks(y_a.values, X_a.astype(float).values))
+                    except Exception:
+                        result["ks"] = np.nan
 
-                 if "correlation" in self.metrics and is_numeric:
-                     try: result["correlation"] = float(X_a.astype(float).corr(y_a.astype(float)))
-                     except: result["correlation"] = np.nan
+                if "iv" in self.metrics:
+                    try:
+                        iv_res = calculate_iv(
+                            pd.DataFrame({"f": X_a, "t": y_a}),
+                            "t",
+                            "f",
+                            buckets=self.iv_bins,
+                        )
+                        result["iv"] = float(iv_res["iv"])
+                    except Exception:
+                        result["iv"] = np.nan
+
+                if "correlation" in self.metrics and is_numeric:
+                    try:
+                        result["correlation"] = float(X_a.astype(float).corr(y_a.astype(float)))
+                    except Exception:
+                        result["correlation"] = np.nan
 
         else:
-             for m in LABEL_METRICS & self.metrics:
-                 result[m] = np.nan
-                 
+            for m in LABEL_METRICS & self.metrics:
+                result[m] = np.nan
+
         return result
 
     def _remove_correlated(self, candidates: List[str], threshold: float) -> List[str]:
@@ -355,22 +373,22 @@ class FeatureSelector:
         valid_candidates = [c for c in candidates if c in self.corr_matrix_.columns]
         # Keep non-numeric candidates as they aren't in corr matrix
         final_selection = [c for c in candidates if c not in self.corr_matrix_.columns]
-        
+
         sub_matrix = self.corr_matrix_.loc[valid_candidates, valid_candidates]
         high_corr_pairs = get_high_correlation_pairs(sub_matrix, threshold)
-        
+
         to_remove: Set[str] = set()
         # Track all high-correlation relationships for each removed feature
         corr_reasons: Dict[str, List[Tuple[str, float]]] = {}
-        
+
         # Create a mapping of IVs for decision making
         iv_map = self.eda_summary_.set_index("feature")["iv"].to_dict()
-        
+
         for pair in high_corr_pairs:
             var1 = pair["var1"]
             var2 = pair["var2"]
             corr = pair["correlation"]
-            
+
             if var1 in to_remove or var2 in to_remove:
                 # Still record the correlation for detailed reason
                 if var1 in to_remove:
@@ -378,10 +396,10 @@ class FeatureSelector:
                 if var2 in to_remove:
                     corr_reasons.setdefault(var2, []).append((var1, corr))
                 continue
-                
+
             iv1 = iv_map.get(var1, 0)
             iv2 = iv_map.get(var2, 0)
-            
+
             if iv1 >= iv2:
                 to_remove.add(var2)
                 self.corr_removed_.append((var2, var1, corr))
@@ -410,11 +428,13 @@ class FeatureSelector:
             return pd.DataFrame()
 
         df = self.eda_summary_.copy()
-        
+
         # Add status columns
-        df["status"] = df["feature"].apply(lambda x: "selected" if x in self.selected_features_ else "removed")
+        df["status"] = df["feature"].apply(
+            lambda x: "selected" if x in self.selected_features_ else "removed"
+        )
         df["reason"] = df["feature"].apply(lambda x: self.removed_features_.get(x, ""))
-        
+
         return df
 
     @requires_fit()

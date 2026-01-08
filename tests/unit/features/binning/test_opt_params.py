@@ -9,7 +9,6 @@ sys.path.append(os.path.abspath("src"))  # noqa: E402
 from newt import Binner  # noqa: E402
 
 
-
 def test_optbinning_params():
     print("Testing OptBinning parameters via Binner.fit...")
 
@@ -36,11 +35,7 @@ def test_optbinning_params():
         if binner.kwargs.get("min_prebin_size") == 0.123:
             print("SUCCESS: Parameter propagated.")
         else:
-            print(
-                f"FAILURE: Parameter mismatch. "
-                f"Got {binner.kwargs.get('min_prebin_size')}"
-            )
-
+            print(f"FAILURE: Parameter mismatch. " f"Got {binner.kwargs.get('min_prebin_size')}")
 
     except Exception as e:
         print(f"CRITICAL ERROR: {e}")

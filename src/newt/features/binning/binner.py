@@ -18,30 +18,36 @@ from .unsupervised import EqualFrequencyBinner, EqualWidthBinner, KMeansBinner
 from .woe_storage import WOEStorage
 
 
-
 class BinningResult:
     """
     Proxy object for accessing binning results of a single feature.
-    
+
     Attributes
     ----------
     stats : pd.DataFrame
         Binning statistics.
     """
+
     def __init__(self, binner: "Binner", feature: str):
         self._binner = binner
         self._feature = feature
-        
+
         # Ensure stats are calculated
         if feature not in binner.stats_:
             binner._calculate_and_store_stats(feature)
-        
+
         self.stats = binner.stats_[feature]
 
-    def plot(self, x: str = "bin", y: Union[str, List[str]] = ["bad_prop"], secondary_y: Optional[Union[str, List[str]]] = "bad_rate", **kwargs):
+    def plot(
+        self,
+        x: str = "bin",
+        y: Union[str, List[str]] = ["bad_prop"],
+        secondary_y: Optional[Union[str, List[str]]] = "bad_rate",
+        **kwargs,
+    ):
         """
         Plot binning results for this feature.
-        
+
         Parameters
         ----------
         x : str
@@ -50,14 +56,14 @@ class BinningResult:
             Column(s) for primary y-axis (bar). Default ['bad_prop'].
         secondary_y : str or list, optional
             Column(s) for secondary y-axis (line). Default 'bad_rate'.
-        **kwargs : 
+        **kwargs :
             Arguments passed to plot_binning_result.
         """
         from newt.visualization.binning_viz import plot_binning_result
-        
+
         if self._binner._X is None or self._binner._y is None:
-             print("Plotting requires X and y data to be present in Binner.")
-             return
+            print("Plotting requires X and y data to be present in Binner.")
+            return
 
         return plot_binning_result(
             binner=self._binner,
@@ -68,16 +74,16 @@ class BinningResult:
             x_col=x,
             y_col=y,
             secondary_y_col=secondary_y,
-            **kwargs
+            **kwargs,
         )
 
     def woe_map(self) -> Dict[Any, float]:
         """Get WOE mapping for this feature."""
         return self._binner.get_woe_map(self._feature)
-    
+
     def __repr__(self):
         return self.stats.__repr__()
-    
+
     def _repr_html_(self):
         return self.stats._repr_html_()
 
@@ -342,42 +348,44 @@ class Binner(BinnerStatsMixin, BinnerIOMixin, BinnerWOEMixin):
         """Get dictionary of statistics for all features."""
         try:
             from IPython.display import display
+
             HAS_IPYTHON = True
         except ImportError:
             HAS_IPYTHON = False
-        
+
         result = {}
         for feat in self._features:
             if feat in self.binners_:
                 result[feat] = self[feat].stats
                 print(f"--- Binning Result: {feat} ---")
-                
+
                 # Render stats table
                 if HAS_IPYTHON:
                     display(self[feat].stats)
                 else:
                     print(self[feat].stats)
-        
+
         return result
 
     def stats_plot(self):
         """Display stats and plot for all features."""
         try:
-            from IPython.display import display, HTML
+            from IPython.display import HTML, display
+
             HAS_IPYTHON = True
         except ImportError:
             HAS_IPYTHON = False
-        
+
         for feat in self._features:
             if feat in self.binners_:
                 print(f"--- Binning Result: {feat} ---")
-                
+
                 # Render stats table
                 if HAS_IPYTHON:
                     display(self[feat].stats)
                 else:
                     print(self[feat].stats)
-                
+
                 # Plot
                 fig = self[feat].plot()
                 if HAS_IPYTHON:
@@ -385,17 +393,14 @@ class Binner(BinnerStatsMixin, BinnerIOMixin, BinnerWOEMixin):
                 else:
                     try:
                         import matplotlib.pyplot as plt
+
                         plt.show()
                     except ImportError:
                         pass
 
     def woe_map(self) -> Dict[str, Dict[Any, float]]:
         """Get WOE maps for all features."""
-        return {
-            feat: self.get_woe_map(feat) 
-            for feat in self._features 
-            if feat in self.binners_
-        }
+        return {feat: self.get_woe_map(feat) for feat in self._features if feat in self.binners_}
 
     def __contains__(self, feature: str) -> bool:
         """Check if feature is in binner."""
@@ -412,4 +417,3 @@ class Binner(BinnerStatsMixin, BinnerIOMixin, BinnerWOEMixin):
     def features(self) -> List[str]:
         """Get list of binned feature names."""
         return list(self.binners_.keys())
-

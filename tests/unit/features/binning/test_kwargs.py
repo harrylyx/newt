@@ -9,7 +9,6 @@ sys.path.append(os.path.abspath("src"))  # noqa: E402
 from newt import Binner  # noqa: E402
 
 
-
 def test_kwargs_propagation():
     print("Testing kwargs propagation via Binner.fit...")
 
@@ -21,7 +20,7 @@ def test_kwargs_propagation():
 
     # Use OptBinning to verify kwargs storage as BaseBinner doesn't store them
     Binner()
-    
+
     # Pass arbitrary param to check propagation
     pass
 

@@ -37,9 +37,7 @@ def calculate_lift(
         # Let's standardize: bin 0 = lowest prob, bin (N-1) = highest prob.
         # Often 'Lift' checks the highest decile.
 
-        agg = data.groupby("bin").agg(
-            {"prob": ["min", "max"], "true": ["count", "sum"]}
-        )
+        agg = data.groupby("bin").agg({"prob": ["min", "max"], "true": ["count", "sum"]})
 
         agg.columns = ["min_prob", "max_prob", "count", "events"]
         agg = agg.sort_index(ascending=False).reset_index()  # Highest prob first
@@ -52,7 +50,7 @@ def calculate_lift(
     except Exception as e:
         import warnings
 
-        warnings.warn(f"Error calculating Lift: {str(e)}")
+        warnings.warn(f"Error calculating Lift: {str(e)}", stacklevel=2)
         return pd.DataFrame()
 
 
@@ -107,5 +105,5 @@ def calculate_lift_at_k(
     except Exception as e:
         import warnings
 
-        warnings.warn(f"Error calculating Lift@{k}: {str(e)}")
+        warnings.warn(f"Error calculating Lift@{k}: {str(e)}", stacklevel=2)
         return np.nan

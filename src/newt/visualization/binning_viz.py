@@ -25,8 +25,7 @@ def _check_matplotlib():
     """Check if matplotlib is available."""
     if not HAS_MATPLOTLIB:
         raise ImportError(
-            "matplotlib is required for visualization. "
-            "Install it with: pip install matplotlib"
+            "matplotlib is required for visualization. " "Install it with: pip install matplotlib"
         )
 
 
@@ -39,7 +38,7 @@ def plot_binning_result(
     figsize: Tuple[int, int] = (12, 6),
     title: Optional[str] = None,
     x_col: str = "bin",
-    y_col: Union[str, List[str]] = ["bad_prop"],
+    y_col: Optional[Union[str, List[str]]] = None,
     secondary_y_col: Optional[Union[str, List[str]]] = "bad_rate",
 ) -> Any:
     """
@@ -82,16 +81,18 @@ def plot_binning_result(
 
     # Get pre-calculated statistics
     stats = binner[feature].stats.copy()
-    
+
     # Ensure stats sorted by bin index if present, else just use as is
     # stats usually comes sorted from binner
-    
+
     # Create figure
     fig, ax1 = plt.subplots(figsize=figsize)
 
     x_pos = np.arange(len(stats))
-    
+
     # Handle primary Y (Bars)
+    if y_col is None:
+        y_col = ["bad_prop"]
     if isinstance(y_col, str):
         y_cols = [y_col]
     else:
@@ -99,13 +100,19 @@ def plot_binning_result(
 
     # Plot bars
     width = 0.8 / len(y_cols)
-    colors = ["steelblue", "coral", "gold", "forestgreen", "purple"] # Default color cycle
-    
+    colors = [
+        "steelblue",
+        "coral",
+        "gold",
+        "forestgreen",
+        "purple",
+    ]  # Default color cycle
+
     for i, col in enumerate(y_cols):
         if col not in stats.columns:
             print(f"Warning: Column '{col}' not in stats, skipping.")
             continue
-            
+
         offset = (i - len(y_cols) / 2) * width + width / 2
         ax1.bar(
             x_pos + offset,
@@ -119,49 +126,49 @@ def plot_binning_result(
     ax1.set_xlabel(x_col)
     ax1.set_ylabel(" / ".join(y_cols))
     ax1.set_xticks(x_pos)
-    
+
     # Format x-labels
     x_labels = [str(x)[:20] for x in stats[x_col]]
     ax1.set_xticklabels(x_labels, rotation=45, ha="right")
 
     # Legend 1
     handles1, labels1 = ax1.get_legend_handles_labels()
-    
+
     # Handle secondary Y (Line)
     if secondary_y_col:
         if isinstance(secondary_y_col, str):
             sec_cols = [secondary_y_col]
         else:
             sec_cols = secondary_y_col
-            
+
         ax2 = ax1.twinx()
         line_colors = ["green", "red", "blue", "black"]
-        
+
         for i, col in enumerate(sec_cols):
             if col not in stats.columns:
                 print(f"Warning: Column '{col}' not in stats, skipping.")
                 continue
-                
+
             ax2.plot(
-                x_pos, 
-                stats[col], 
-                marker="o", 
-                linewidth=2, 
+                x_pos,
+                stats[col],
+                marker="o",
+                linewidth=2,
                 label=col,
-                color=line_colors[i % len(line_colors)]
+                color=line_colors[i % len(line_colors)],
             )
-            
+
             # Auto-scale Y2 to look nice (start from 0)
             if all(stats[col] >= 0) and all(stats[col] <= 1):
-                 ax2.set_ylim(0, max(stats[col].max() * 1.2, 0.01))
+                ax2.set_ylim(0, max(stats[col].max() * 1.2, 0.01))
             else:
-                 # Generic scaling
-                 ymin, ymax = stats[col].min(), stats[col].max()
-                 span = ymax - ymin
-                 ax2.set_ylim(ymin - span*0.1, ymax + span*0.1)
+                # Generic scaling
+                ymin, ymax = stats[col].min(), stats[col].max()
+                span = ymax - ymin
+                ax2.set_ylim(ymin - span * 0.1, ymax + span * 0.1)
 
         ax2.set_ylabel(" / ".join(sec_cols))
-        
+
         # Merge legends
         handles2, labels2 = ax2.get_legend_handles_labels()
         ax1.legend(handles1 + handles2, labels1 + labels2, loc="upper left")
@@ -397,9 +404,7 @@ def plot_psi_comparison(
     ax.barh(y_pos, psis, color=colors, edgecolor="black", alpha=0.8)
 
     # Threshold lines
-    ax.axvline(
-        x=0.1, color="orange", linestyle="--", linewidth=1.5, label="Moderate (0.1)"
-    )
+    ax.axvline(x=0.1, color="orange", linestyle="--", linewidth=1.5, label="Moderate (0.1)")
     ax.axvline(
         x=threshold,
         color="red",

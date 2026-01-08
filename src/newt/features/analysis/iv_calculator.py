@@ -36,7 +36,7 @@ def calculate_iv(
         except ValueError:
             # Fallback to equal-width binning if quantiles fail (e.g. skewed distribution)
             binned = pd.cut(df[feature], bins=buckets).astype(str)
-        
+
         feature_data = binned
     else:
         # Categorical or low-cardinality numeric

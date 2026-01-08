@@ -4,7 +4,6 @@ WOE (Weight of Evidence) calculation and encoding.
 Provides WOE transformation for binned/categorical features.
 """
 
-import warnings
 from typing import Any, Dict, Optional
 
 import numpy as np
@@ -160,5 +159,3 @@ class WOEEncoder:
     def get_summary(self) -> pd.DataFrame:
         """Get the WOE summary table."""
         return self.summary_.copy()
-
-

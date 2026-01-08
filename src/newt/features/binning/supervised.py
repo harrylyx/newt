@@ -254,7 +254,7 @@ class ChiMergeBinner(BaseBinner):
 class OptBinningBinner(BaseBinner):
     """
     Bins using the OptBinning library.
-    
+
     Supports monotonic constraints via the monotonic parameter:
     - None/False: no constraint (monotonic_trend="auto")
     - True/"auto": auto-detect direction (monotonic_trend="auto_asc_desc")
@@ -276,8 +276,7 @@ class OptBinningBinner(BaseBinner):
     def _fit_splits(self, X: pd.Series, y: Optional[pd.Series] = None) -> List[float]:
         if OptimalBinning is None:
             raise ImportError(
-                "optbinning is not installed. "
-                "Please install it via `pip install optbinning`."
+                "optbinning is not installed. " "Please install it via `pip install optbinning`."
             )
 
         if y is None:

@@ -125,9 +125,7 @@ class TestStepwiseSelectorFit:
     def test_exclude_features(self, stepwise_data):
         """Test excluding features (force include)."""
         X, y = stepwise_data
-        selector = StepwiseSelector(
-            direction="backward", criterion="aic", exclude=["x4"]
-        )
+        selector = StepwiseSelector(direction="backward", criterion="aic", exclude=["x4"])
         selector.fit(X, y)
 
         assert selector.is_fitted_

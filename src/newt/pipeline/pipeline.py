@@ -122,20 +122,24 @@ class ScorecardPipeline:
 
         self.prefilter_ = FeatureSelector(
             iv_bins=iv_bins,
-            metrics=["iv", "missing_rate", "correlation"],  # Explicitly request required metrics
+            metrics=[
+                "iv",
+                "missing_rate",
+                "correlation",
+            ],  # Explicitly request required metrics
             **kwargs,
         )
 
         # Fit to calculate stats
         self.prefilter_.fit(self.X_current, self.y_train)
-        
+
         # Apply selection
         self.prefilter_.select(
-            iv_threshold=iv_threshold, 
-            missing_threshold=missing_threshold, 
-            corr_threshold=corr_threshold
+            iv_threshold=iv_threshold,
+            missing_threshold=missing_threshold,
+            corr_threshold=corr_threshold,
         )
-        
+
         # Transform data
         self.X_current = self.prefilter_.transform(self.X_current)
 
@@ -187,9 +191,7 @@ class ScorecardPipeline:
 
         # Transform test data
         if self.X_test_current is not None:
-            self.X_test_binned_ = self.binner_.transform(
-                self.X_test_current, labels=False
-            )
+            self.X_test_binned_ = self.binner_.transform(self.X_test_current, labels=False)
 
         self.steps_.append("bin")
         return self

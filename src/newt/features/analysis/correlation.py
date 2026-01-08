@@ -4,9 +4,7 @@ import numpy as np  # noqa: F401
 import pandas as pd
 
 
-def calculate_correlation_matrix(
-    df: pd.DataFrame, method: str = "pearson"
-) -> pd.DataFrame:
+def calculate_correlation_matrix(df: pd.DataFrame, method: str = "pearson") -> pd.DataFrame:
     """
     Calculate correlation matrix for a DataFrame.
 

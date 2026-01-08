@@ -62,36 +62,42 @@ def calculate_bin_stats(
     woe_summary = woe_encoder.summary_.copy()
     woe_summary = woe_summary.reset_index()
     woe_summary.columns = [
-        "bin", "total", "bads", "goods",
-        "good_prop", "bad_prop", "woe", "iv"
+        "bin",
+        "total",
+        "bads",
+        "goods",
+        "good_prop",
+        "bad_prop",
+        "woe",
+        "iv",
     ]
 
     # Calculate min/max for each bin from splits
     boundaries = get_bin_boundaries(splits)
-    
+
     # Create a mapping from bin label to sort order
     def get_bin_sort_key(bin_label):
         """Extract sort key from bin label. Missing goes last."""
         if bin_label == "Missing":
-            return (1, float('inf'))  # (is_missing, min_value)
+            return (1, float("inf"))  # (is_missing, min_value)
         try:
             # Parse interval string like "(-inf, 25.0]" or "(25.0, 35.0]"
             bin_str = str(bin_label)
             # Handle pandas Interval objects
-            if hasattr(bin_label, 'left'):
+            if hasattr(bin_label, "left"):
                 left_val = bin_label.left
-                return (0, float(left_val) if left_val != -np.inf else float('-inf'))
+                return (0, float(left_val) if left_val != -np.inf else float("-inf"))
             # Handle string representation
-            if ',' in bin_str:
-                left_part = bin_str.split(',')[0]
-                left_val = left_part.replace('(', '').replace('[', '').strip()
-                if left_val == '-inf':
-                    return (0, float('-inf'))
+            if "," in bin_str:
+                left_part = bin_str.split(",")[0]
+                left_val = left_part.replace("(", "").replace("[", "").strip()
+                if left_val == "-inf":
+                    return (0, float("-inf"))
                 return (0, float(left_val))
         except (ValueError, AttributeError):
             pass
         return (0, 0)  # Default
-    
+
     # Sort by bin order (by left boundary, Missing last)
     woe_summary["_sort_key"] = woe_summary["bin"].apply(get_bin_sort_key)
     woe_summary = woe_summary.sort_values("_sort_key").reset_index(drop=True)
@@ -100,24 +106,33 @@ def calculate_bin_stats(
     # Build bins_df with min/max for each bin
     bins_list = []
     for i in range(len(boundaries) - 1):
-        bins_list.append({
-            "bin_idx": i,
-            "min": boundaries[i],
-            "max": boundaries[i + 1],
-        })
+        bins_list.append(
+            {
+                "bin_idx": i,
+                "min": boundaries[i],
+                "max": boundaries[i + 1],
+            }
+        )
     bins_df = pd.DataFrame(bins_list)
 
     # Handle missing bin if present
     if "Missing" in woe_summary["bin"].values:
         missing_idx = len(bins_list)
-        bins_df = pd.concat([
-            bins_df,
-            pd.DataFrame([{
-                "bin_idx": missing_idx,
-                "min": np.nan,
-                "max": np.nan,
-            }])
-        ], ignore_index=True)
+        bins_df = pd.concat(
+            [
+                bins_df,
+                pd.DataFrame(
+                    [
+                        {
+                            "bin_idx": missing_idx,
+                            "min": np.nan,
+                            "max": np.nan,
+                        }
+                    ]
+                ),
+            ],
+            ignore_index=True,
+        )
 
     # Map bin to bin_idx based on sorted order
     woe_summary["bin_idx"] = range(len(woe_summary))
@@ -155,12 +170,28 @@ def calculate_bin_stats(
 
     # Reorder columns
     result_cols = [
-        "bin", "min", "max", "bads", "goods", "total",
-        "bad_rate", "good_rate", "odds",
-        "bad_prop", "good_prop", "total_prop",
-        "cum_bads", "cum_goods", "cum_total",
-        "cum_bads_prop", "cum_goods_prop", "cum_total_prop",
-        "ks", "woe", "iv", "lift",
+        "bin",
+        "min",
+        "max",
+        "bads",
+        "goods",
+        "total",
+        "bad_rate",
+        "good_rate",
+        "odds",
+        "bad_prop",
+        "good_prop",
+        "total_prop",
+        "cum_bads",
+        "cum_goods",
+        "cum_total",
+        "cum_bads_prop",
+        "cum_goods_prop",
+        "cum_total_prop",
+        "ks",
+        "woe",
+        "iv",
+        "lift",
     ]
 
     return stats[[c for c in result_cols if c in stats.columns]]

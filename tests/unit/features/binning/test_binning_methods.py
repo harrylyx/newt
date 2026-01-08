@@ -14,9 +14,7 @@ def test_binning_methods():
     # 1. Generate Synthetic Data
     np.random.seed(42)
     N = 1000
-    X = pd.DataFrame(
-        {"score": np.random.normal(0, 1, N), "age": np.random.randint(20, 80, N)}
-    )
+    X = pd.DataFrame({"score": np.random.normal(0, 1, N), "age": np.random.randint(20, 80, N)})
     # Target related to score
     y_prob = 1 / (1 + np.exp(-(X["score"] * 2 + np.random.normal(0, 0.5, N))))
     y = (y_prob > 0.5).astype(int)

@@ -6,7 +6,6 @@ Converts WOE-based logistic regression coefficients into a scorecard.
 
 from typing import Any, Dict, List
 
-
 import numpy as np
 import pandas as pd
 
@@ -294,8 +293,7 @@ class Scorecard:
             "offset": self.offset,
             "intercept_points": self.intercept_points_,
             "features": {
-                feature: df.to_dict(orient="records")
-                for feature, df in self.scorecard_.items()
+                feature: df.to_dict(orient="records") for feature, df in self.scorecard_.items()
             },
         }
 

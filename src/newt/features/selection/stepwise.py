@@ -127,9 +127,7 @@ class StepwiseSelector:
         elif self.direction == "backward":
             selected = self._backward_elimination(X, y, all_features, exclude_set, sm)
         else:  # both
-            selected = self._bidirectional_selection(
-                X, y, all_features, exclude_set, sm
-            )
+            selected = self._bidirectional_selection(X, y, all_features, exclude_set, sm)
 
         self.selected_features_ = selected
         self.removed_features_ = [f for f in all_features if f not in selected]
@@ -202,9 +200,7 @@ class StepwiseSelector:
                 else:
                     criterion_val = self._get_criterion_value(result, self.criterion)
                     current_result = self._fit_model(X, y, selected, sm)
-                    current_criterion = self._get_criterion_value(
-                        current_result, self.criterion
-                    )
+                    current_criterion = self._get_criterion_value(current_result, self.criterion)
 
                     # Lower AIC/BIC is better
                     if criterion_val < current_criterion and criterion_val < best_criterion:
@@ -272,9 +268,7 @@ class StepwiseSelector:
                 for feature in removable:
                     candidate = [f for f in selected if f != feature]
                     test_result = self._fit_model(X, y, candidate, sm)
-                    test_criterion = self._get_criterion_value(
-                        test_result, self.criterion
-                    )
+                    test_criterion = self._get_criterion_value(test_result, self.criterion)
 
                     improvement = current_criterion - test_criterion
                     if improvement > best_improvement:
@@ -336,9 +330,7 @@ class StepwiseSelector:
                 else:
                     criterion_val = self._get_criterion_value(result, self.criterion)
                     current_result = self._fit_model(X, y, selected, sm)
-                    current_criterion = self._get_criterion_value(
-                        current_result, self.criterion
-                    )
+                    current_criterion = self._get_criterion_value(current_result, self.criterion)
 
                     if criterion_val < current_criterion and criterion_val < best_criterion:
                         best_criterion = criterion_val
@@ -376,15 +368,11 @@ class StepwiseSelector:
                                 worst_pvalue = pvalue
                                 worst_feature = feature
                     else:
-                        current_criterion = self._get_criterion_value(
-                            result, self.criterion
-                        )
+                        current_criterion = self._get_criterion_value(result, self.criterion)
                         for feature in removable:
                             candidate = [f for f in selected if f != feature]
                             test_result = self._fit_model(X, y, candidate, sm)
-                            test_criterion = self._get_criterion_value(
-                                test_result, self.criterion
-                            )
+                            test_criterion = self._get_criterion_value(test_result, self.criterion)
 
                             if test_criterion < current_criterion:
                                 pvalue = result.pvalues.get(feature, 0.0)
@@ -446,9 +434,7 @@ class StepwiseSelector:
             Selection history with iterations, actions, and criteria values.
         """
         if not self.selection_history_:
-            return pd.DataFrame(
-                columns=["iteration", "action", "feature", "criterion", "value"]
-            )
+            return pd.DataFrame(columns=["iteration", "action", "feature", "criterion", "value"])
 
         return pd.DataFrame(self.selection_history_)
 

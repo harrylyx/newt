@@ -31,5 +31,5 @@ def calculate_ks(
     except Exception as e:
         import warnings
 
-        warnings.warn(f"Error calculating KS: {str(e)}")
+        warnings.warn(f"Error calculating KS: {str(e)}", stacklevel=2)
         return np.nan

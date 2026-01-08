@@ -78,16 +78,14 @@ class BaseBinner(ABC):
         # Use pd.cut
         return pd.cut(X, bins=bins, include_lowest=True)
 
-    def _adjust_monotonicity(
-        self, X: pd.Series, y: pd.Series, splits: List[float]
-    ) -> List[float]:
+    def _adjust_monotonicity(self, X: pd.Series, y: pd.Series, splits: List[float]) -> List[float]:
         """
         Iteratively merge bins to ensure monotonic event rate.
-        
+
         Uses PAVA (Pool Adjacent Violators Algorithm) approach.
         Direction is determined by:
         - monotonic="ascending": force increasing bad rate
-        - monotonic="descending": force decreasing bad rate  
+        - monotonic="descending": force decreasing bad rate
         - monotonic=True or "auto": auto-detect from data
         """
         if not splits:

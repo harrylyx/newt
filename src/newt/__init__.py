@@ -58,4 +58,3 @@ __all__ = [
     # Pipeline
     "ScorecardPipeline",
 ]
-

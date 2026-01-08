@@ -117,9 +117,7 @@ class PostFilter:
             current_features.remove(max_feature)
 
         # Calculate final VIF
-        final_vif = (
-            calculate_vif(X[current_features]) if current_features else pd.DataFrame()
-        )
+        final_vif = calculate_vif(X[current_features]) if current_features else pd.DataFrame()
 
         return {
             "selected_features": current_features,
@@ -262,9 +260,7 @@ class PostFilter:
         if len(self.vif_df_) > 0:
             all_features = all_features | set(self.vif_df_["feature"].tolist())
         all_features = (
-            all_features
-            | set(self.removed_features_.keys())
-            | set(self.selected_features_)
+            all_features | set(self.removed_features_.keys()) | set(self.selected_features_)
         )
 
         summary_records = []
@@ -298,9 +294,7 @@ class PostFilter:
         summary_df = summary_df.sort_values(["status", "psi"]).reset_index(drop=True)
 
         # PSI report
-        psi_df = pd.DataFrame(
-            [{"feature": k, "psi": v} for k, v in self.psi_dict_.items()]
-        )
+        psi_df = pd.DataFrame([{"feature": k, "psi": v} for k, v in self.psi_dict_.items()])
         if len(psi_df) > 0:
             psi_df = psi_df.sort_values("psi", ascending=False).reset_index(drop=True)
 

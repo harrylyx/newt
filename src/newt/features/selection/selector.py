@@ -109,7 +109,8 @@ class FeatureSelector:
             invalid = set(metrics) - ALL_METRICS
             if invalid:
                 raise ValueError(
-                    f"Invalid metrics: {invalid}. " f"Available metrics: {sorted(ALL_METRICS)}"
+                    f"Invalid metrics: {invalid}. "
+                    f"Available metrics: {sorted(ALL_METRICS)}"
                 )
             self.metrics = set(metrics)
 
@@ -253,7 +254,9 @@ class FeatureSelector:
         self.selected_features_ = candidates
         # Perform correlation filtering on candidates
         if len(candidates) > 1:
-            self.selected_features_ = self._remove_correlated(candidates, corr_threshold)
+            self.selected_features_ = self._remove_correlated(
+                candidates, corr_threshold
+            )
 
         self.is_selected_ = True
         return self
@@ -268,7 +271,9 @@ class FeatureSelector:
         # Calculate correlation matrix for later use in select()
         # Only for numeric columns
         numeric_df = X.select_dtypes(include=[np.number])
-        self.corr_matrix_ = calculate_correlation_matrix(numeric_df, method=self.corr_method)
+        self.corr_matrix_ = calculate_correlation_matrix(
+            numeric_df, method=self.corr_method
+        )
 
         cols = X.columns
         for feat in cols:
@@ -338,7 +343,9 @@ class FeatureSelector:
             if len(X_a) > 0:
                 if "ks" in self.metrics and is_numeric:
                     try:
-                        result["ks"] = float(calculate_ks(y_a.values, X_a.astype(float).values))
+                        result["ks"] = float(
+                            calculate_ks(y_a.values, X_a.astype(float).values)
+                        )
                     except Exception:
                         result["ks"] = np.nan
 
@@ -356,7 +363,9 @@ class FeatureSelector:
 
                 if "correlation" in self.metrics and is_numeric:
                     try:
-                        result["correlation"] = float(X_a.astype(float).corr(y_a.astype(float)))
+                        result["correlation"] = float(
+                            X_a.astype(float).corr(y_a.astype(float))
+                        )
                     except Exception:
                         result["correlation"] = np.nan
 
@@ -414,7 +423,9 @@ class FeatureSelector:
             # Sort by correlation descending
             related_vars.sort(key=lambda x: abs(x[1]), reverse=True)
             reason_parts = [f"{v}({c:.3f})" for v, c in related_vars]
-            self.removed_features_[removed_var] = f"high_corr: {', '.join(reason_parts)}"
+            self.removed_features_[removed_var] = (
+                f"high_corr: {', '.join(reason_parts)}"
+            )
 
         final_selection.extend([c for c in valid_candidates if c not in to_remove])
         return final_selection

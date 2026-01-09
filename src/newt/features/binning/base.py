@@ -78,7 +78,9 @@ class BaseBinner(ABC):
         # Use pd.cut
         return pd.cut(X, bins=bins, include_lowest=True)
 
-    def _adjust_monotonicity(self, X: pd.Series, y: pd.Series, splits: List[float]) -> List[float]:
+    def _adjust_monotonicity(
+        self, X: pd.Series, y: pd.Series, splits: List[float]
+    ) -> List[float]:
         """
         Iteratively merge bins to ensure monotonic event rate.
 

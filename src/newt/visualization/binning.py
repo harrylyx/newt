@@ -143,7 +143,9 @@ def plot_binning(
         bar_name = bar_name_map.get(bar_mode, bar_mode)
 
     # Bar Chart (Primary Axis)
-    sns.barplot(x=stats.index, y=bar_y, ax=ax1, alpha=0.6, color="#636EFA", label=bar_name)
+    sns.barplot(
+        x=stats.index, y=bar_y, ax=ax1, alpha=0.6, color="#636EFA", label=bar_name
+    )
 
     # Bar Labels
     for i, v in enumerate(bar_y):

@@ -37,7 +37,9 @@ def calculate_lift(
         # Let's standardize: bin 0 = lowest prob, bin (N-1) = highest prob.
         # Often 'Lift' checks the highest decile.
 
-        agg = data.groupby("bin").agg({"prob": ["min", "max"], "true": ["count", "sum"]})
+        agg = data.groupby("bin").agg(
+            {"prob": ["min", "max"], "true": ["count", "sum"]}
+        )
 
         agg.columns = ["min_prob", "max_prob", "count", "events"]
         agg = agg.sort_index(ascending=False).reset_index()  # Highest prob first

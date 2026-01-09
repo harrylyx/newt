@@ -32,7 +32,11 @@ def calculate_iv(
     if pd.api.types.is_numeric_dtype(df[feature]) and df[feature].nunique() > buckets:
         try:
             # Try quantile binning first
-            binned = pd.qcut(df[feature], q=buckets, duplicates="drop").astype(str)
+            binned = pd.qcut(
+                df[feature],
+                q=buckets,
+                duplicates="drop",
+            ).astype(str)
         except ValueError:
             # Fallback to equal-width binning if quantiles fail (e.g. skewed distribution)
             binned = pd.cut(df[feature], bins=buckets).astype(str)

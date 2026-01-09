@@ -191,7 +191,9 @@ class ScorecardPipeline:
 
         # Transform test data
         if self.X_test_current is not None:
-            self.X_test_binned_ = self.binner_.transform(self.X_test_current, labels=False)
+            self.X_test_binned_ = self.binner_.transform(
+                self.X_test_current, labels=False
+            )
 
         self.steps_.append("bin")
         return self

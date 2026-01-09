@@ -8,7 +8,7 @@ Uses German Credit dataset to validate:
 4. End-to-end model metrics (AUC, KS)
 """
 
-import numpy as np
+import numpy as np  # noqa: F401
 import pandas as pd
 import toad
 from sklearn.linear_model import LogisticRegression
@@ -54,9 +54,7 @@ def load_german_data(path: str) -> pd.DataFrame:
 def get_numeric_features(df: pd.DataFrame) -> list:
     """Get numeric feature columns (excluding target)."""
     return [
-        c
-        for c in df.columns
-        if c != "target" and pd.api.types.is_numeric_dtype(df[c])
+        c for c in df.columns if c != "target" and pd.api.types.is_numeric_dtype(df[c])
     ]
 
 
@@ -109,7 +107,7 @@ def compare_univariate_ks(df: pd.DataFrame) -> float:
     print("=" * 60)
 
     # Toad quality gives KS as well
-    toad_quality = toad.quality(df, target="target")
+    # toad_quality = toad.quality(df, target="target")
     # toad.quality returns DataFrame with columns ['iv', 'gini', 'entropy', 'unique']
     # KS is in toad.metrics.KS for individual feature
 

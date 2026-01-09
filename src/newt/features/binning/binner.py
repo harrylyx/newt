@@ -400,7 +400,11 @@ class Binner(BinnerStatsMixin, BinnerIOMixin, BinnerWOEMixin):
 
     def woe_map(self) -> Dict[str, Dict[Any, float]]:
         """Get WOE maps for all features."""
-        return {feat: self.get_woe_map(feat) for feat in self._features if feat in self.binners_}
+        return {
+            feat: self.get_woe_map(feat)
+            for feat in self._features
+            if feat in self.binners_
+        }
 
     def __contains__(self, feature: str) -> bool:
         """Check if feature is in binner."""

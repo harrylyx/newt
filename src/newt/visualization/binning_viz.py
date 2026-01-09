@@ -25,7 +25,8 @@ def _check_matplotlib():
     """Check if matplotlib is available."""
     if not HAS_MATPLOTLIB:
         raise ImportError(
-            "matplotlib is required for visualization. " "Install it with: pip install matplotlib"
+            "matplotlib is required for visualization. "
+            "Install it with: pip install matplotlib"
         )
 
 
@@ -333,7 +334,9 @@ def plot_woe_pattern(
     ax.set_xlabel("Bin")
     ax.set_ylabel("WOE")
     ax.set_xticks(x_pos)
-    ax.set_xticklabels([str(b)[:15] for b in summary["bin"]], rotation=45, ha="right")
+    ax.set_xticklabels(
+        [str(b)[:15] for b in summary["bin"]], rotation=45, ha="right"
+    )
 
     # Add IV annotation
     iv = woe_encoder.iv_ if hasattr(woe_encoder, "iv_") else None
@@ -404,7 +407,13 @@ def plot_psi_comparison(
     ax.barh(y_pos, psis, color=colors, edgecolor="black", alpha=0.8)
 
     # Threshold lines
-    ax.axvline(x=0.1, color="orange", linestyle="--", linewidth=1.5, label="Moderate (0.1)")
+    ax.axvline(
+        x=0.1,
+        color="orange",
+        linestyle="--",
+        linewidth=1.5,
+        label="Moderate (0.1)",
+    )
     ax.axvline(
         x=threshold,
         color="red",

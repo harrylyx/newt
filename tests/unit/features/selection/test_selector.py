@@ -88,7 +88,9 @@ def test_select_filtering(sample_data):
     has_x3 = "x3" in selected
 
     assert has_x1 or has_x3
-    assert not (has_x1 and has_x3), "Perfectly correlated features should be deduplicated"
+    assert not (
+        has_x1 and has_x3
+    ), "Perfectly correlated features should be deduplicated"
 
 
 def test_report(sample_data):

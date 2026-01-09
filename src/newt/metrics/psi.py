@@ -37,7 +37,9 @@ def calculate_psi(
 
         # Calculate counts for non-NaN
         if len(expected_not_nan) > 0:
-            breakpoints = np.percentile(expected_not_nan, np.linspace(0, 100, buckets + 1))
+            breakpoints = np.percentile(
+                expected_not_nan, np.linspace(0, 100, buckets + 1)
+            )
             # Handle unique boundaries
             breakpoints = np.unique(breakpoints)
 

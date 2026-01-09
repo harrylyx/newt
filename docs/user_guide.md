@@ -13,6 +13,7 @@ This guide covers the end-to-end workflow for credit scorecard development using
 7. [Visualization](#7-visualization)
 8. [Manual Adjustment](#8-manual-adjustment)
 9. [Deployment](#9-deployment)
+10. [Metrics](#10-metrics)
 
 ---
 
@@ -57,6 +58,27 @@ rules = binner.export()
 # Output example: {'age': [25.0, 40.0, 55.0], 'income': [50000.0, 100000.0]}
 ```
 
+### Accessing Binning Results
+
+```python
+# Access binning result for a specific feature using __getitem__
+result = binner['age']
+
+# View statistics DataFrame
+print(result.stats)
+
+# Plot binning results
+result.plot()
+
+# Get WOE mapping
+print(result.woe_map())
+
+# Loop through all features
+for feat in binner:
+    print(f"Feature: {feat}")
+    print(binner[feat].stats)
+```
+
 ### Binning Specific Features
 
 ```python
@@ -69,6 +91,41 @@ binner.load(custom_rules)
 
 # Get summary statistics for a feature
 stats = binner.stats('age')
+```
+
+### Monotonic Binning
+
+Monotonic binning ensures that the bad rate (event rate) changes monotonically across bins.
+
+```python
+# Auto-detect monotonic trend from data
+binner.fit(df, y=target, method='chi', monotonic=True)
+
+# Force ascending bad rate trend
+binner.fit(df, y=target, method='dt', monotonic='ascending')
+
+# Force descending bad rate trend
+binner.fit(df, y=target, method='opt', monotonic='descending')
+```
+
+**Note**: Monotonic adjustment uses PAVA (Pool Adjacent Violators Algorithm) to merge bins until monotonicity is achieved.
+
+### Using Individual Binner Classes
+
+```python
+from newt.features.binning import (
+    ChiMergeBinner,
+    DecisionTreeBinner,
+    OptBinningBinner,
+    EqualWidthBinner,
+    EqualFrequencyBinner,
+    KMeansBinner
+)
+
+# Individual binner for a single feature
+binner = ChiMergeBinner(n_bins=5)
+binner.fit(df['age'], df[target])
+bins = binner.transform(df['age'])
 ```
 
 ---
@@ -190,6 +247,21 @@ for col in df_binned.columns:
     X_woe[col] = encoder.transform(df_binned[col].astype(str))
 ```
 
+### Using Binner's WOE Storage
+
+```python
+# WOE encoders are automatically stored in binner.woe_storage
+binner = Binner()
+binner.fit(df, y=target, method='chi')
+
+# Access individual WOE encoder for a feature
+encoder = binner.woe_storage.get('age')
+print(encoder.woe_map_)
+
+# Access all encoders
+print(binner.woe_encoders_)
+```
+
 ---
 
 ## 4. Logistic Regression Modeling
@@ -245,6 +317,32 @@ print(model_dict)
 # {'intercept': -2.5, 'coefficients': {'age': 0.3, 'income': 0.5}, ...}
 ```
 
+### Using with Scikit-learn Models
+
+```python
+from sklearn.linear_model import LogisticRegression
+
+# Scikit-learn model
+lr = LogisticRegression()
+lr.fit(X_woe, y)
+
+# Can be used directly with Scorecard
+scorecard.from_model(lr, binner, woe_encoders)
+```
+
+### Using with Statsmodels
+
+```python
+import statsmodels.api as sm
+
+# Statsmodels model
+X_sm = sm.add_constant(X_woe)
+model_sm = sm.Logit(y, X_sm).fit()
+
+# Can be used directly with Scorecard
+scorecard.from_model(model_sm, binner, woe_encoders)
+```
+
 ---
 
 ## 5. Scorecard Generation
@@ -290,6 +388,18 @@ print(f"Scores: {scores}")
 # Export as dictionary
 scorecard_dict = scorecard.to_dict()
 ```
+
+### Scorecard Parameters
+
+Scorecard points are calculated using the formula:
+
+```
+Points = Offset + Factor * ln(odds)
+```
+
+Where:
+- `Offset = base_score - (pdo / ln(2)) * ln(base_odds)`
+- `Factor = pdo / ln(2)`
 
 ---
 
@@ -349,6 +459,22 @@ print(pipeline.scorecard.summary())
 
 # Pipeline summary
 print(pipeline.summary())
+```
+
+### Pipeline Summary
+
+```python
+# Get complete pipeline execution summary
+summary = pipeline.summary()
+print(summary)
+# Output:
+# Pre-filter: 50 features → 20 features
+# Binning: ChiMerge with 5 bins
+# WOE: Transformed 20 features
+# Post-filter: Removed 2 features (PSI)
+# Stepwise: Selected 15 features (AIC)
+# Model: Logistic Regression
+# Scorecard: Base Score=600, PDO=50
 ```
 
 ---
@@ -519,6 +645,91 @@ scores = production_scorecard.score(df_new)
 
 ---
 
+## 10. Metrics
+
+Newt provides comprehensive evaluation metrics for credit risk modeling.
+
+### AUC (Area Under ROC Curve)
+
+```python
+from newt.metrics import calculate_auc
+
+auc = calculate_auc(y_true, y_pred_proba)
+print(f"AUC: {auc}")
+```
+
+### Gini Coefficient
+
+```python
+from newt.metrics import calculate_gini
+
+gini = calculate_gini(y_true, y_pred_proba)
+print(f"Gini: {gini}")
+```
+
+### KS Statistic
+
+```python
+from newt.metrics import calculate_ks
+
+ks = calculate_ks(y_true, y_pred_proba)
+print(f"KS: {ks}")
+```
+
+### Lift Analysis
+
+```python
+from newt.metrics import calculate_lift, calculate_lift_at_k
+
+# Lift table by deciles
+lift_df = calculate_lift(y_true, y_pred_proba, bins=10)
+print(lift_df)
+
+# Lift at top K (e.g., top 10%)
+lift_at_10pct = calculate_lift_at_k(y_true, y_pred_proba, k=0.1)
+print(f"Lift@10%: {lift_at_10pct}")
+```
+
+### PSI (Population Stability Index)
+
+```python
+from newt.metrics import calculate_psi
+
+# Calculate PSI between training and test distributions
+psi_values = calculate_psi(X_train_woe, X_test_woe)
+print(f"PSI values: {psi_values}")
+
+# Calculate PSI for a single feature
+psi_single = calculate_psi(
+    X_train_woe['age'],
+    X_test_woe['age'],
+    buckets=10
+)
+print(f"PSI for age: {psi_single}")
+```
+
+### VIF (Variance Inflation Factor)
+
+```python
+from newt.metrics import calculate_vif
+
+vif_values = calculate_vif(X_woe)
+print(vif_values)
+```
+
+### Metric Interpretation Guidelines
+
+| Metric | Good | Acceptable | Poor |
+|--------|------|------------|------|
+| AUC | > 0.75 | 0.70 - 0.75 | < 0.70 |
+| Gini | > 0.50 | 0.40 - 0.50 | < 0.40 |
+| KS | > 40 | 30 - 40 | < 30 |
+| PSI | < 0.10 | 0.10 - 0.25 | > 0.25 |
+| VIF | < 5 | 5 - 10 | > 10 |
+| Lift@10% | > 3.0 | 2.0 - 3.0 | < 2.0 |
+
+---
+
 ## Complete Example Workflow
 
 ```python
@@ -529,6 +740,7 @@ from newt.features.analysis import WOEEncoder
 from newt.modeling import LogisticModel, Scorecard
 from newt.pipeline import ScorecardPipeline
 from newt.visualization import plot_binning_result, plot_iv_ranking
+from newt.metrics import calculate_auc, calculate_ks
 
 # 1. Load data
 df = pd.read_csv('credit_data.csv')
@@ -540,9 +752,13 @@ selector.fit(df, df[target])
 selector.select(iv_threshold=0.02)
 X = selector.transform(df)
 
-# 3. Binning
+# 3. Binning with monotonic constraint
 binner = Binner()
-binner.fit(X, df[target], method='opt', n_bins=5)
+binner.fit(X, df[target], method='opt', n_bins=5, monotonic=True)
+
+# Access binning results
+binner['age'].stats
+binner['age'].plot()
 X_binned = binner.transform(X, labels=False)
 
 # 4. WOE transformation
@@ -573,7 +789,12 @@ df_new = pd.read_csv('new_applications.csv')
 scores = scorecard.score(df_new)
 print(f"Scores: {scores}")
 
-# 9. Visualize
+# 9. Calculate metrics
+auc = calculate_auc(df[target], model.predict_proba(X_woe))
+ks = calculate_ks(df[target], model.predict_proba(X_woe))
+print(f"AUC: {auc}, KS: {ks}")
+
+# 10. Visualize
 fig = plot_iv_ranking(
     iv_dict=selector.eda_summary_.set_index('feature')['iv'].to_dict()
 )
@@ -586,3 +807,4 @@ fig = plot_iv_ranking(
 - **API Documentation**: See individual module docstrings for detailed API reference
 - **Examples**: Check the `examples/` directory for more comprehensive examples
 - **Configuration**: See `newt.config` for default parameter values
+- **Development**: See `AGENTS.md` for development guidelines

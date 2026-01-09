@@ -13,6 +13,7 @@
 7. [可视化](#7-可视化)
 8. [手动调整](#8-手动调整)
 9. [模型部署](#9-模型部署)
+10. [评估指标](#10-评估指标)
 
 ---
 
@@ -57,6 +58,27 @@ rules = binner.export()
 # 输出示例：{'age': [25.0, 40.0, 55.0], 'income': [50000.0, 100000.0]}
 ```
 
+### 访问分箱结果
+
+```python
+# 使用 __getitem__ 访问特定特征的分箱结果
+result = binner['age']
+
+# 查看统计信息 DataFrame
+print(result.stats)
+
+# 绘制分箱结果图
+result.plot()
+
+# 获取 WOE 映射
+print(result.woe_map())
+
+# 遍历所有特征
+for feat in binner:
+    print(f"特征：{feat}")
+    print(binner[feat].stats)
+```
+
 ### 分箱特定功能
 
 ```python
@@ -69,6 +91,41 @@ binner.load(custom_rules)
 
 # 获取某个特征的统计信息
 stats = binner.stats('age')
+```
+
+### 单调分箱
+
+单调分箱确保坏账率（事件率）在分箱间单调变化。
+
+```python
+# 从数据中自动检测单调趋势
+binner.fit(df, y=target, method='chi', monotonic=True)
+
+# 强制坏账率递增趋势
+binner.fit(df, y=target, method='dt', monotonic='ascending')
+
+# 强制坏账率递减趋势
+binner.fit(df, y=target, method='opt', monotonic='descending')
+```
+
+**注意**：单调调整使用 PAVA（Pool Adjacent Violators Algorithm）算法，通过合并分箱直至实现单调性。
+
+### 使用单独的分箱类
+
+```python
+from newt.features.binning import (
+    ChiMergeBinner,
+    DecisionTreeBinner,
+    OptBinningBinner,
+    EqualWidthBinner,
+    EqualFrequencyBinner,
+    KMeansBinner
+)
+
+# 为单个特征创建分箱器
+binner = ChiMergeBinner(n_bins=5)
+binner.fit(df['age'], df[target])
+bins = binner.transform(df['age'])
 ```
 
 ---
@@ -190,6 +247,21 @@ for col in df_binned.columns:
     X_woe[col] = encoder.transform(df_binned[col].astype(str))
 ```
 
+### 使用 Binner 的 WOE 存储
+
+```python
+# WOE 编码器自动存储在 binner.woe_storage 中
+binner = Binner()
+binner.fit(df, y=target, method='chi')
+
+# 访问特定特征的 WOE 编码器
+encoder = binner.woe_storage.get('age')
+print(encoder.woe_map_)
+
+# 访问所有编码器
+print(binner.woe_encoders_)
+```
+
 ---
 
 ## 4. 逻辑回归建模
@@ -245,6 +317,32 @@ print(model_dict)
 # {'intercept': -2.5, 'coefficients': {'age': 0.3, 'income': 0.5}, ...}
 ```
 
+### 与 Scikit-learn 模型配合使用
+
+```python
+from sklearn.linear_model import LogisticRegression
+
+# Scikit-learn 模型
+lr = LogisticRegression()
+lr.fit(X_woe, y)
+
+# 可直接与 Scorecard 配合使用
+scorecard.from_model(lr, binner, woe_encoders)
+```
+
+### 与 Statsmodels 配合使用
+
+```python
+import statsmodels.api as sm
+
+# Statsmodels 模型
+X_sm = sm.add_constant(X_woe)
+model_sm = sm.Logit(y, X_sm).fit()
+
+# 可直接与 Scorecard 配合使用
+scorecard.from_model(model_sm, binner, woe_encoders)
+```
+
 ---
 
 ## 5. 评分卡生成
@@ -290,6 +388,18 @@ print(f"分数：{scores}")
 # 导出为字典
 scorecard_dict = scorecard.to_dict()
 ```
+
+### 评分卡参数
+
+评分卡分数使用以下公式计算：
+
+```
+分数 = Offset + Factor * ln(odds)
+```
+
+其中：
+- `Offset = base_score - (pdo / ln(2)) * ln(base_odds)`
+- `Factor = pdo / ln(2)`
 
 ---
 
@@ -349,6 +459,22 @@ print(pipeline.scorecard.summary())
 
 # 流程摘要
 print(pipeline.summary())
+```
+
+### 流程摘要
+
+```python
+# 获取完整的流程执行摘要
+summary = pipeline.summary()
+print(summary)
+# 输出：
+# Pre-filter: 50 特征 → 20 特征
+# Binning: ChiMerge，5 个分箱
+# WOE: 转换 20 个特征
+# Post-filter: 移除 2 个特征（PSI）
+# Stepwise: 选择 15 个特征（AIC）
+# Model: 逻辑回归
+# Scorecard: 基准分=600, PDO=50
 ```
 
 ---
@@ -519,6 +645,91 @@ scores = production_scorecard.score(df_new)
 
 ---
 
+## 10. 评估指标
+
+Newt 提供全面的信用风险评估指标。
+
+### AUC（ROC 曲线下面积）
+
+```python
+from newt.metrics import calculate_auc
+
+auc = calculate_auc(y_true, y_pred_proba)
+print(f"AUC: {auc}")
+```
+
+### 基尼系数
+
+```python
+from newt.metrics import calculate_gini
+
+gini = calculate_gini(y_true, y_pred_proba)
+print(f"基尼系数: {gini}")
+```
+
+### KS 统计量
+
+```python
+from newt.metrics import calculate_ks
+
+ks = calculate_ks(y_true, y_pred_proba)
+print(f"KS: {ks}")
+```
+
+### 提升度分析
+
+```python
+from newt.metrics import calculate_lift, calculate_lift_at_k
+
+# 按十分位数计算提升度表
+lift_df = calculate_lift(y_true, y_pred_proba, bins=10)
+print(lift_df)
+
+# 计算 Top K 的提升度（例如 Top 10%）
+lift_at_10pct = calculate_lift_at_k(y_true, y_pred_proba, k=0.1)
+print(f"Lift@10%: {lift_at_10pct}")
+```
+
+### PSI（群体稳定性指标）
+
+```python
+from newt.metrics import calculate_psi
+
+# 计算训练集和测试集之间的 PSI
+psi_values = calculate_psi(X_train_woe, X_test_woe)
+print(f"PSI 值：{psi_values}")
+
+# 计算单个特征的 PSI
+psi_single = calculate_psi(
+    X_train_woe['age'],
+    X_test_woe['age'],
+    buckets=10
+)
+print(f"age 的 PSI：{psi_single}")
+```
+
+### VIF（方差膨胀因子）
+
+```python
+from newt.metrics import calculate_vif
+
+vif_values = calculate_vif(X_woe)
+print(vif_values)
+```
+
+### 指标解读指南
+
+| 指标 | 优秀 | 可接受 | 较差 |
+|--------|------|------------|------|
+| AUC | > 0.75 | 0.70 - 0.75 | < 0.70 |
+| 基尼系数 | > 0.50 | 0.40 - 0.50 | < 0.40 |
+| KS | > 40 | 30 - 40 | < 30 |
+| PSI | < 0.10 | 0.10 - 0.25 | > 0.25 |
+| VIF | < 5 | 5 - 10 | > 10 |
+| Lift@10% | > 3.0 | 2.0 - 3.0 | < 2.0 |
+
+---
+
 ## 完整示例工作流程
 
 ```python
@@ -529,6 +740,7 @@ from newt.features.analysis import WOEEncoder
 from newt.modeling import LogisticModel, Scorecard
 from newt.pipeline import ScorecardPipeline
 from newt.visualization import plot_binning_result, plot_iv_ranking
+from newt.metrics import calculate_auc, calculate_ks
 
 # 1. 加载数据
 df = pd.read_csv('credit_data.csv')
@@ -540,9 +752,13 @@ selector.fit(df, df[target])
 selector.select(iv_threshold=0.02)
 X = selector.transform(df)
 
-# 3. 分箱
+# 3. 带单调约束的分箱
 binner = Binner()
-binner.fit(X, df[target], method='opt', n_bins=5)
+binner.fit(X, df[target], method='opt', n_bins=5, monotonic=True)
+
+# 访问分箱结果
+binner['age'].stats
+binner['age'].plot()
 X_binned = binner.transform(X, labels=False)
 
 # 4. WOE 转换
@@ -573,7 +789,12 @@ df_new = pd.read_csv('new_applications.csv')
 scores = scorecard.score(df_new)
 print(f"分数：{scores}")
 
-# 9. 可视化
+# 9. 计算指标
+auc = calculate_auc(df[target], model.predict_proba(X_woe))
+ks = calculate_ks(df[target], model.predict_proba(X_woe))
+print(f"AUC: {auc}, KS: {ks}")
+
+# 10. 可视化
 fig = plot_iv_ranking(
     iv_dict=selector.eda_summary_.set_index('feature')['iv'].to_dict()
 )
@@ -586,3 +807,4 @@ fig = plot_iv_ranking(
 - **API 文档**：查看各模块的文档字符串获取详细 API 参考
 - **示例**：查看 `examples/` 目录获取更全面的示例
 - **配置**：查看 `newt.config` 获取默认参数值
+- **开发指南**：查看 `AGENTS.md` 获取开发指南

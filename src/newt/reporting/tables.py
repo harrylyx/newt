@@ -343,17 +343,11 @@ def build_variable_analysis_sheet(
         title_prefix = f"{rank}.{feature_name}"
         if display_name:
             title_prefix = f"{title_prefix} {display_name}"
+        blocks.append(ReportBlock(title=title_prefix, blank_rows_after=0))
         blocks.append(
             ReportBlock(
                 title=f"{title_prefix} 分箱表",
                 data=oot_bins,
-                chart=ReportChart(
-                    chart_type="combo",
-                    category_column="bin",
-                    value_columns=["total_prop"],
-                    secondary_value_columns=["bad_rate"],
-                    title=feature_name,
-                ),
             )
         )
         blocks.append(
@@ -362,6 +356,21 @@ def build_variable_analysis_sheet(
                 data=monthly_table,
             )
         )
+        if not oot_bins.empty:
+            blocks.append(
+                ReportBlock(
+                    title="",
+                    chart=ReportChart(
+                        chart_type="combo",
+                        category_column="bin",
+                        value_columns=["total_prop"],
+                        secondary_value_columns=["bad_rate"],
+                        title=feature_name,
+                        source_block_title=f"{title_prefix} 分箱表",
+                    ),
+                    blank_rows_after=2,
+                )
+            )
 
     return ReportSheet(name="变量分析", blocks=blocks)
 
@@ -388,8 +397,10 @@ def build_model_performance_sheet(
     )
     blocks.append(ReportBlock(title="3.2 模型效果", data=model_effect))
 
-    bin_rows: List[pd.DataFrame] = []
-    for tag_value, tag_frame in data.loc[data[primary_label].isin([0, 1])].groupby(tag_col):
+    binary_data = data.loc[data[primary_label].isin([0, 1])].copy()
+    blocks.append(ReportBlock(title="3.3 模型分箱表现", blank_rows_after=1))
+    for tag_value in _ordered_tag_values(binary_data[tag_col]):
+        tag_frame = binary_data.loc[binary_data[tag_col] == tag_value]
         table = calculate_bin_performance_table(
             data=tag_frame,
             label_col=primary_label,
@@ -397,26 +408,18 @@ def build_model_performance_sheet(
             edges=score_edges,
         )
         if not table.empty:
-            table.insert(0, "样本集", tag_value)
-            table.insert(1, "观察点月", "")
-            bin_rows.append(table)
-            for month_value, month_frame in tag_frame.groupby(month_col):
-                month_table = calculate_bin_performance_table(
-                    data=month_frame,
-                    label_col=primary_label,
-                    score_col=score_col,
-                    edges=score_edges,
-                )
-                if not month_table.empty:
-                    month_table.insert(0, "样本集", tag_value)
-                    month_table.insert(1, "观察点月", month_value)
-                    bin_rows.append(month_table)
-    blocks.append(
-        ReportBlock(
-            title="3.3 模型分箱表现",
-            data=pd.concat(bin_rows, ignore_index=True) if bin_rows else pd.DataFrame(),
+            blocks.append(ReportBlock(title=str(tag_value), data=table, blank_rows_after=3))
+
+    for month_value in _ordered_month_values(binary_data[month_col]):
+        month_frame = binary_data.loc[binary_data[month_col] == month_value]
+        table = calculate_bin_performance_table(
+            data=month_frame,
+            label_col=primary_label,
+            score_col=score_col,
+            edges=score_edges,
         )
-    )
+        if not table.empty:
+            blocks.append(ReportBlock(title=str(month_value), data=table, blank_rows_after=3))
     return ReportSheet(name="模型表现", blocks=blocks)
 
 
@@ -447,7 +450,12 @@ def _build_monthly_metrics_table(
             model_name=model_name,
         )
         rows.append(table)
-    return pd.concat(rows, ignore_index=True)
+    return _sort_report_table(
+        pd.concat(rows, ignore_index=True),
+        tag_column="样本集",
+        month_column="观察点月",
+        leading_columns=["样本标签", "模型"],
+    )
 
 
 def _build_model_comparison(
@@ -484,7 +492,12 @@ def _build_model_comparison(
                     model_name=score_col,
                 )
             )
-    return pd.concat(frames, ignore_index=True)
+    return _sort_report_table(
+        pd.concat(frames, ignore_index=True),
+        tag_column="样本集",
+        month_column="观察点月",
+        leading_columns=["样本标签", "模型"],
+    )
 
 
 def _build_group_metrics(
@@ -667,6 +680,10 @@ def _build_feature_bin_stats(
     grouped["lift"] = grouped["bad_rate"] / max(overall_bad_rate, 1e-8)
     grouped["min"] = grouped["bin"].apply(_interval_left)
     grouped["max"] = grouped["bin"].apply(_interval_right)
+    grouped = grouped.assign(
+        _bin_order=grouped["min"].map(_interval_sort_key),
+        _missing_order=grouped["bin"].astype(str).eq("Missing").astype(int),
+    ).sort_values(["_missing_order", "_bin_order"], kind="mergesort")
     return grouped[
         [
             "bin",
@@ -684,7 +701,7 @@ def _build_feature_bin_stats(
             "ks",
             "lift",
         ]
-    ]
+    ].reset_index(drop=True)
 
 
 def _build_feature_monthly_metrics(
@@ -702,7 +719,8 @@ def _build_feature_monthly_metrics(
         train_stats.set_index("bin")["bad_rate"].to_dict() if not train_stats.empty else {}
     )
     rows: List[Dict[str, object]] = []
-    for month_value, month_frame in all_data.groupby(month_col):
+    for month_value in _ordered_month_values(all_data[month_col]):
+        month_frame = all_data.loc[all_data[month_col] == month_value]
         clean = month_frame.loc[month_frame[label_col].isin([0, 1]), [feature, label_col]].copy()
         if clean.empty:
             continue
@@ -716,7 +734,7 @@ def _build_feature_monthly_metrics(
                 "PSI": calculate_feature_psi(train_frame[feature], clean[feature], edges),
             }
         )
-    return pd.DataFrame(rows)
+    return _sort_report_table(pd.DataFrame(rows), month_column="month")
 
 
 def _calculate_feature_metric_score(
@@ -788,6 +806,68 @@ def _determine_feature_columns(
     ]
 
 
+def _sort_report_table(
+    frame: pd.DataFrame,
+    tag_column: Optional[str] = None,
+    month_column: Optional[str] = None,
+    leading_columns: Optional[Sequence[str]] = None,
+) -> pd.DataFrame:
+    if frame.empty:
+        return frame
+
+    ordered = frame.copy()
+    sort_columns: List[str] = []
+    helper_columns: List[str] = []
+
+    for column in leading_columns or ():
+        if column in ordered.columns:
+            sort_columns.append(column)
+
+    if tag_column and tag_column in ordered.columns:
+        ordered["_tag_order"] = ordered[tag_column].map(_tag_sort_key)
+        sort_columns.append("_tag_order")
+        helper_columns.append("_tag_order")
+
+    if month_column and month_column in ordered.columns:
+        ordered["_month_order"] = ordered[month_column].map(_month_sort_key)
+        sort_columns.append("_month_order")
+        helper_columns.append("_month_order")
+
+    if not sort_columns:
+        return ordered.reset_index(drop=True)
+
+    ordered = ordered.sort_values(sort_columns, kind="mergesort")
+    return ordered.drop(columns=helper_columns, errors="ignore").reset_index(drop=True)
+
+
+def _ordered_month_values(values: pd.Series) -> List[object]:
+    unique_values = pd.Series(values).drop_duplicates().tolist()
+    return sorted(unique_values, key=_month_sort_key)
+
+
+def _ordered_tag_values(values: pd.Series) -> List[object]:
+    unique_values = pd.Series(values).drop_duplicates().tolist()
+    return sorted(unique_values, key=_tag_sort_key)
+
+
+def _month_sort_key(value: object) -> str:
+    if pd.isna(value) or value == "":
+        return "999999"
+    text = str(value).strip()
+    if text.isdigit() and len(text) == 6:
+        return text
+    parsed = pd.to_datetime(value, errors="coerce")
+    if pd.notna(parsed):
+        return parsed.strftime("%Y%m")
+    return f"999998{text}"
+
+
+def _tag_sort_key(value: object) -> tuple[int, str]:
+    text = str(value)
+    order = {"train": 0, "test": 1, "oot": 2, "oos": 3}.get(text.lower(), 9)
+    return order, text
+
+
 def _interval_left(value: object) -> float:
     if hasattr(value, "left"):
         return float(value.left)
@@ -804,3 +884,12 @@ def _interval_right(value: object) -> float:
         return np.nan
     text = str(value).replace("]", "").replace(")", "")
     return float(text.split(",")[1].strip())
+
+
+def _interval_sort_key(value: object) -> float:
+    if pd.isna(value):
+        return float("inf")
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return float("inf")

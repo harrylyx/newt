@@ -13,6 +13,7 @@ from newt.metrics.psi import calculate_psi
 
 
 PERCENT_LEVELS = (0.10, 0.05, 0.02, 0.01)
+TAG_ORDER = {"train": 0, "test": 1, "oot": 2, "oos": 3}
 
 
 def build_reference_quantile_bins(
@@ -104,10 +105,12 @@ def calculate_latest_month_psi(
 ) -> pd.DataFrame:
     """Calculate PSI for each month against the latest month within each tag."""
     records: List[Dict[str, object]] = []
-    for tag_value, tag_frame in data.groupby(tag_col, dropna=False):
-        latest_month = tag_frame[month_col].max()
+    for tag_value, tag_frame in data.groupby(tag_col, dropna=False, sort=False):
+        months = _ordered_month_values(tag_frame[month_col])
+        latest_month = months[-1] if months else ""
         expected = tag_frame.loc[tag_frame[month_col] == latest_month, score_col]
-        for month_value, month_frame in tag_frame.groupby(month_col, dropna=False):
+        for month_value in months:
+            month_frame = tag_frame.loc[tag_frame[month_col] == month_value]
             psi_value = 0.0
             if month_value != latest_month:
                 psi_value = calculate_psi(expected, month_frame[score_col])
@@ -118,7 +121,7 @@ def calculate_latest_month_psi(
                     "latest_month_psi": float(psi_value),
                 }
             )
-    return pd.DataFrame(records)
+    return _sort_report_frame(pd.DataFrame(records), tag_column=tag_col, month_column=month_col)
 
 
 def calculate_grouped_binary_metrics(
@@ -168,7 +171,7 @@ def calculate_grouped_binary_metrics(
         record["近期月对比各集合PSI"] = latest_value
         records.append(record)
 
-    return pd.DataFrame(records)
+    return _sort_report_frame(pd.DataFrame(records), tag_column="样本集", month_column="观察点月")
 
 
 def summarize_label_distribution(
@@ -211,7 +214,7 @@ def summarize_label_distribution(
                 "坏占比（去掉灰样本）": float(bad / total) if total else np.nan,
             }
         )
-    return pd.DataFrame(rows)
+    return _sort_report_frame(pd.DataFrame(rows), tag_column="样本集", month_column="月")
 
 
 def calculate_score_correlation_matrix(
@@ -260,22 +263,20 @@ def calculate_bin_performance_table(
 ) -> pd.DataFrame:
     """Calculate bin-level model performance table."""
     frame = data.loc[data[label_col].isin([0, 1]), [label_col, score_col]].copy()
+    if frame.empty:
+        return pd.DataFrame()
     frame["bin"] = assign_reference_bins(frame[score_col], edges)
 
     rows: List[Dict[str, object]] = []
     total_bad = int((frame[label_col] == 1).sum())
     total_all = int(len(frame))
-    cumulative_bad = 0
-    cumulative_total = 0
+    overall_bad_rate = float(total_bad / total_all) if total_all else np.nan
 
     for bin_label, bin_frame in frame.groupby("bin", dropna=False, sort=False):
         bads = int((bin_frame[label_col] == 1).sum())
         goods = int((bin_frame[label_col] == 0).sum())
         total = bads + goods
-        cumulative_bad += bads
-        cumulative_total += total
         bad_rate = float(bads / total) if total else np.nan
-        overall_bad_rate = float(total_bad / total_all) if total_all else np.nan
         rows.append(
             {
                 "bin": str(bin_label),
@@ -285,26 +286,33 @@ def calculate_bin_performance_table(
                 "goods": goods,
                 "total": total,
                 "bad_rate": bad_rate,
-                "cum_bad_rate": float(cumulative_bad / cumulative_total)
-                if cumulative_total
-                else np.nan,
-                "cum_bads_prop": float(cumulative_bad / total_bad) if total_bad else np.nan,
-                "ks": np.nan,
                 "lift": float(bad_rate / overall_bad_rate)
                 if overall_bad_rate and not np.isnan(overall_bad_rate)
-                else np.nan,
-                "cum_lift": float((cumulative_bad / cumulative_total) / overall_bad_rate)
-                if cumulative_total and overall_bad_rate and not np.isnan(overall_bad_rate)
                 else np.nan,
             }
         )
 
     result = pd.DataFrame(rows)
-    if not result.empty and total_bad and total_all > total_bad:
+    if result.empty:
+        return result
+    result = result.assign(
+        _bin_order=result["min"].map(_bin_sort_key),
+        _missing_order=result["bin"].eq("Missing").astype(int),
+    ).sort_values(["_missing_order", "_bin_order"], kind="mergesort")
+    result["cum_bads"] = result["bads"].cumsum()
+    result["cum_total"] = result["total"].cumsum()
+    result["cum_bad_rate"] = result["cum_bads"] / result["cum_total"].clip(lower=1)
+    result["cum_bads_prop"] = result["cum_bads"] / max(total_bad, 1)
+    if total_all > total_bad:
         result["cum_goods_prop"] = result["goods"].cumsum() / max(total_all - total_bad, 1)
         result["ks"] = abs(result["cum_bads_prop"] - result["cum_goods_prop"])
-        result = result.drop(columns=["cum_goods_prop"])
-    return result
+    else:
+        result["ks"] = np.nan
+    result["cum_lift"] = result["cum_bad_rate"] / max(overall_bad_rate, 1e-8)
+    return result.drop(
+        columns=["_bin_order", "_missing_order", "cum_bads", "cum_total", "cum_goods_prop"],
+        errors="ignore",
+    ).reset_index(drop=True)
 
 
 def calculate_feature_psi(
@@ -356,3 +364,67 @@ def _extract_interval_right(interval_label: object) -> float:
         return np.nan
     text = str(interval_label).replace("]", "").replace(")", "")
     return float(text.split(",")[1].strip())
+
+
+def _sort_report_frame(
+    frame: pd.DataFrame,
+    tag_column: Optional[str] = None,
+    month_column: Optional[str] = None,
+) -> pd.DataFrame:
+    if frame.empty:
+        return frame
+
+    ordered = frame.copy()
+    sort_columns: List[str] = []
+    helper_columns: List[str] = []
+
+    if tag_column and tag_column in ordered.columns:
+        ordered["_tag_order"] = ordered[tag_column].map(_tag_sort_key)
+        sort_columns.append("_tag_order")
+        helper_columns.append("_tag_order")
+
+    if month_column and month_column in ordered.columns:
+        ordered["_month_order"] = ordered[month_column].map(_month_sort_key)
+        sort_columns.append("_month_order")
+        helper_columns.append("_month_order")
+
+    for column in ["样本标签", "模型", "维度列", "维度值"]:
+        if column in ordered.columns:
+            sort_columns.append(column)
+
+    if not sort_columns:
+        return ordered.reset_index(drop=True)
+
+    ordered = ordered.sort_values(sort_columns, kind="mergesort")
+    return ordered.drop(columns=helper_columns, errors="ignore").reset_index(drop=True)
+
+
+def _ordered_month_values(values: pd.Series) -> List[object]:
+    unique_values = pd.Series(values).drop_duplicates().tolist()
+    return sorted(unique_values, key=_month_sort_key)
+
+
+def _month_sort_key(value: object) -> str:
+    if pd.isna(value) or value == "":
+        return "999999"
+    text = str(value).strip()
+    if text.isdigit() and len(text) == 6:
+        return text
+    parsed = pd.to_datetime(value, errors="coerce")
+    if pd.notna(parsed):
+        return parsed.strftime("%Y%m")
+    return f"999998{text}"
+
+
+def _tag_sort_key(value: object) -> tuple[int, str]:
+    text = str(value)
+    return TAG_ORDER.get(text.lower(), len(TAG_ORDER)), text
+
+
+def _bin_sort_key(value: object) -> float:
+    if pd.isna(value):
+        return float("inf")
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return float("inf")

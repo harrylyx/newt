@@ -35,6 +35,7 @@ class ExcelReportWriter:
                 writer.sheets[sheet.name] = worksheet
                 worksheet.freeze_panes(1, 0)
                 row = 0
+                table_ranges = {}
                 for block in sheet.blocks:
                     row = self._write_block(
                         writer=writer,
@@ -44,6 +45,7 @@ class ExcelReportWriter:
                         start_row=row,
                         workbook=workbook,
                         formats=formats,
+                        table_ranges=table_ranges,
                     )
                 worksheet.set_column(0, 30, 16)
         result.output_path = str(path)
@@ -58,39 +60,53 @@ class ExcelReportWriter:
         start_row: int,
         workbook,
         formats: Dict[str, object],
+        table_ranges: Dict[str, Dict[str, object]],
     ) -> int:
-        worksheet.write(start_row, 0, block.title, formats["title"])
-        row = start_row + 1
+        row = start_row
+        if block.title:
+            worksheet.write(start_row, 0, block.title, formats["title"])
+            row = start_row + 1
         if block.note:
             worksheet.write(row, 0, block.note, formats["note"])
             row += 1
-        if block.data.empty:
-            return row + max(block.blank_rows_after, 1)
+        if block.data.empty and block.chart is None:
+            return row + block.blank_rows_after
 
-        block.data.to_excel(
-            writer,
-            sheet_name=sheet_name,
-            startrow=row,
-            startcol=0,
-            index=False,
-        )
-        self._format_table(
-            worksheet=worksheet,
-            data=block.data,
-            start_row=row,
-            formats=formats,
-        )
-        end_row = row + len(block.data)
-        if block.chart is not None and not block.data.empty:
-            self._add_chart(
+        end_row = row
+        if not block.data.empty:
+            block.data.to_excel(
+                writer,
+                sheet_name=sheet_name,
+                startrow=row,
+                startcol=0,
+                index=False,
+            )
+            self._format_table(
+                worksheet=worksheet,
+                data=block.data,
+                start_row=row,
+                formats=formats,
+            )
+            end_row = row + len(block.data)
+            if block.title:
+                table_ranges[block.title] = {
+                    "start_row": row,
+                    "end_row": end_row,
+                    "data": block.data,
+                }
+
+        if block.chart is not None:
+            chart_start_row = row if block.data.empty else end_row + 2
+            reserved_rows = self._add_chart(
                 worksheet=worksheet,
                 block=block,
                 start_row=row,
                 end_row=end_row,
                 workbook=workbook,
-                formats=formats,
+                table_ranges=table_ranges,
             )
-            end_row += 15
+            return chart_start_row + reserved_rows + block.blank_rows_after
+
         return end_row + block.blank_rows_after + 1
 
     def _add_chart(
@@ -100,21 +116,30 @@ class ExcelReportWriter:
         start_row: int,
         end_row: int,
         workbook,
-        formats: Dict[str, object],
-    ) -> None:
+        table_ranges: Dict[str, Dict[str, object]],
+    ) -> int:
         chart = workbook.add_chart({"type": "column"})
-        data = block.data
+        data_range = self._resolve_chart_range(block, start_row, end_row, table_ranges)
+        data = data_range["data"]
+        chart_data_start_row = data_range["start_row"]
+        chart_data_end_row = data_range["end_row"]
         category_index = data.columns.get_loc(block.chart.category_column)
         for column in block.chart.value_columns:
             chart.add_series(
                 {
                     "name": column,
-                    "categories": [worksheet.name, start_row + 1, category_index, end_row, category_index],
+                    "categories": [
+                        worksheet.name,
+                        chart_data_start_row + 1,
+                        category_index,
+                        chart_data_end_row,
+                        category_index,
+                    ],
                     "values": [
                         worksheet.name,
-                        start_row + 1,
+                        chart_data_start_row + 1,
                         data.columns.get_loc(column),
-                        end_row,
+                        chart_data_end_row,
                         data.columns.get_loc(column),
                     ],
                 }
@@ -125,12 +150,18 @@ class ExcelReportWriter:
                 line_chart.add_series(
                     {
                         "name": column,
-                        "categories": [worksheet.name, start_row + 1, category_index, end_row, category_index],
+                        "categories": [
+                            worksheet.name,
+                            chart_data_start_row + 1,
+                            category_index,
+                            chart_data_end_row,
+                            category_index,
+                        ],
                         "values": [
                             worksheet.name,
-                            start_row + 1,
+                            chart_data_start_row + 1,
                             data.columns.get_loc(column),
-                            end_row,
+                            chart_data_end_row,
                             data.columns.get_loc(column),
                         ],
                         "y2_axis": True,
@@ -138,7 +169,10 @@ class ExcelReportWriter:
                 )
             chart.combine(line_chart)
         chart.set_title({"name": block.chart.title or block.title})
-        worksheet.insert_chart(end_row + 2, 0, chart)
+        chart.set_size({"width": 720, "height": 360})
+        insert_row = start_row if block.data.empty else end_row + 2
+        worksheet.insert_chart(insert_row, 0, chart)
+        return block.chart.height_rows
 
     def _format_table(self, worksheet, data: pd.DataFrame, start_row: int, formats: Dict[str, object]) -> None:
         for column_index, column_name in enumerate(data.columns):
@@ -196,6 +230,9 @@ class ExcelReportWriter:
         decimal = workbook.add_format(
             {"font_name": self.font_name, "border": 1, "num_format": "0.00"}
         )
+        iv_decimal = workbook.add_format(
+            {"font_name": self.font_name, "border": 1, "num_format": "0.0000"}
+        )
         integer = workbook.add_format(
             {"font_name": self.font_name, "border": 1, "num_format": "#,##0"}
         )
@@ -206,12 +243,15 @@ class ExcelReportWriter:
             "text": text,
             "percent": percent,
             "decimal": decimal,
+            "iv_decimal": iv_decimal,
             "integer": integer,
         }
 
     def _choose_body_format(self, column_name: str, formats: Dict[str, object]):
         name = str(column_name)
         lower = name.lower()
+        if lower == "iv" or lower.startswith("iv_") or lower.endswith("_iv"):
+            return formats["iv_decimal"]
         if any(token in lower for token in ["auc", "ks", "psi", "lift", "gain_per", "weight_per"]):
             return formats["decimal"]
         if any(token in name for token in ["占比", "比率"]) or any(
@@ -232,3 +272,18 @@ class ExcelReportWriter:
         lengths = [len(str(name))]
         lengths.extend(len(str(value)) for value in series.head(50))
         return min(max(lengths) + 2, 28)
+
+    def _resolve_chart_range(
+        self,
+        block: ReportBlock,
+        start_row: int,
+        end_row: int,
+        table_ranges: Dict[str, Dict[str, object]],
+    ) -> Dict[str, object]:
+        if block.chart and block.chart.source_block_title:
+            return table_ranges[block.chart.source_block_title]
+        return {
+            "start_row": start_row,
+            "end_row": end_row,
+            "data": block.data,
+        }

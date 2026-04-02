@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Sequence, Tuple
 
 import numpy as np
 import pandas as pd
@@ -80,15 +80,14 @@ class ModelAdapter:
 
     def get_param_table(self) -> pd.DataFrame:
         """Return a parameter table for the report."""
-        params = dict(self.model.get_params(deep=True)) if hasattr(self.model, "get_params") else {}
-        params.update(self._extract_known_params())
+        params = self._collect_params()
         rows = [
             {
                 "参数名称": key,
-                "数值": value,
-                "参数解释": PARAMETER_DESCRIPTIONS.get(key, ""),
+                "数值": self._resolve_param_value(params, aliases),
+                "参数解释": description,
             }
-            for key, value in params.items()
+            for key, aliases, description in PARAMETER_SPECS
         ]
         return pd.DataFrame(rows)
 
@@ -111,36 +110,53 @@ class ModelAdapter:
     def _get_xgboost_booster(self) -> Any:
         return self.model.get_booster()
 
-    def _extract_known_params(self) -> Dict[str, Any]:
-        known_keys = [
-            "n_estimators",
-            "learning_rate",
-            "objective",
-            "subsample",
-            "colsample_bytree",
-            "reg_alpha",
-            "reg_lambda",
-            "num_leaves",
-            "max_depth",
-        ]
-        values: Dict[str, Any] = {}
-        source = getattr(self.model, "params", {})
-        if hasattr(self.model, "booster_") and hasattr(self.model.booster_, "params"):
-            source = getattr(self.model.booster_, "params")
-        for key in known_keys:
-            if key in source:
-                values[key] = source[key]
-        return values
+    def _collect_params(self) -> Dict[str, Any]:
+        params: Dict[str, Any] = {}
+        if hasattr(self.model, "get_params"):
+            params.update(dict(self.model.get_params(deep=True)))
+        for source in self._parameter_sources():
+            params.update(source)
+        return params
+
+    def _parameter_sources(self) -> List[Dict[str, Any]]:
+        sources: List[Dict[str, Any]] = []
+        raw_model_params = getattr(self.model, "params", {})
+        if isinstance(raw_model_params, dict):
+            sources.append(raw_model_params)
+
+        if hasattr(self.model, "booster_"):
+            booster_params = getattr(self.model.booster_, "params", {})
+            if isinstance(booster_params, dict):
+                sources.append(booster_params)
+
+        if self.model_family == "xgboost":
+            booster = self._get_xgboost_booster()
+            booster_attributes = getattr(booster, "attributes", None)
+            if callable(booster_attributes):
+                attribute_values = booster_attributes()
+                if isinstance(attribute_values, dict):
+                    sources.append(attribute_values)
+        return sources
+
+    def _resolve_param_value(
+        self,
+        params: Dict[str, Any],
+        aliases: Sequence[str],
+    ) -> Any:
+        for alias in aliases:
+            if alias in params:
+                return params[alias]
+        return ""
 
 
-PARAMETER_DESCRIPTIONS = {
-    "n_estimators": "训练轮次",
-    "learning_rate": "学习率",
-    "objective": "函数类型",
-    "subsample": "训练样本采样比例",
-    "colsample_bytree": "特征采样率",
-    "reg_alpha": "L1正则化系数",
-    "reg_lambda": "L2正则化系数",
-    "num_leaves": "叶子节点数",
-    "max_depth": "最大深度",
-}
+PARAMETER_SPECS: Tuple[Tuple[str, Tuple[str, ...], str], ...] = (
+    ("n_estimators", ("n_estimators", "num_iterations"), "训练轮次"),
+    ("learning_rate", ("learning_rate",), "学习率"),
+    ("objective", ("objective",), "函数类型"),
+    ("subsample", ("subsample", "bagging_fraction"), "训练样本采样比例"),
+    ("colsample_bytree", ("colsample_bytree", "feature_fraction"), "特征采样率"),
+    ("reg_alpha", ("reg_alpha", "lambda_l1"), "L1正则化系数"),
+    ("reg_lambda", ("reg_lambda", "lambda_l2"), "L2正则化系数"),
+    ("num_leaves", ("num_leaves",), "叶子节点数"),
+    ("max_depth", ("max_depth",), "最大深度"),
+)

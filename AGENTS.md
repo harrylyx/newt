@@ -5,7 +5,7 @@
 Newt is a lightweight Python toolkit for efficient feature analysis and statistical diagnostics in credit risk modeling.
 
 - **Python Version**: >=3.8.1, <4.0
-- **Dependency Management**: Poetry
+- **Dependency Management**: uv
 - **Core Features**:
   - 6 binning algorithms (ChiMerge, Decision Tree, K-Means, Equal Frequency, Equal Width, Optimal)
   - Monotonic binning support (ascending, descending, auto-detect)
@@ -18,22 +18,23 @@ Newt is a lightweight Python toolkit for efficient feature analysis and statisti
 
 ## 2. Development Environment
 
-**IMPORTANT:** Always use `python -m poetry` prefix for all commands - no environment variables configured.
+**IMPORTANT:** Use `uv` for environment and dependency management.
 
 - **OS**: Windows 11
 - **Terminal**: PowerShell
 - **Environment**: No global environment variables configured
-- **Command Prefix**: Always use `python -m` for all Python commands
+- **Command Prefix**: Prefer `uv run` for Python tooling commands
 
 ```bash
-# ❌ Do NOT use direct poetry commands
-poetry run pytest
-poetry run python -m pytest
+# ❌ Do NOT use bare Python tooling commands
 pytest
-
-# ✅ Always use python -m prefix
 python -m pytest
-python -m poetry
+python -m pip install ...
+
+# ✅ Use uv-managed workflows
+uv sync --group dev
+uv run pytest
+uv run python -m pytest
 ```
 
 ## 3. Project Architecture
@@ -102,7 +103,7 @@ newt/
 │   ├── 03-production-pipeline.ipynb
 │   └── data/                   # Sample datasets
 │       └── statlog+german+credit+data/
-├── pyproject.toml                # Poetry configuration
+├── pyproject.toml                # uv/PEP 621 configuration
 ├── README.md                     # Package README
 └── AGENTS.md                    # This file
 ```
@@ -368,26 +369,26 @@ tests/
 
 ```bash
 # Install dependencies
-python -m poetry install
+uv sync --group dev
 
 # Format code
-python -m poetry run black .
-python -m poetry run isort .
+uv run black .
+uv run isort .
 
 # Run linter
-python -m poetry run flake8 src tests
+uv run flake8 src tests
 
 # Run all tests
-python -m poetry run pytest
+uv run pytest
 
 # Run specific test
-python -m poetry run pytest tests/unit/features/binning/test_binning.py
+uv run pytest tests/unit/features/binning/test_binning.py
 
 # Run tests with coverage
-python -m poetry run pytest --cov=src/newt --cov-report=html
+uv run pytest --cov=src/newt --cov-report=html
 
 # Run pre-commit checks
-pre-commit run --all-files
+uv run pre-commit run --all-files
 ```
 
 ## 8. CI/CD
@@ -505,8 +506,8 @@ fig = plot_woe_pattern(woe_encoder['age'], 'age')
 
 1. **Maintain backward compatibility** for existing APIs
 2. **Update tests** to cover new functionality
-3. **Run linting**: `python -m poetry run flake8 src tests`
-4. **Run tests**: `python -m poetry run pytest --cov=src/newt`
+3. **Run linting**: `uv run flake8 src tests`
+4. **Run tests**: `uv run pytest --cov=src/newt`
 5. **Check coverage**: Ensure >70% coverage target maintained
 
 ### 10.3 Documentation Updates

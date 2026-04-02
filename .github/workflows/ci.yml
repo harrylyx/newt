@@ -2,55 +2,38 @@ name: CI
 
 on:
   push:
-    branches: [ main, master ]
+    branches: [main, master]
   pull_request:
-    branches: [ main, master ]
+    branches: [main, master]
 
 jobs:
   test:
     name: Test (Python ${{ matrix.python-version }})
     runs-on: ubuntu-latest
-    container: python:${{ matrix.python-version }}-slim
     strategy:
       matrix:
         python-version: ['3.8', '3.9', '3.10']
 
     steps:
-    - uses: actions/checkout@v3
+      - uses: actions/checkout@v4
 
-    - name: Install system dependencies
-      run: |
-        apt-get update
-        apt-get install -y --no-install-recommends git build-essential
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
 
-    # setup-python is not supported inside containers. Use direct caching.
-    
-    - name: Install Poetry
-      run: pip install poetry
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
 
-    - name: Configure Poetry
-      run: poetry config virtualenvs.in-project true
+      - name: Install dependencies
+        run: uv sync --group dev --python ${{ matrix.python-version }}
 
-    - name: Cache virtualenv
-      uses: actions/cache@v3
-      with:
-        path: .venv
-        key: venv-${{ runner.os }}-${{ matrix.python-version }}-${{ hashFiles('**/poetry.lock') }}
-        restore-keys: |
-          venv-${{ runner.os }}-${{ matrix.python-version }}-
+      - name: Lint with flake8
+        run: |
+          uv run flake8 src tests --count --select=E9,F63,F7,F82 --show-source --statistics
+          uv run flake8 src tests --count --exit-zero --max-complexity=10 --max-line-length=127 --statistics
 
-    - name: Install dependencies
-      run: poetry install --no-interaction
-
-    - name: Install library
-      run: poetry install --no-interaction
-
-    - name: Lint with flake8
-      run: |
-        poetry run pip install flake8
-        poetry run flake8 src tests --count --select=E9,F63,F7,F82 --show-source --statistics
-        poetry run flake8 src tests --count --exit-zero --max-complexity=10 --max-line-length=127 --statistics
-
-    - name: Run tests with pytest
-      run: |
-        poetry run pytest tests/ --cov=src/newt --cov-report=xml
+      - name: Run tests with pytest
+        run: uv run pytest tests/ --cov=src/newt --cov-report=xml

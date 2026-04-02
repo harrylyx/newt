@@ -38,7 +38,7 @@ def calculate_iv(
                 duplicates="drop",
             ).astype(str)
         except ValueError:
-            # Fallback to equal-width binning if quantiles fail (e.g. skewed distribution)
+            # Fall back to equal-width binning if quantiles fail.
             binned = pd.cut(df[feature], bins=buckets).astype(str)
 
         feature_data = binned

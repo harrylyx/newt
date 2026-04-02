@@ -30,6 +30,21 @@ def _check_matplotlib():
         )
 
 
+def _normalize_columns(
+    stats: pd.DataFrame,
+    columns: Optional[Union[str, List[str]]],
+    default: Optional[List[str]] = None,
+) -> List[str]:
+    """Validate plotting columns against the stats table."""
+    if columns is None:
+        return default or []
+    normalized = [columns] if isinstance(columns, str) else list(columns)
+    missing = [column for column in normalized if column not in stats.columns]
+    if missing:
+        raise ValueError(f"Columns not found in binning stats: {missing}")
+    return normalized
+
+
 def plot_binning_result(
     binner: Any,
     X: pd.DataFrame,
@@ -91,13 +106,9 @@ def plot_binning_result(
 
     x_pos = np.arange(len(stats))
 
-    # Handle primary Y (Bars)
-    if y_col is None:
-        y_col = ["bad_prop"]
-    if isinstance(y_col, str):
-        y_cols = [y_col]
-    else:
-        y_cols = y_col
+    y_cols = _normalize_columns(stats, y_col, default=["bad_prop"])
+    if x_col not in stats.columns:
+        raise ValueError(f"Column '{x_col}' not found in binning stats.")
 
     # Plot bars
     width = 0.8 / len(y_cols)
@@ -108,12 +119,7 @@ def plot_binning_result(
         "forestgreen",
         "purple",
     ]  # Default color cycle
-
     for i, col in enumerate(y_cols):
-        if col not in stats.columns:
-            print(f"Warning: Column '{col}' not in stats, skipping.")
-            continue
-
         offset = (i - len(y_cols) / 2) * width + width / 2
         ax1.bar(
             x_pos + offset,
@@ -137,19 +143,11 @@ def plot_binning_result(
 
     # Handle secondary Y (Line)
     if secondary_y_col:
-        if isinstance(secondary_y_col, str):
-            sec_cols = [secondary_y_col]
-        else:
-            sec_cols = secondary_y_col
-
+        sec_cols = _normalize_columns(stats, secondary_y_col)
         ax2 = ax1.twinx()
         line_colors = ["green", "red", "blue", "black"]
 
         for i, col in enumerate(sec_cols):
-            if col not in stats.columns:
-                print(f"Warning: Column '{col}' not in stats, skipping.")
-                continue
-
             ax2.plot(
                 x_pos,
                 stats[col],
@@ -183,7 +181,6 @@ def plot_binning_result(
     plt.tight_layout()
 
     # Close the figure to prevent automatic display in notebooks (double plotting)
-    # The figure object is still returned and can be displayed explicitly or by notebook cell return
     plt.close(fig)
 
     return fig

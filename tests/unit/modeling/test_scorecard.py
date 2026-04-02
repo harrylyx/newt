@@ -4,7 +4,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-
+from newt.features.binning import Binner
 from newt.modeling.scorecard import Scorecard
 
 
@@ -50,10 +50,8 @@ def test_scorecard_score(mock_components):
     sc = Scorecard()
     sc.from_model(model, binner, woe_encoder)
 
-    # Mock transform return
-    binner.binners_["feature1"].transform.return_value = pd.Series(["bin1", "bin2"])
-
     X = pd.DataFrame({"feature1": [0.1, 0.9]})
+    binner.transform.return_value = pd.DataFrame({"feature1": ["bin1", "bin2"]})
     scores = sc.score(X)
 
     assert len(scores) == 2
@@ -88,3 +86,29 @@ def test_scorecard_summary(mock_components):
     assert isinstance(s, str)
     assert "Scorecard Summary" in s
     assert "Base Score" in s
+
+
+def test_scorecard_score_uses_missing_bucket_points():
+    X = pd.DataFrame({"x": [1, 2, 3, np.nan, 5, 6, np.nan, 8, 9, 10]})
+    y = pd.Series([0, 0, 0, 1, 1, 1, 1, 1, 1, 1], name="target")
+
+    binner = Binner()
+    binner.fit(X, y, method="quantile", n_bins=2)
+
+    scorecard = Scorecard()
+    scorecard.from_model(
+        {"intercept": 0.0, "coefficients": {"x": 1.0}},
+        binner,
+        binner.woe_encoders_,
+    )
+
+    missing_points = scorecard.scorecard_["x"].set_index("bin").loc["Missing", "points"]
+    assert missing_points != 0.0
+
+    scores = scorecard.score(X)
+    expected_missing_score = scorecard.intercept_points_ + missing_points
+    missing_scores = scores[X["x"].isna()]
+
+    assert all(
+        score == pytest.approx(expected_missing_score) for score in missing_scores
+    )

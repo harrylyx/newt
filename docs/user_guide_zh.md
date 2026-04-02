@@ -25,7 +25,8 @@
 
 - `'chi'`: ChiMerge（卡方分箱）- **默认**，有监督
 - `'dt'`: 决策树分箱 - 有监督，寻找最优切分点
-- `'opt'`: 最优分箱（约束优化）- 有监督，需要 `optbinning`
+- `'opt'`: 最优分箱（约束优化）- 有监督，需要先安装
+  `pip install "newt[optbinning]"`
 - `'kmean'`: K-Means 聚类 - 无监督
 - `'quantile'`: 等频分箱 - 无监督
 - `'step'`: 等宽分箱 - 无监督
@@ -105,6 +106,7 @@ binner.fit(df, y=target, method='chi', monotonic=True)
 binner.fit(df, y=target, method='dt', monotonic='ascending')
 
 # 强制坏账率递减趋势
+# 需要先安装 optbinning 可选依赖
 binner.fit(df, y=target, method='opt', monotonic='descending')
 ```
 

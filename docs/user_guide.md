@@ -25,7 +25,8 @@ The core class for binning is `newt.Binner` (or `newt.features.binning.Binner`).
 
 - `'chi'`: ChiMerge (Chi-square binning) - **Default**, supervised
 - `'dt'`: Decision Tree binning - Supervised, finds optimal splits
-- `'opt'`: Optimal Binning via Constraints - Supervised, requires `optbinning`
+- `'opt'`: Optimal Binning via Constraints - Supervised, install with
+  `pip install "newt[optbinning]"`
 - `'kmean'`: K-Means clustering - Unsupervised
 - `'quantile'`: Equal frequency binning - Unsupervised
 - `'step'`: Equal width binning - Unsupervised
@@ -105,6 +106,7 @@ binner.fit(df, y=target, method='chi', monotonic=True)
 binner.fit(df, y=target, method='dt', monotonic='ascending')
 
 # Force descending bad rate trend
+# Requires the optional optbinning extra
 binner.fit(df, y=target, method='opt', monotonic='descending')
 ```
 

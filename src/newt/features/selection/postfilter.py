@@ -36,6 +36,7 @@ class PostFilter:
         vif_threshold: float = FILTERING.DEFAULT_VIF_THRESHOLD,
         psi_buckets: int = BINNING.DEFAULT_BUCKETS,
         remove_high_vif_iteratively: bool = True,
+        psi_nan_strategy: str = "separate",
     ):
         """
         Initialize PostFilter.
@@ -56,10 +57,18 @@ class PostFilter:
         remove_high_vif_iteratively : bool
             If True, iteratively remove features with highest VIF.
             If False, remove all features with VIF > threshold at once.
+        psi_nan_strategy : str
+            Missing-value handling for PSI calculation.
+            - 'separate': treat missing values as a separate bucket.
+            - 'exclude': drop missing values before calculation.
         """
+        if psi_nan_strategy not in {"separate", "exclude"}:
+            raise ValueError("psi_nan_strategy must be either 'separate' or 'exclude'.")
+
         self.psi_threshold = psi_threshold
         self.vif_threshold = vif_threshold
         self.psi_buckets = psi_buckets
+        self.psi_nan_strategy = psi_nan_strategy
         self.remove_high_vif_iteratively = remove_high_vif_iteratively
 
         # Results
@@ -103,13 +112,17 @@ class PostFilter:
                 break
 
             vif_df = calculate_vif(X[current_features])
+            valid_vif_df = vif_df.dropna(subset=["vif"])
+
+            if valid_vif_df.empty:
+                break
 
             # Find max VIF
-            max_vif_row = vif_df.loc[vif_df["vif"].idxmax()]
+            max_vif_row = valid_vif_df.loc[valid_vif_df["vif"].idxmax()]
             max_vif = max_vif_row["vif"]
             max_feature = max_vif_row["feature"]
 
-            if max_vif <= threshold or np.isnan(max_vif) or np.isinf(max_vif):
+            if max_vif <= threshold:
                 break
 
             # Remove feature with highest VIF
@@ -172,6 +185,7 @@ class PostFilter:
                     X_train[col].values,
                     X_test[col].values,
                     buckets=self.psi_buckets,
+                    nan_strategy=self.psi_nan_strategy,
                 )
                 self.psi_dict_[col] = psi
 

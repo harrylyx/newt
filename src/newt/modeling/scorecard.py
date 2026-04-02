@@ -219,28 +219,24 @@ class Scorecard:
 
     def _score_feature(self, x: pd.Series, feature: str) -> np.ndarray:
         """Calculate scores for a single feature."""
-        # Bin the data
-        if self._binner is not None and hasattr(self._binner, "binners_"):
-            if feature in self._binner.binners_:
-                binned = self._binner.binners_[feature].transform(x)
-                binned = binned.astype(str)
-            else:
-                return np.zeros(len(x))
-        else:
+        if self._binner is None or not hasattr(self._binner, "transform"):
             return np.zeros(len(x))
 
-        # Map to scores
-        if feature in self.scorecard_:
-            score_map = dict(
-                zip(
-                    self.scorecard_[feature]["bin"],
-                    self.scorecard_[feature]["points"],
-                )
-            )
-            scores = binned.map(score_map).fillna(0).values
-            return scores
+        if feature not in self.scorecard_:
+            return np.zeros(len(x))
 
-        return np.zeros(len(x))
+        binned = self._binner.transform(
+            pd.DataFrame({feature: x}),
+            labels=True,
+        )[feature]
+        score_map = dict(
+            zip(
+                self.scorecard_[feature]["bin"],
+                self.scorecard_[feature]["points"],
+            )
+        )
+        scores = binned.astype(str).map(score_map).fillna(0.0)
+        return scores.to_numpy(dtype=float)
 
     def export(self) -> pd.DataFrame:
         """

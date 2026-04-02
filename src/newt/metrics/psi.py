@@ -1,8 +1,12 @@
-from typing import Union
+from typing import Optional, Union
 
 import numpy as np
+import pandas as pd
 
 from newt.config import BINNING
+
+
+NAN_STRATEGIES = frozenset(["separate", "exclude"])
 
 
 def calculate_psi(
@@ -10,6 +14,7 @@ def calculate_psi(
     actual: Union[np.ndarray, list],
     buckets: int = BINNING.DEFAULT_BUCKETS,
     include_nan: bool = True,
+    nan_strategy: Optional[str] = None,
 ) -> float:
     """
     Calculate Population Stability Index (PSI).
@@ -18,17 +23,39 @@ def calculate_psi(
         expected: Expected distribution (e.g. training set scores).
         actual: Actual distribution (e.g. production/validation set scores).
         buckets: Number of buckets/bins for non-NaN values.
-        include_nan: If True, NaN values are treated as a separate bucket.
-                     If False, NaN values are dropped before calculation.
+        include_nan: Backward-compatible flag.
+            - True: treat missing values as a separate bucket.
+            - False: drop missing values before calculation.
+        nan_strategy: Missing-value handling strategy.
+            - 'separate': treat missing values as a separate bucket.
+            - 'exclude': drop missing values before calculation.
+            If None, strategy is inferred from include_nan.
 
     Returns:
         float: PSI value.
     """
     try:
-        expected = np.asarray(expected)
-        actual = np.asarray(actual)
+        if buckets < 1:
+            raise ValueError("buckets must be >= 1")
 
-        # Separate NaN and non-NaN
+        strategy = nan_strategy
+        if strategy is None:
+            strategy = "separate" if include_nan else "exclude"
+        elif strategy not in NAN_STRATEGIES:
+            raise ValueError(
+                f"nan_strategy must be one of {sorted(NAN_STRATEGIES)}, got: {strategy}"
+            )
+
+        expected = pd.to_numeric(
+            pd.Series(np.asarray(expected).ravel()),
+            errors="coerce",
+        ).to_numpy(dtype=float)
+        actual = pd.to_numeric(
+            pd.Series(np.asarray(actual).ravel()),
+            errors="coerce",
+        ).to_numpy(dtype=float)
+
+        # Separate missing and non-missing values
         expected_nan_mask = np.isnan(expected)
         actual_nan_mask = np.isnan(actual)
 
@@ -49,22 +76,21 @@ def calculate_psi(
             else:
                 breakpoints[0] = -np.inf
                 breakpoints[-1] = np.inf
-
-            expected_counts = np.histogram(expected_not_nan, breakpoints)[0]
-            actual_counts = np.histogram(actual_not_nan, breakpoints)[0]
         else:
-            # All NaNs in expected? Handle edge case
-            expected_counts = np.zeros(buckets)
-            actual_counts = np.zeros(buckets)
+            # No valid values in expected: keep one non-missing bucket
+            # so that actual non-missing values are still counted.
+            breakpoints = np.array([-np.inf, np.inf], dtype=float)
+
+        expected_counts = np.histogram(expected_not_nan, breakpoints)[0]
+        actual_counts = np.histogram(actual_not_nan, breakpoints)[0]
 
         # Handle NaN bucket if requested
-        if include_nan:
+        if strategy == "separate":
             expected_nan_count = np.sum(expected_nan_mask)
             actual_nan_count = np.sum(actual_nan_mask)
 
             expected_counts = np.append(expected_counts, expected_nan_count)
             actual_counts = np.append(actual_counts, actual_nan_count)
-            # If not including nan, we just use the counts from non-nan parts
 
         # Calculate proportions
         expected_total = np.sum(expected_counts)

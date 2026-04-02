@@ -62,8 +62,7 @@ class BinningResult:
         from newt.visualization.binning_viz import plot_binning_result
 
         if self._binner._X is None or self._binner._y is None:
-            print("Plotting requires X and y data to be present in Binner.")
-            return
+            raise ValueError("Plotting requires X and y data to be present in Binner.")
 
         return plot_binning_result(
             binner=self._binner,
@@ -212,13 +211,9 @@ class Binner(BinnerStatsMixin, BinnerIOMixin, BinnerWOEMixin):
             if valid_mask.sum() == 0:
                 continue
 
-            try:
-                binner.fit(col_data[valid_mask], y_series[valid_mask])
-                self.binners_[col] = binner
-                self.rules_[col] = binner.splits_
-            except Exception as e:
-                print(f"Failed to bin column {col}: {e}")
-                raise e
+            binner.fit(col_data[valid_mask], y_series[valid_mask])
+            self.binners_[col] = binner
+            self.rules_[col] = binner.splits_
 
         # Calculate and store statistics
         self._update_all_stats()
@@ -370,7 +365,7 @@ class Binner(BinnerStatsMixin, BinnerIOMixin, BinnerWOEMixin):
     def stats_plot(self):
         """Display stats and plot for all features."""
         try:
-            from IPython.display import HTML, display
+            from IPython.display import display
 
             HAS_IPYTHON = True
         except ImportError:

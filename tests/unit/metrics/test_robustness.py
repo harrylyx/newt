@@ -1,4 +1,5 @@
 import numpy as np
+import pandas as pd
 import pytest
 
 from src.newt.metrics.ks import calculate_ks
@@ -42,10 +43,38 @@ def test_psi_include_nan_param():
     psi_drop = calculate_psi(expected, actual, buckets=1, include_nan=False)
     assert psi_drop < 1e-6
 
+    psi_drop_by_strategy = calculate_psi(
+        expected,
+        actual,
+        buckets=1,
+        nan_strategy="exclude",
+    )
+    assert abs(psi_drop - psi_drop_by_strategy) < 1e-12
+
     # Comparison with include_nan=True (default)
     # As tested in test_psi_nan_bucket case 2, this should be > 0.1
     psi_keep = calculate_psi(expected, actual, buckets=1, include_nan=True)
     assert psi_keep > 0.1
+
+    psi_keep_by_strategy = calculate_psi(
+        expected,
+        actual,
+        buckets=1,
+        nan_strategy="separate",
+    )
+    assert abs(psi_keep - psi_keep_by_strategy) < 1e-12
+
+
+def test_psi_supports_none_and_pdna():
+    expected = pd.Series([0.1, None, pd.NA, 0.3], dtype="object")
+    actual = pd.Series([0.1, 0.2, 0.2, None], dtype="object")
+
+    psi_exclude = calculate_psi(expected, actual, buckets=2, nan_strategy="exclude")
+    psi_separate = calculate_psi(expected, actual, buckets=2, nan_strategy="separate")
+
+    assert np.isfinite(psi_exclude)
+    assert np.isfinite(psi_separate)
+    assert psi_separate > psi_exclude
 
 
 def test_ks_single_impl():

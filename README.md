@@ -19,15 +19,21 @@ A lightweight Python toolkit for efficient feature analysis and statistical diag
 pip install newt
 ```
 
-For development with Poetry:
+Install the optional optimal binning stack only when you need `method='opt'`:
+
+```bash
+pip install "newt[optbinning]"
+```
+
+For development with uv:
 
 ```bash
 # Clone the repository
 git clone https://github.com/harrylyx/newt.git
 cd newt
 
-# Install dependencies
-python -m poetry install
+# Install dependencies (including dev group)
+uv sync --group dev
 ```
 
 ## Quick Start
@@ -46,7 +52,7 @@ target = 'default'
 pipeline = (
     ScorecardPipeline(X_train, y_train, X_test, y_test)
     .prefilter(iv_threshold=0.02)
-    .bin(method='opt', n_bins=5)
+    .bin(method='quantile', n_bins=5)
     .woe_transform()
     .postfilter(psi_threshold=0.25, vif_threshold=10.0)
     .stepwise(direction='both', criterion='aic')
@@ -98,7 +104,8 @@ Newt supports 6 binning algorithms:
 
 - **ChiMerge (`chi`)**: Chi-square based supervised binning (default)
 - **Decision Tree (`dt`)**: Decision tree based supervised binning
-- **Optimal Binning (`opt`)**: Optimal binning with constraints (requires `optbinning`)
+- **Optimal Binning (`opt`)**: Optimal binning with constraints
+  (install with `pip install "newt[optbinning]"`)
 - **K-Means (`kmean`)**: Unsupervised K-Means clustering
 - **Equal Frequency (`quantile`)**: Equal frequency bins (unsupervised)
 - **Equal Width (`step`)**: Equal width bins (unsupervised)
@@ -113,6 +120,7 @@ binner.fit(X, y, method='chi', monotonic=True)
 binner.fit(X, y, method='dt', monotonic='ascending')
 
 # Force descending trend
+# Requires the optional optbinning extra
 binner.fit(X, y, method='opt', monotonic='descending')
 ```
 
@@ -236,7 +244,7 @@ fig = plot_psi_comparison(psi_dict, threshold=0.25)
 
 **Optional Dependencies (for optimal binning):**
 - optbinning >= 0.20.0
-- ortools < 9.12
+- ortools < 9.8
 - cvxpy >= 1.3, < 1.5
 
 **Development Dependencies:**
@@ -249,20 +257,20 @@ fig = plot_psi_comparison(psi_dict, threshold=0.25)
 
 ```bash
 # Install development dependencies
-python -m poetry install
+uv sync --group dev
 
 # Format code
-python -m poetry run black .
-python -m poetry run isort .
+uv run black .
+uv run isort .
 
 # Run linter
-python -m poetry run flake8 src tests
+uv run flake8 src tests
 
 # Run tests
-python -m poetry run pytest
+uv run pytest
 
 # Run tests with coverage
-python -m poetry run pytest --cov=src/newt --cov-report=html
+uv run pytest --cov=src/newt --cov-report=html
 ```
 
 ## Project Structure
@@ -285,7 +293,7 @@ newt/
 │   └── cross_val/                # Cross-validation tests
 ├── docs/                         # Documentation
 ├── examples/                      # Jupyter notebooks
-└── pyproject.toml                # Poetry configuration
+└── pyproject.toml                # uv/PEP 621 configuration
 ```
 
 ## Contributing

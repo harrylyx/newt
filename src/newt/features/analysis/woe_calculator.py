@@ -4,7 +4,7 @@ WOE (Weight of Evidence) calculation and encoding.
 Provides WOE transformation for binned/categorical features.
 """
 
-from typing import Any, Dict, Optional
+from typing import Any, Dict
 
 import numpy as np
 import pandas as pd

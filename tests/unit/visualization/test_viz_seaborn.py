@@ -1,5 +1,6 @@
 import os
 import sys
+import warnings
 
 import matplotlib.figure
 import numpy as np
@@ -10,6 +11,7 @@ sys.path.append(os.path.abspath("src"))
 
 from newt import Binner  # noqa: E402
 from newt.visualization import plot_binning_result as plot_binning  # noqa: E402
+from newt.visualization.binning import plot_binning as plot_binning_legacy  # noqa: E402
 
 
 def test_viz_seaborn():
@@ -63,3 +65,26 @@ def test_viz_seaborn():
 
 if __name__ == "__main__":
     test_viz_seaborn()
+
+
+def test_legacy_plot_binning_emits_deprecation_warning():
+    X = pd.DataFrame(
+        {
+            "score": np.linspace(0, 1, 20),
+            "target": [0] * 10 + [1] * 10,
+        }
+    )
+    binner = Binner()
+    binner.fit(X, y="target", method="step", n_bins=3)
+
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        fig = plot_binning_legacy(
+            combiner=binner,
+            data=X,
+            feature="score",
+            target="target",
+        )
+
+    assert isinstance(fig, matplotlib.figure.Figure)
+    assert any(item.category is DeprecationWarning for item in caught)

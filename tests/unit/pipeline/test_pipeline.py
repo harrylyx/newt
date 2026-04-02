@@ -80,3 +80,43 @@ def test_pipeline_summary(sample_data):
     summary = pipeline.summary()
     assert isinstance(summary, dict)
     assert "n_features_initial" in summary
+
+
+def test_pipeline_real_flow_scores_missing_values():
+    rng = np.random.default_rng(42)
+    X_train = pd.DataFrame(
+        {
+            "feature1": rng.normal(0, 1, 300),
+            "feature2": rng.normal(0, 1, 300),
+        }
+    )
+    X_test = pd.DataFrame(
+        {
+            "feature1": rng.normal(0, 1, 120),
+            "feature2": rng.normal(0, 1, 120),
+        }
+    )
+
+    train_signal = X_train["feature1"].fillna(0) + 0.6 * X_train["feature2"].fillna(0)
+    test_signal = X_test["feature1"].fillna(0) + 0.6 * X_test["feature2"].fillna(0)
+    y_train = (train_signal + rng.normal(0, 0.8, len(X_train)) > 0).astype(int)
+    y_test = (test_signal + rng.normal(0, 0.8, len(X_test)) > 0).astype(int)
+
+    X_train.loc[[5, 17, 29], "feature1"] = np.nan
+    X_test.loc[[3, 11], "feature1"] = np.nan
+
+    pipeline = (
+        ScorecardPipeline(X_train, y_train, X_test, y_test)
+        .prefilter(iv_threshold=0.0, missing_threshold=1.0, corr_threshold=0.99)
+        .bin(method="quantile", n_bins=4)
+        .woe_transform()
+        .postfilter(psi_threshold=1.0, vif_threshold=50.0)
+        .build_model()
+        .generate_scorecard()
+    )
+
+    scores = pipeline.score(X_test)
+
+    assert scores.notna().all()
+    assert "generate_scorecard" in pipeline.steps_
+    assert scores[X_test["feature1"].isna()].nunique() == 1

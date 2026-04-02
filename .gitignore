@@ -13,6 +13,7 @@ build/
 dist/
 *.egg-info/
 .eggs/
+rust/**/target/
 
 # Virtual environments and local env files
 .venv/
@@ -30,6 +31,8 @@ htmlcov/
 
 # Local dependency cache
 .uv-cache/
+.worktrees/
+.superpowers/
 
 # IDE/editor
 .idea/

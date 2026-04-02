@@ -63,3 +63,113 @@ def german_credit_data():
             ),
         },
     }
+
+
+@pytest.fixture
+def report_frame():
+    rows = []
+    tags = ["train", "test", "oot", "oos"]
+    months = pd.to_datetime(["2024-01-31", "2024-02-29", "2024-03-31", "2024-04-30"])
+    dims = ["ios", "android"]
+
+    for tag_index, tag in enumerate(tags):
+        for month_index, month in enumerate(months):
+            for sample_index in range(4):
+                score_base = 0.15 + 0.15 * sample_index + 0.03 * month_index
+                is_bad = int(sample_index >= 2)
+                main_label = -1 if sample_index == 0 and month_index == 0 else is_bad
+                alt_label = int(sample_index in (1, 3))
+                rows.append(
+                    {
+                        "tag": tag,
+                        "obs_date": month,
+                        "score_new": min(score_base + 0.05 * is_bad, 0.99),
+                        "score_old_a": min(score_base + 0.02 * is_bad, 0.99),
+                        "score_old_b": min(score_base + 0.01 * sample_index, 0.99),
+                        "label_main": main_label,
+                        "label_alt": alt_label,
+                        "channel_dim": dims[(tag_index + sample_index) % len(dims)],
+                        "profile_income": 5000 + 500 * month_index + 300 * sample_index,
+                        "profile_age": 24 + month_index + sample_index,
+                        "feature_a": 10 * month_index + sample_index,
+                        "feature_b": 100 - 3 * sample_index - month_index,
+                    }
+                )
+
+    return pd.DataFrame(rows)
+
+
+class FakeLightGBMBooster:
+    def __init__(self):
+        self.params = {
+            "n_estimators": 80,
+            "learning_rate": 0.1,
+            "objective": "binary",
+            "subsample": 0.8,
+            "colsample_bytree": 0.8,
+            "reg_alpha": 5,
+            "reg_lambda": 5,
+            "num_leaves": 10,
+            "max_depth": -1,
+        }
+        self._feature_names = ["feature_a", "feature_b"]
+
+    def feature_name(self):
+        return list(self._feature_names)
+
+    def feature_importance(self, importance_type="split"):
+        if importance_type == "gain":
+            return np.array([120.0, 80.0])
+        if importance_type == "split":
+            return np.array([18.0, 12.0])
+        raise ValueError(f"Unsupported importance type: {importance_type}")
+
+
+class FakeLightGBMModel:
+    def __init__(self):
+        self.booster_ = FakeLightGBMBooster()
+
+    def get_params(self, deep=True):
+        return dict(self.booster_.params)
+
+
+@pytest.fixture
+def fake_lightgbm_model():
+    return FakeLightGBMModel()
+
+
+class FakeXGBoostBooster:
+    def __init__(self):
+        self.feature_names = ["feature_a", "feature_b"]
+
+    def get_score(self, importance_type="gain"):
+        if importance_type == "gain":
+            return {"feature_a": 12.0, "feature_b": 8.0}
+        if importance_type == "weight":
+            return {"feature_a": 18.0, "feature_b": 12.0}
+        raise ValueError(f"Unsupported importance type: {importance_type}")
+
+
+class FakeXGBoostModel:
+    def __init__(self):
+        self._booster = FakeXGBoostBooster()
+
+    def get_booster(self):
+        return self._booster
+
+    def get_params(self, deep=True):
+        return {
+            "n_estimators": 60,
+            "learning_rate": 0.05,
+            "objective": "binary:logistic",
+            "subsample": 0.7,
+            "colsample_bytree": 0.7,
+            "reg_alpha": 3,
+            "reg_lambda": 4,
+            "max_depth": 4,
+        }
+
+
+@pytest.fixture
+def fake_xgboost_model():
+    return FakeXGBoostModel()

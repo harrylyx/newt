@@ -1,5 +1,6 @@
 """Stable result and specification objects used across the library."""
 
+from newt.results.report import ModelReportResult, ReportBlock, ReportChart, ReportSheet
 from newt.results.scorecard import BinningRuleSpec, FeatureScoreSpec, ScorecardSpec
 from newt.results.selection import FeatureAnalysisResult, FeatureSelectionResult
 from newt.results.visualization import BinningPlotData
@@ -10,5 +11,9 @@ __all__ = [
     "FeatureAnalysisResult",
     "FeatureScoreSpec",
     "FeatureSelectionResult",
+    "ModelReportResult",
+    "ReportBlock",
+    "ReportChart",
+    "ReportSheet",
     "ScorecardSpec",
 ]

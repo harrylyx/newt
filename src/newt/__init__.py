@@ -23,16 +23,27 @@ from newt.features.selection import FeatureSelector, PostFilter, StepwiseSelecto
 
 # Metrics
 from newt.metrics import (
+    build_reference_quantile_bins,
     calculate_auc,
+    calculate_bin_performance_table,
+    calculate_binary_metrics,
     calculate_gini,
+    calculate_grouped_binary_metrics,
     calculate_ks,
     calculate_lift,
+    calculate_latest_month_psi,
+    calculate_portrait_means_by_score_bin,
     calculate_psi,
+    calculate_score_correlation_matrix,
+    summarize_label_distribution,
     calculate_vif,
 )
 
 # Modeling
 from newt.modeling import LogisticModel, Scorecard
+
+# Reporting
+from newt.reporting import Report
 
 # Pipeline
 from newt.pipeline import ScorecardPipeline
@@ -52,9 +63,19 @@ __all__ = [
     "calculate_psi",
     "calculate_lift",
     "calculate_vif",
+    "build_reference_quantile_bins",
+    "calculate_bin_performance_table",
+    "calculate_binary_metrics",
+    "calculate_grouped_binary_metrics",
+    "calculate_latest_month_psi",
+    "calculate_portrait_means_by_score_bin",
+    "calculate_score_correlation_matrix",
+    "summarize_label_distribution",
     # Modeling
     "LogisticModel",
     "Scorecard",
+    # Reporting
+    "Report",
     # Pipeline
     "ScorecardPipeline",
 ]

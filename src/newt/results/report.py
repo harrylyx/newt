@@ -15,6 +15,8 @@ class ReportChart:
     value_columns: List[str]
     secondary_value_columns: List[str] = field(default_factory=list)
     title: str = ""
+    source_block_title: str = ""
+    height_rows: int = 20
 
 
 @dataclass

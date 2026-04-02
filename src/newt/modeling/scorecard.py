@@ -1,38 +1,18 @@
-"""
-Scorecard generation from logistic regression model.
+"""Scorecard facade that builds and scores reusable specifications."""
 
-Converts WOE-based logistic regression coefficients into a scorecard.
-"""
-
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
 import numpy as np
 import pandas as pd
 
 from newt.config import SCORECARD
+from newt.modeling.scorecard_builder import ScorecardBuilder
+from newt.modeling.scorecard_scorer import ScorecardScorer
+from newt.results import ScorecardSpec
 
 
 class Scorecard:
-    """
-    Scorecard generator from logistic regression model.
-
-    Converts a fitted logistic regression model with WOE features
-    into a traditional credit scorecard with points for each bin.
-
-    The scoring formula follows the standard approach:
-    Score = Base Score + Sum(Points for each binned feature)
-
-    Where:
-    - Base Score = Base Odds * Factor + Offset
-    - Points = -(WOE * coefficient) * Factor
-
-    Examples
-    --------
-    >>> scorecard = Scorecard(base_score=600, pdo=50, base_odds=1/15)
-    >>> scorecard.from_model(model, binner, woe_encoder)
-    >>> scores = scorecard.score(X)
-    >>> print(scorecard.export())
-    """
+    """Scorecard generator from logistic regression model."""
 
     def __init__(
         self,
@@ -40,270 +20,88 @@ class Scorecard:
         pdo: int = SCORECARD.DEFAULT_PDO,
         base_odds: float = SCORECARD.DEFAULT_BASE_ODDS,
     ):
-        """
-        Initialize Scorecard.
-
-        Parameters
-        ----------
-        base_score : int
-            Base score at base odds. Default 600.
-        pdo : int
-            Points to double the odds. Default 50.
-        base_odds : float
-            Base odds (good/bad ratio) at base_score. Default 1/15 (~6.67% bad rate).
-        """
         self.base_score = base_score
         self.pdo = pdo
         self.base_odds = base_odds
 
-        # Calculated scaling factors
         self.factor = pdo / np.log(2)
         self.offset = base_score - self.factor * np.log(base_odds)
 
-        # Scorecard components
         self.scorecard_: Dict[str, pd.DataFrame] = {}
         self.intercept_points_: float = 0.0
         self.feature_names_: List[str] = []
         self.is_built_: bool = False
 
-        # Store references
+        self.spec_: Optional[ScorecardSpec] = None
+        self.scorer_: Optional[ScorecardScorer] = None
         self._binner = None
         self._woe_encoder = None
         self._model_coefs: Dict[str, float] = {}
 
     def from_model(
         self,
-        model: Any,  # LogisticModel or dict with coefficients
-        binner: Any,  # Binner object
-        woe_encoder: Any,  # WOEEncoder object or dict of WOEEncoders
+        model: Any,
+        binner: Any,
+        woe_encoder: Any,
     ) -> "Scorecard":
-        """
-        Build scorecard from fitted model, binner, and WOE encoder.
+        """Build scorecard from fitted model, binner, and WOE encoder."""
+        builder = ScorecardBuilder(
+            base_score=self.base_score,
+            pdo=self.pdo,
+            base_odds=self.base_odds,
+        )
+        spec, model_coefs = builder.build(model, binner, woe_encoder)
 
-        Parameters
-        ----------
-        model : LogisticModel or Dict
-            Fitted logistic model or dict with 'intercept' and 'coefficients'.
-        binner : Binner
-            Fitted Binner object with binning rules.
-        woe_encoder : WOEEncoder or Dict[str, WOEEncoder]
-            Fitted WOE encoder(s). If dict, keys are feature names.
-
-        Returns
-        -------
-        Scorecard
-            Built scorecard instance.
-        """
         self._binner = binner
         self._woe_encoder = woe_encoder
+        self._model_coefs = model_coefs
 
-        # Extract model coefficients
-        if hasattr(model, "to_dict"):
-            model_dict = model.to_dict()
-            intercept = model_dict.get("intercept", 0.0)
-            coefficients = model_dict.get("coefficients", {})
-        elif isinstance(model, dict):
-            intercept = model.get("intercept", 0.0)
-            coefficients = model.get("coefficients", {})
-        else:
-            raise ValueError("Model must be LogisticModel or dict with coefficients.")
+        return self._load_spec(spec)
 
-        self._model_coefs = coefficients
-        self.feature_names_ = list(coefficients.keys())
+    def from_dict(self, payload: Dict[str, Any]) -> "Scorecard":
+        """Restore scorecard from a serialized specification."""
+        spec = ScorecardSpec.from_dict(payload)
+        return self._load_spec(spec)
 
-        # Calculate intercept points
-        self.intercept_points_ = self.offset - self.factor * intercept
-
-        # Build scorecard for each feature
-        for feature, coef in coefficients.items():
-            self._build_feature_scorecard(feature, coef, binner, woe_encoder)
-
+    def _load_spec(self, spec: ScorecardSpec) -> "Scorecard":
+        """Load an in-memory scorecard spec into the compatibility facade."""
+        self.spec_ = spec
+        self.scorer_ = ScorecardScorer(spec)
+        self.base_score = spec.base_score
+        self.pdo = spec.pdo
+        self.base_odds = spec.base_odds
+        self.factor = spec.factor
+        self.offset = spec.offset
+        self.intercept_points_ = spec.intercept_points
+        self.feature_names_ = list(spec.feature_names)
+        self.scorecard_ = {
+            feature: feature_spec.to_frame()
+            for feature, feature_spec in spec.feature_scores.items()
+        }
         self.is_built_ = True
         return self
 
-    def _build_feature_scorecard(
-        self,
-        feature: str,
-        coefficient: float,
-        binner: Any,
-        woe_encoder: Any,
-    ):
-        """Build scorecard for a single feature."""
-        # Get binning rules (splits used to validate feature exists in binner)
-        if hasattr(binner, "binners_") and feature in binner.binners_:
-            feature_binner = binner.binners_[feature]
-            _ = feature_binner.splits_  # Validate feature exists  # noqa: F841
-        elif hasattr(binner, "rules_") and feature in binner.rules_:
-            _ = binner.rules_[feature]  # Validate feature exists  # noqa: F841
-        else:
-            # Feature not in binner, skip
-            return
-
-        # Get WOE mapping
-        if isinstance(woe_encoder, dict) and feature in woe_encoder:
-            woe_map = woe_encoder[feature].woe_map_
-        elif hasattr(woe_encoder, "woe_map_"):
-            woe_map = woe_encoder.woe_map_
-        else:
-            # Cannot get WOE, skip
-            return
-
-        # Build records for each bin
-        records = []
-
-        for bin_label, woe in woe_map.items():
-            # Points = -(WOE * coefficient) * Factor
-            points = -woe * coefficient * self.factor
-
-            records.append(
-                {
-                    "feature": feature,
-                    "bin": str(bin_label),
-                    "woe": woe,
-                    "points": points,
-                }
-            )
-
-        self.scorecard_[feature] = pd.DataFrame(records)
-
-    def _create_bin_labels(self, splits: List[float]) -> List[str]:
-        """Create human-readable bin labels from splits."""
-        if not splits:
-            return ["(-inf, inf]"]
-
-        labels = []
-        boundaries = [-np.inf] + splits + [np.inf]
-
-        for i in range(len(boundaries) - 1):
-            lower = boundaries[i]
-            upper = boundaries[i + 1]
-
-            if lower == -np.inf:
-                label = f"(-inf, {upper}]"
-            elif upper == np.inf:
-                label = f"({lower}, inf)"
-            else:
-                label = f"({lower}, {upper}]"
-
-            labels.append(label)
-
-        return labels
-
     def score(self, X: pd.DataFrame) -> pd.Series:
-        """
-        Calculate scores for input data.
-
-        Parameters
-        ----------
-        X : pd.DataFrame
-            Raw feature data (not binned, not WOE transformed).
-
-        Returns
-        -------
-        pd.Series
-            Calculated scores.
-        """
-        if not self.is_built_:
+        """Calculate scores for input data."""
+        if not self.is_built_ or self.scorer_ is None:
             raise ValueError("Scorecard is not built. Call from_model() first.")
-
-        scores = np.full(len(X), self.intercept_points_)
-
-        for feature in self.feature_names_:
-            if feature not in X.columns:
-                continue
-
-            feature_scores = self._score_feature(X[feature], feature)
-            scores += feature_scores
-
-        return pd.Series(scores, index=X.index, name="score")
-
-    def _score_feature(self, x: pd.Series, feature: str) -> np.ndarray:
-        """Calculate scores for a single feature."""
-        if self._binner is None or not hasattr(self._binner, "transform"):
-            return np.zeros(len(x))
-
-        if feature not in self.scorecard_:
-            return np.zeros(len(x))
-
-        binned = self._binner.transform(
-            pd.DataFrame({feature: x}),
-            labels=True,
-        )[feature]
-        score_map = dict(
-            zip(
-                self.scorecard_[feature]["bin"],
-                self.scorecard_[feature]["points"],
-            )
-        )
-        scores = binned.astype(str).map(score_map).fillna(0.0)
-        return scores.to_numpy(dtype=float)
+        return self.scorer_.score(X)
 
     def export(self) -> pd.DataFrame:
-        """
-        Export scorecard as a single DataFrame.
-
-        Returns
-        -------
-        pd.DataFrame
-            Complete scorecard with all features.
-        """
-        if not self.is_built_:
+        """Export scorecard as a single dataframe."""
+        if not self.is_built_ or self.spec_ is None:
             raise ValueError("Scorecard is not built. Call from_model() first.")
-
-        all_records = []
-
-        # Add intercept
-        all_records.append(
-            {
-                "feature": "Intercept",
-                "bin": "-",
-                "woe": 0.0,
-                "points": self.intercept_points_,
-            }
-        )
-
-        # Add all features
-        for feature, df in self.scorecard_.items():
-            for _, row in df.iterrows():
-                all_records.append(row.to_dict())
-
-        return pd.DataFrame(all_records)
+        return self.spec_.export()
 
     def to_dict(self) -> Dict[str, Any]:
-        """
-        Export scorecard configuration as dictionary.
-
-        Returns
-        -------
-        Dict
-            Scorecard configuration and points.
-        """
-        if not self.is_built_:
+        """Export scorecard configuration as a dictionary."""
+        if not self.is_built_ or self.spec_ is None:
             raise ValueError("Scorecard is not built. Call from_model() first.")
-
-        return {
-            "base_score": self.base_score,
-            "pdo": self.pdo,
-            "base_odds": self.base_odds,
-            "factor": self.factor,
-            "offset": self.offset,
-            "intercept_points": self.intercept_points_,
-            "features": {
-                feature: df.to_dict(orient="records")
-                for feature, df in self.scorecard_.items()
-            },
-        }
+        return self.spec_.to_dict()
 
     def summary(self) -> str:
-        """
-        Get scorecard summary.
-
-        Returns
-        -------
-        str
-            Summary string.
-        """
-        if not self.is_built_:
+        """Get scorecard summary."""
+        if not self.is_built_ or self.spec_ is None:
             raise ValueError("Scorecard is not built. Call from_model() first.")
 
         lines = [

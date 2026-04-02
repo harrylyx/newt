@@ -1,8 +1,4 @@
-"""
-Binning visualization utilities.
-
-Provides visualization for binning results, WOE/IV analysis, etc.
-"""
+"""Binning visualization utilities."""
 
 from typing import Any, Dict, List, Optional, Tuple, Union
 
@@ -10,6 +6,7 @@ import numpy as np
 import pandas as pd
 
 from newt.config import FILTERING
+from newt.results import BinningPlotData
 
 # Optional imports for visualization
 try:
@@ -47,9 +44,9 @@ def _normalize_columns(
 
 def plot_binning_result(
     binner: Any,
-    X: pd.DataFrame,
-    y: pd.Series,
-    feature: str,
+    X: Optional[pd.DataFrame] = None,
+    y: Optional[pd.Series] = None,
+    feature: Optional[str] = None,
     woe_encoder: Optional[Any] = None,
     figsize: Tuple[int, int] = (12, 6),
     title: Optional[str] = None,
@@ -59,6 +56,9 @@ def plot_binning_result(
 ) -> Any:
     """
     Plot binning result for a single feature.
+
+    The first argument can be either a fitted `Binner` or a
+    `BinningPlotData` instance.
 
     Supports generic columns for axes. Defaults to Good/Bad bars and Event Rate line.
 
@@ -92,11 +92,9 @@ def plot_binning_result(
     """
     _check_matplotlib()
 
-    if feature not in binner.binners_:
-        raise ValueError(f"Feature '{feature}' not found in binner.")
-
-    # Get pre-calculated statistics
-    stats = binner[feature].stats.copy()
+    plot_data = _resolve_plot_data(binner, feature)
+    stats = plot_data.stats.copy()
+    feature_name = plot_data.feature
 
     # Ensure stats sorted by bin index if present, else just use as is
     # stats usually comes sorted from binner
@@ -176,7 +174,7 @@ def plot_binning_result(
 
     # Title
     if title is None:
-        title = f"Binning Result: {feature}"
+        title = f"Binning Result: {feature_name}"
     plt.title(title)
     plt.tight_layout()
 
@@ -184,6 +182,17 @@ def plot_binning_result(
     plt.close(fig)
 
     return fig
+
+
+def _resolve_plot_data(source: Any, feature: Optional[str]) -> BinningPlotData:
+    """Normalize plotting input to a plot-data object."""
+    if isinstance(source, BinningPlotData):
+        return source
+
+    if feature is None:
+        raise ValueError("feature must be provided when plotting from a binner.")
+
+    return BinningPlotData.from_binner(source, feature)
 
 
 def plot_iv_ranking(

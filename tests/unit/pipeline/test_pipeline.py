@@ -43,6 +43,19 @@ def test_pipeline_bin(mock_binner_cls, sample_data):
     assert pipeline.X_binned_ is not None
 
 
+@patch("newt.features.binning.Binner")
+def test_pipeline_bin_defaults_to_chi(mock_binner_cls, sample_data):
+    X, y = sample_data
+    pipeline = ScorecardPipeline(X, y)
+
+    mock_instance = mock_binner_cls.return_value
+    mock_instance.transform.return_value = X.copy()
+
+    pipeline.bin()
+
+    assert mock_instance.fit.call_args.kwargs["method"] == "chi"
+
+
 @patch("newt.features.analysis.woe_calculator.WOEEncoder")
 def test_pipeline_woe(mock_woe_cls, sample_data):
     X, y = sample_data

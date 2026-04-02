@@ -10,6 +10,7 @@ import pandas as pd
 sys.path.append(os.path.abspath("src"))
 
 from newt import Binner  # noqa: E402
+from newt.results import BinningPlotData  # noqa: E402
 from newt.visualization import plot_binning_result as plot_binning  # noqa: E402
 from newt.visualization.binning import plot_binning as plot_binning_legacy  # noqa: E402
 
@@ -88,3 +89,19 @@ def test_legacy_plot_binning_emits_deprecation_warning():
 
     assert isinstance(fig, matplotlib.figure.Figure)
     assert any(item.category is DeprecationWarning for item in caught)
+
+
+def test_plot_binning_result_accepts_plot_data():
+    X = pd.DataFrame(
+        {
+            "score": np.linspace(0, 1, 40),
+            "target": [0] * 20 + [1] * 20,
+        }
+    )
+    binner = Binner()
+    binner.fit(X, y="target", method="step", n_bins=4)
+    plot_data = BinningPlotData.from_binner(binner, "score")
+
+    fig = plot_binning(plot_data, feature="score")
+
+    assert isinstance(fig, matplotlib.figure.Figure)

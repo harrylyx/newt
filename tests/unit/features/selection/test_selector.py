@@ -143,3 +143,14 @@ def test_corr_matrix_property(sample_data):
     # corr_matrix is feature-to-feature, NOT feature-to-target
     # So it should NOT contain target (y) as a column
     assert "y" not in corr_matrix.columns
+
+
+def test_selector_exposes_analysis_and_selection_results(sample_data):
+    X, y = sample_data
+    fs = FeatureSelector(metrics=["iv", "missing_rate", "correlation"])
+    fs.fit(X, y).select(iv_threshold=0.1, missing_threshold=0.5, corr_threshold=0.99)
+
+    assert hasattr(fs, "analysis_result_")
+    assert hasattr(fs, "selection_result_")
+    assert fs.analysis_result_.summary.equals(fs.eda_summary_)
+    assert fs.selection_result_.selected_features == fs.selected_features_

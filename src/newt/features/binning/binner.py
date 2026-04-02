@@ -60,15 +60,10 @@ class BinningResult:
             Arguments passed to plot_binning_result.
         """
         from newt.visualization.binning_viz import plot_binning_result
-
-        if self._binner._X is None or self._binner._y is None:
-            raise ValueError("Plotting requires X and y data to be present in Binner.")
+        from newt.results import BinningPlotData
 
         return plot_binning_result(
-            binner=self._binner,
-            X=self._binner._X,
-            y=self._binner._y,
-            feature=self._feature,
+            binner=BinningPlotData.from_binner(self._binner, self._feature),
             woe_encoder=self._binner.woe_storage.get(self._feature),
             x_col=x,
             y_col=y,

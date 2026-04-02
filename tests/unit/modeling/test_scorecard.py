@@ -14,6 +14,8 @@ def mock_components():
     binner = MagicMock()
     binner.binners_ = {"feature1": MagicMock()}
     binner.binners_["feature1"].splits_ = [0.5]
+    binner.rules_ = {"feature1": [0.5]}
+    binner.get_splits.return_value = [0.5]
 
     # Mock WOE Encoder
     woe_enc_instance = MagicMock()
@@ -51,7 +53,6 @@ def test_scorecard_score(mock_components):
     sc.from_model(model, binner, woe_encoder)
 
     X = pd.DataFrame({"feature1": [0.1, 0.9]})
-    binner.transform.return_value = pd.DataFrame({"feature1": ["bin1", "bin2"]})
     scores = sc.score(X)
 
     assert len(scores) == 2
@@ -112,3 +113,31 @@ def test_scorecard_score_uses_missing_bucket_points():
     assert all(
         score == pytest.approx(expected_missing_score) for score in missing_scores
     )
+
+
+def test_scorecard_to_dict_includes_binning_rules(mock_components):
+    model, binner, woe_encoder = mock_components
+    sc = Scorecard()
+    sc.from_model(model, binner, woe_encoder)
+
+    exported = sc.to_dict()
+
+    assert "binning_rules" in exported
+    assert exported["binning_rules"]["feature1"]["splits"] == [0.5]
+
+
+def test_scorecard_round_trip_from_dict_preserves_scores():
+    X = pd.DataFrame({"x": [1, 2, 3, np.nan, 5, 6, np.nan, 8, 9, 10]})
+    y = pd.Series([0, 0, 0, 1, 1, 1, 1, 1, 1, 1], name="target")
+
+    binner = Binner()
+    binner.fit(X, y, method="quantile", n_bins=2)
+
+    scorecard = Scorecard().from_model(
+        {"intercept": 0.0, "coefficients": {"x": 1.0}},
+        binner,
+        binner.woe_encoders_,
+    )
+    restored = Scorecard().from_dict(scorecard.to_dict())
+
+    pd.testing.assert_series_equal(scorecard.score(X), restored.score(X))

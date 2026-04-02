@@ -1,7 +1,42 @@
+# OS / File Explorer
+.DS_Store
+Thumbs.db
+
+# Python bytecode and extensions
 __pycache__/
-*.pyc
-.env
-.venv/
+*.py[cod]
+*.pyd
+*.so
+
+# Build and packaging artifacts
+build/
 dist/
+*.egg-info/
+.eggs/
+
+# Virtual environments and local env files
+.venv/
+venv/
+.env
+.env.*
+
+# Test, coverage, and tool caches
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.coverage
+.coverage.*
+htmlcov/
+
+# Local dependency cache
+.uv-cache/
+
+# IDE/editor
 .idea/
 .vscode/
+
+# Notebook checkpoints
+.ipynb_checkpoints/
+
+# Local example/generated artifacts
+examples/

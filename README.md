@@ -12,8 +12,11 @@ A lightweight Python toolkit for efficient feature analysis and statistical diag
 - **Scorecard Generation**: Traditional credit scorecard with customizable base score and PDO
 - **Pipeline Workflow**: Fluent API for end-to-end scorecard development
 - **Visualization Tools**: Binning plots, IV ranking, WOE patterns, PSI comparison
+- **Excel Model Report**: Multi-sheet model report generation with overview, model design, variable analysis, and model performance output
 
 ## Installation
+
+Newt supports Python `3.8.1` up to but not including `4.0`, so Python `3.8.5` is within the supported range.
 
 ```bash
 pip install newt

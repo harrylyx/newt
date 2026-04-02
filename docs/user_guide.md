@@ -2,6 +2,8 @@
 
 This guide covers the end-to-end workflow for credit scorecard development using `newt`, including binning, feature selection, WOE/IV analysis, modeling, and scorecard generation.
 
+The project declares support for Python `3.8.1` and above, but below `4.0`, so Python `3.8.5` is within the supported range.
+
 ## Table of Contents
 
 1. [Feature Binning](#1-feature-binning)
@@ -14,6 +16,7 @@ This guide covers the end-to-end workflow for credit scorecard development using
 8. [Manual Adjustment](#8-manual-adjustment)
 9. [Deployment](#9-deployment)
 10. [Metrics](#10-metrics)
+11. [Excel Model Report](#11-excel-model-report)
 
 ---
 
@@ -801,6 +804,39 @@ fig = plot_iv_ranking(
     iv_dict=selector.eda_summary_.set_index('feature')['iv'].to_dict()
 )
 ```
+
+---
+
+## 11. Excel Model Report
+
+`newt.Report` generates a multi-sheet Excel model report from prepared sample data, a trained model object, and an existing score column. It is intended for overview, model design, variable analysis, and model performance reporting.
+
+```python
+from newt import Report
+
+report = Report(
+    data=data,
+    model=model,
+    tag="tag",
+    score_col="score_new",
+    date_col="obs_date",
+    label_list=["target"],
+    score_list=["score_old"],
+    dim_list=["channel"],
+    var_list=["age", "income"],
+    feature_path="./feature_dict.csv",
+    report_out_path="./out/model_report.xlsx",
+)
+
+report.generate()
+```
+
+Notes:
+
+- `data` must already include the new-model score column referenced by `score_col`
+- `model` is used for parameter extraction and feature importance, not for re-scoring
+- `sheet_list` can optionally select sheets by index `1-4` or by name
+- For report development and validation, use `uv sync --group dev`
 
 ---
 

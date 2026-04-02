@@ -15,6 +15,7 @@ Newt is a lightweight Python toolkit for efficient feature analysis and statisti
   - Scorecard generation
   - Pipeline-style workflow
   - Visualization tools (binning plots, IV ranking, WOE patterns, PSI comparison)
+  - Excel model report generation (`Report`)
 
 ## 2. Development Environment
 
@@ -60,6 +61,7 @@ newt/
 │   │   └── analysis/
 │   │       ├── woe_calculator.py # WOEEncoder
 │   │       ├── iv_calculator.py   # calculate_iv
+│   │       ├── batch_iv.py        # Batch IV with Rust-backed engine
 │   │       └── correlation.py    # Correlation matrix
 │   ├── modeling/
 │   │   ├── logistic.py          # LogisticModel (statsmodels wrapper)
@@ -70,7 +72,19 @@ newt/
 │   │   ├── ks.py               # calculate_ks
 │   │   ├── lift.py             # calculate_lift
 │   │   ├── psi.py              # calculate_psi
+│   │   ├── reporting.py        # Reusable report metric helpers
 │   │   └── vif.py              # calculate_vif
+│   ├── reporting/
+│   │   ├── report.py           # Public Report API
+│   │   ├── tables.py           # Report table assembly
+│   │   ├── excel_writer.py     # Excel workbook rendering
+│   │   ├── model_adapter.py    # LightGBM/XGBoost parameter & importance adapter
+│   │   └── score_prep.py       # Report-only score direction handling
+│   ├── results/
+│   │   ├── report.py           # Stable report result objects
+│   │   ├── scorecard.py        # Scorecard result objects
+│   │   ├── selection.py        # Feature selection result objects
+│   │   └── visualization.py    # Plot data objects
 │   ├── pipeline/
 │   │   └── pipeline.py         # ScorecardPipeline (fluent API)
 │   ├── utils/
@@ -89,6 +103,8 @@ newt/
 │   │   ├── metrics/
 │   │   ├── modeling/
 │   │   ├── pipeline/
+│   │   ├── reporting/
+│   │   ├── results/
 │   │   ├── utils/
 │   │   └── visualization/
 │   ├── cross_val/                # Cross-validation tests
@@ -102,7 +118,10 @@ newt/
 │   ├── 02-advanced-analysis.ipynb
 │   ├── 03-production-pipeline.ipynb
 │   └── data/                   # Sample datasets
-│       └── statlog+german+credit+data/
+│       ├── statlog+german+credit+data/
+│       └── test_data/          # Sample report dataset/model
+├── rust/
+│   └── newt_iv_rust/           # Rust extension for batch IV
 ├── pyproject.toml                # uv/PEP 621 configuration
 ├── README.md                     # Package README
 └── AGENTS.md                    # This file
@@ -136,6 +155,7 @@ newt/
 #### features/analysis/
 - `woe_calculator.py`: WOEEncoder (WOE encoding and IV calculation)
 - `iv_calculator.py`: calculate_iv function
+- `batch_iv.py`: Batch IV calculation with a Rust-backed primary engine and Python fallback
 - `correlation.py`: Correlation matrix and high correlation pairs
 
 #### modeling/
@@ -155,7 +175,19 @@ newt/
 - `ks.py`: calculate_ks (Kolmogorov-Smirnov statistic)
 - `lift.py`: calculate_lift (Lift metric)
 - `psi.py`: calculate_psi (Population Stability Index)
+- `reporting.py`: grouped metrics, PSI helpers, score correlation, portrait summaries, bin tables
 - `vif.py`: calculate_vif (Variance Inflation Factor)
+
+#### reporting/
+- `report.py`: `Report` orchestration API
+- `tables.py`: builds sheet-level DataFrames and block layout metadata
+- `excel_writer.py`: writes styled Excel workbooks and charts
+- `model_adapter.py`: extracts parameters and feature importance from LightGBM/XGBoost
+- `score_prep.py`: creates report-only score columns and applies direction normalization
+
+#### results/
+- `report.py`: `ModelReportResult`, `ReportSheet`, `ReportBlock`, `ReportChart`
+- Stores stable result objects used for testing and downstream consumption
 
 #### pipeline/
 - `pipeline.py`: ScorecardPipeline (fluent API for end-to-end workflow)
@@ -319,6 +351,8 @@ tests/
 │   ├── metrics/
 │   ├── modeling/
 │   ├── pipeline/
+│   ├── reporting/
+│   ├── results/
 │   ├── utils/
 │   └── visualization/
 ├── cross_val/                    # Cross-validation tests
@@ -383,6 +417,9 @@ uv run pytest
 
 # Run specific test
 uv run pytest tests/unit/features/binning/test_binning.py
+
+# Run report tests
+uv run pytest tests/unit/reporting
 
 # Run tests with coverage
 uv run pytest --cov=src/newt --cov-report=html
@@ -525,13 +562,22 @@ When adding new features:
 - **Core**: pandas, numpy
 - **Scientific**: scipy, scikit-learn, statsmodels
 - **Binning**: optbinning (optional, for optimal binning)
+- **Reporting**: xlsxwriter
+- **Rust bridge**: maturin
 - **Visualization**: matplotlib, seaborn
 - **Testing**: pytest, pytest-cov, coverage
 - **Code Quality**: black, isort, flake8
 
+**Report development / validation dependencies (`uv sync --group dev`):**
+
+- openpyxl
+- pyarrow
+- lightgbm
+
 **Note**: `optbinning` requires additional dependencies:
-- ortools: <9.12
-- cvxpy: >=1.3,<1.5
+- optbinning: `python_version < 3.12`
+- ortools: <9.12, `python_version < 3.12`
+- cvxpy: >=1.3,<1.5, `python_version < 3.12`
 
 ## 12. Performance Considerations
 

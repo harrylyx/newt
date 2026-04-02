@@ -2,6 +2,8 @@
 
 本指南涵盖使用 `newt` 进行信用评分卡开发的端到端工作流程，包括分箱、特征选择、WOE/IV 分析、建模和评分卡生成。
 
+当前项目声明支持 Python `3.8.1` 及以上、`4.0` 以下版本，因此 Python `3.8.5` 在支持范围内。
+
 ## 目录
 
 1. [特征分箱](#1-特征分箱)
@@ -14,6 +16,7 @@
 8. [手动调整](#8-手动调整)
 9. [模型部署](#9-模型部署)
 10. [评估指标](#10-评估指标)
+11. [Excel 模型报告](#11-excel-模型报告)
 
 ---
 
@@ -801,6 +804,39 @@ fig = plot_iv_ranking(
     iv_dict=selector.eda_summary_.set_index('feature')['iv'].to_dict()
 )
 ```
+
+---
+
+## 11. Excel 模型报告
+
+`newt.Report` 可以基于已有样本、模型对象和分数字段生成多 sheet 的 Excel 模型报告，适合输出总览、模型设计、变量分析和模型表现。
+
+```python
+from newt import Report
+
+report = Report(
+    data=data,
+    model=model,
+    tag="tag",
+    score_col="score_new",
+    date_col="obs_date",
+    label_list=["target"],
+    score_list=["score_old"],
+    dim_list=["channel"],
+    var_list=["age", "income"],
+    feature_path="./feature_dict.csv",
+    report_out_path="./out/model_report.xlsx",
+)
+
+report.generate()
+```
+
+常用说明：
+
+- `data` 需要已经包含新模型分数列 `score_col`
+- `model` 用于提取参数和变量重要性，不负责重新打分
+- `sheet_list` 可选传入序号 `1-4` 或名称来控制输出页面
+- 跑报表开发和验收时，建议使用 `uv sync --group dev`
 
 ---
 

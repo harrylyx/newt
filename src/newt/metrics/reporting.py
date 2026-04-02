@@ -1,6 +1,8 @@
 """Reusable metrics helpers for report generation."""
 
-from typing import Dict, Iterable, List, Optional, Sequence
+from __future__ import annotations
+
+from typing import Dict, List, Optional, Sequence
 
 import numpy as np
 import pandas as pd
@@ -221,9 +223,7 @@ def summarize_label_distribution(
                 "坏占比（去掉灰样本）": float(bad / total) if total else np.nan,
             }
         )
-    return _sort_report_frame(
-        pd.DataFrame(rows), tag_column="样本集", month_column="月"
-    )
+    return _sort_report_frame(pd.DataFrame(rows), tag_column="样本集", month_column="月")
 
 
 def calculate_score_correlation_matrix(

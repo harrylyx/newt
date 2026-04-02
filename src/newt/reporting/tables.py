@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Dict, Iterable, List, Optional, Sequence, Tuple
+from typing import Dict, List, Optional, Sequence, Tuple
 
 import numpy as np
 import pandas as pd
@@ -23,7 +23,6 @@ from newt.metrics.reporting import (
 )
 from newt.reporting.model_adapter import ModelAdapter
 from newt.results import ModelReportResult, ReportBlock, ReportChart, ReportSheet
-
 
 SHEET_NAME_MAP = {
     1: "总览",
@@ -57,10 +56,12 @@ def build_report_result(
     data: pd.DataFrame,
     model_adapter: ModelAdapter,
     tag_col: str,
-    score_col: str,
     month_col: str,
     label_list: Sequence[str],
     score_list: Sequence[str],
+    primary_score_name: str,
+    report_score_columns: Dict[str, str],
+    score_direction_summary: pd.DataFrame,
     dim_list: Sequence[str],
     var_list: Sequence[str],
     feature_path: Optional[str],
@@ -72,11 +73,21 @@ def build_report_result(
     feature_cols = _determine_feature_columns(
         data,
         model_adapter,
-        excluded=[tag_col, month_col, score_col, *label_list, *score_list, *dim_list, *var_list],
+        excluded=[
+            tag_col,
+            month_col,
+            *label_list,
+            primary_score_name,
+            *score_list,
+            *report_score_columns.values(),
+            *dim_list,
+            *var_list,
+        ],
     )
     primary_label = label_list[0]
+    primary_report_score = report_score_columns[primary_score_name]
     score_edges = build_reference_quantile_bins(
-        data.loc[data[tag_col] == "train", score_col],
+        data.loc[data[tag_col] == "train", primary_report_score],
         bins=10,
     )
 
@@ -85,7 +96,9 @@ def build_report_result(
             data=data,
             tag_col=tag_col,
             month_col=month_col,
-            score_col=score_col,
+            primary_score_name=primary_score_name,
+            report_score_columns=report_score_columns,
+            score_direction_summary=score_direction_summary,
             label_list=label_list,
             score_list=score_list,
             dim_list=dim_list,
@@ -97,14 +110,14 @@ def build_report_result(
             month_col=month_col,
             primary_label=primary_label,
             label_list=label_list,
-            score_col=score_col,
+            score_col=primary_report_score,
+            model_name=primary_score_name,
         ),
         "变量分析": lambda: build_variable_analysis_sheet(
             data=data,
             tag_col=tag_col,
             month_col=month_col,
             primary_label=primary_label,
-            score_col=score_col,
             feature_cols=feature_cols,
             feature_dict=feature_dict,
             model_adapter=model_adapter,
@@ -115,7 +128,8 @@ def build_report_result(
             month_col=month_col,
             label_list=label_list,
             primary_label=primary_label,
-            score_col=score_col,
+            score_col=primary_report_score,
+            model_name=primary_score_name,
             model_adapter=model_adapter,
             score_edges=score_edges,
         ),
@@ -127,9 +141,11 @@ def build_report_result(
     return ModelReportResult(
         sheets=sheets,
         metadata={
-            "score_col": score_col,
+            "score_col": primary_score_name,
             "label_list": list(label_list),
             "feature_columns": feature_cols,
+            "score_directions": score_direction_summary.to_dict("records"),
+            "report_score_columns": dict(report_score_columns),
         },
     )
 
@@ -138,13 +154,23 @@ def build_overview_sheet(
     data: pd.DataFrame,
     tag_col: str,
     month_col: str,
-    score_col: str,
+    primary_score_name: str,
+    report_score_columns: Dict[str, str],
+    score_direction_summary: pd.DataFrame,
     label_list: Sequence[str],
     score_list: Sequence[str],
     dim_list: Sequence[str],
     var_list: Sequence[str],
 ) -> ReportSheet:
     """Build sheet 1."""
+    primary_score_col = report_score_columns[primary_score_name]
+    score_model_columns = _resolve_score_model_columns(
+        primary_score_name=primary_score_name,
+        score_list=score_list,
+        report_score_columns=report_score_columns,
+    )
+    display_by_column = {column: model for model, column in score_model_columns}
+
     blocks = [ReportBlock(title="一、目标与设计方案", blank_rows_after=1)]
     blocks.append(
         ReportBlock(
@@ -154,14 +180,34 @@ def build_overview_sheet(
     )
     blocks.append(ReportBlock(title="二、迭代效果", blank_rows_after=1))
 
-    monthly_metrics = _build_monthly_metrics_table(
+    if not score_direction_summary.empty:
+        direction_columns = [
+            column
+            for column in [
+                "分数字段",
+                "原始方向",
+                "报表计算方向",
+                "判断依据",
+                "原始AUC",
+            ]
+            if column in score_direction_summary.columns
+        ]
+        blocks.append(
+            ReportBlock(
+                title="分数字段方向说明",
+                data=score_direction_summary.loc[:, direction_columns].copy(),
+            )
+        )
+
+    tag_metrics, monthly_metrics = _build_split_metrics_tables(
         data=data,
         tag_col=tag_col,
         month_col=month_col,
         label_list=label_list,
-        score_col=score_col,
-        model_name=score_col,
+        score_col=primary_score_col,
+        model_name=primary_score_name,
     )
+    blocks.append(ReportBlock(title="按tag模型效果", data=tag_metrics))
     blocks.append(ReportBlock(title="按月模型效果", data=monthly_metrics))
 
     oot_frame = data.loc[data[tag_col] == "oot"].copy()
@@ -170,37 +216,63 @@ def build_overview_sheet(
             data=oot_frame,
             dim_list=dim_list,
             label_list=label_list,
-            score_cols=[score_col, *score_list],
+            score_model_columns=score_model_columns,
         )
         blocks.append(ReportBlock(title="分维度对比模型效果", data=dim_table))
 
     if score_list:
-        tag_compare = _build_model_comparison(
-            data=data,
-            group_cols=[tag_col],
-            label_list=label_list,
-            score_cols=[score_col, *score_list],
-            tag_col=tag_col,
-            month_col=month_col,
+        for old_score_name in score_list:
+            old_score_col = report_score_columns.get(old_score_name)
+            if not old_score_col:
+                continue
+            pair_models = [
+                (primary_score_name, primary_score_col),
+                (old_score_name, old_score_col),
+            ]
+            tag_compare = _build_model_pair_comparison(
+                data=data,
+                group_mode="tag",
+                label_list=label_list,
+                model_columns=pair_models,
+                tag_col=tag_col,
+                month_col=month_col,
+            )
+            month_compare = _build_model_pair_comparison(
+                data=data,
+                group_mode="month",
+                label_list=label_list,
+                model_columns=pair_models,
+                tag_col=tag_col,
+                month_col=month_col,
+            )
+            blocks.append(
+                ReportBlock(
+                    title=f"按tag新老模型对比({old_score_name})",
+                    data=tag_compare,
+                )
+            )
+            blocks.append(
+                ReportBlock(
+                    title=f"按月新老模型对比({old_score_name})",
+                    data=month_compare,
+                )
+            )
+        corr = calculate_score_correlation_matrix(
+            oot_frame,
+            [column for _, column in score_model_columns],
         )
-        month_compare = _build_model_comparison(
-            data=data,
-            group_cols=[tag_col, month_col],
-            label_list=label_list,
-            score_cols=[score_col, *score_list],
-            tag_col=tag_col,
-            month_col=month_col,
-        )
-        blocks.append(ReportBlock(title="按tag新老模型对比", data=tag_compare))
-        blocks.append(ReportBlock(title="按月新老模型对比", data=month_compare))
-        corr = calculate_score_correlation_matrix(oot_frame, [score_col, *score_list])
+        corr = corr.rename(index=display_by_column, columns=display_by_column)
+        corr.index.name = "模型"
         blocks.append(ReportBlock(title="OOT相关性矩阵", data=corr.reset_index()))
 
     if var_list and not oot_frame.empty:
         portrait = calculate_portrait_means_by_score_bin(
             data=oot_frame,
-            score_cols=[score_col, *score_list],
+            score_cols=[column for _, column in score_model_columns],
             variable_cols=var_list,
+        )
+        portrait["模型"] = (
+            portrait["模型"].map(display_by_column).fillna(portrait["模型"])
         )
         blocks.append(ReportBlock(title="OOT画像变量均值对比", data=portrait))
 
@@ -214,6 +286,7 @@ def build_model_design_sheet(
     primary_label: str,
     label_list: Sequence[str],
     score_col: str,
+    model_name: str,
 ) -> ReportSheet:
     """Build sheet 2."""
     blocks = [
@@ -245,7 +318,9 @@ def build_model_design_sheet(
     sample_rows = []
     for label_col in label_list:
         for tag_value, tag_frame in data.groupby(tag_col, dropna=False):
-            metrics = calculate_binary_metrics(tag_frame[label_col], tag_frame[score_col])
+            metrics = calculate_binary_metrics(
+                tag_frame[label_col], tag_frame[score_col]
+            )
             sample_rows.append(
                 {
                     "样本集": tag_value,
@@ -257,7 +332,9 @@ def build_model_design_sheet(
                     "备注": "",
                 }
             )
-    blocks.append(ReportBlock(title="建模样本分布情况表", data=pd.DataFrame(sample_rows)))
+    blocks.append(
+        ReportBlock(title="建模样本分布情况表", data=pd.DataFrame(sample_rows))
+    )
 
     effect_rows = []
     for label_col in label_list:
@@ -268,7 +345,7 @@ def build_model_design_sheet(
             score_col=score_col,
             tag_col=tag_col,
             month_col=month_col,
-            model_name=score_col,
+            model_name=model_name,
         )
         for _, row in effect_table.iterrows():
             effect_rows.append(
@@ -288,14 +365,15 @@ def build_variable_analysis_sheet(
     tag_col: str,
     month_col: str,
     primary_label: str,
-    score_col: str,
     feature_cols: Sequence[str],
     feature_dict: pd.DataFrame,
     model_adapter: ModelAdapter,
 ) -> ReportSheet:
     """Build sheet 3."""
     importance = model_adapter.get_importance_table()
-    train_frame = data.loc[(data[tag_col] == "train") & data[primary_label].isin([0, 1])]
+    train_frame = data.loc[
+        (data[tag_col] == "train") & data[primary_label].isin([0, 1])
+    ]
     oot_frame = data.loc[(data[tag_col] == "oot") & data[primary_label].isin([0, 1])]
     feature_table = _build_feature_analysis_table(
         train_frame=train_frame,
@@ -309,9 +387,7 @@ def build_variable_analysis_sheet(
         importance=importance,
     )
     top_features = (
-        feature_table.sort_values("gain", ascending=False)["vars"].head(30).tolist()
-        if not feature_table.empty
-        else []
+        feature_table["vars"].head(30).tolist() if not feature_table.empty else []
     )
 
     blocks = [
@@ -339,7 +415,9 @@ def build_variable_analysis_sheet(
             month_col=month_col,
             edges=edges,
         )
-        display_name = _lookup_feature_meta(feature_dict, feature_name).get("中文名", "")
+        display_name = _lookup_feature_meta(feature_dict, feature_name).get(
+            "中文名", ""
+        )
         title_prefix = f"{rank}.{feature_name}"
         if display_name:
             title_prefix = f"{title_prefix} {display_name}"
@@ -382,20 +460,24 @@ def build_model_performance_sheet(
     label_list: Sequence[str],
     primary_label: str,
     score_col: str,
+    model_name: str,
     model_adapter: ModelAdapter,
     score_edges: Sequence[float],
 ) -> ReportSheet:
     """Build sheet 4."""
-    blocks = [ReportBlock(title="3.1 建模方法选择", data=model_adapter.get_param_table())]
-    model_effect = _build_monthly_metrics_table(
+    blocks = [
+        ReportBlock(title="3.1 建模方法选择", data=model_adapter.get_param_table())
+    ]
+    tag_metrics, month_metrics = _build_split_metrics_tables(
         data=data,
         tag_col=tag_col,
         month_col=month_col,
         label_list=label_list,
         score_col=score_col,
-        model_name=score_col,
+        model_name=model_name,
     )
-    blocks.append(ReportBlock(title="3.2 模型效果", data=model_effect))
+    blocks.append(ReportBlock(title="3.2 按tag模型效果", data=tag_metrics))
+    blocks.append(ReportBlock(title="3.2 按月模型效果", data=month_metrics))
 
     binary_data = data.loc[data[primary_label].isin([0, 1])].copy()
     blocks.append(ReportBlock(title="3.3 模型分箱表现", blank_rows_after=1))
@@ -408,7 +490,9 @@ def build_model_performance_sheet(
             edges=score_edges,
         )
         if not table.empty:
-            blocks.append(ReportBlock(title=str(tag_value), data=table, blank_rows_after=3))
+            blocks.append(
+                ReportBlock(title=str(tag_value), data=table, blank_rows_after=3)
+            )
 
     for month_value in _ordered_month_values(binary_data[month_col]):
         month_frame = binary_data.loc[binary_data[month_col] == month_value]
@@ -419,84 +503,122 @@ def build_model_performance_sheet(
             edges=score_edges,
         )
         if not table.empty:
-            blocks.append(ReportBlock(title=str(month_value), data=table, blank_rows_after=3))
+            blocks.append(
+                ReportBlock(title=str(month_value), data=table, blank_rows_after=3)
+            )
     return ReportSheet(name="模型表现", blocks=blocks)
 
 
-def _build_monthly_metrics_table(
+def _build_split_metrics_tables(
     data: pd.DataFrame,
     tag_col: str,
     month_col: str,
     label_list: Sequence[str],
     score_col: str,
     model_name: str,
-) -> pd.DataFrame:
-    rows: List[pd.DataFrame] = []
-    latest_psi = calculate_latest_month_psi(data, tag_col=tag_col, month_col=month_col, score_col=score_col)
+) -> Tuple[pd.DataFrame, pd.DataFrame]:
+    tag_rows: List[pd.DataFrame] = []
+    month_rows: List[pd.DataFrame] = []
+    month_latest_psi = _build_latest_month_psi_map(
+        data, month_col=month_col, score_col=score_col
+    )
+
     for label_col in label_list:
         train_reference = data.loc[
             (data[tag_col] == "train") & data[label_col].isin([0, 1]),
             score_col,
         ]
-        table = _build_group_metrics(
+        tag_table = _build_group_metrics(
             data=data,
-            group_cols=[tag_col, month_col],
+            group_cols=[tag_col],
             label_col=label_col,
             score_col=score_col,
             tag_col=tag_col,
             month_col=month_col,
             train_reference=train_reference,
-            latest_month_psi=latest_psi,
             model_name=model_name,
         )
-        rows.append(table)
-    return _sort_report_table(
-        pd.concat(rows, ignore_index=True),
+        tag_rows.append(tag_table)
+
+        month_table = _build_group_metrics(
+            data=data,
+            group_cols=[month_col],
+            label_col=label_col,
+            score_col=score_col,
+            tag_col=tag_col,
+            month_col=month_col,
+            train_reference=train_reference,
+            model_name=model_name,
+        )
+        if not month_table.empty:
+            month_table["近期月对比各集合PSI"] = month_table["观察点月"].map(
+                month_latest_psi
+            )
+        month_rows.append(month_table)
+
+    tag_result = _sort_report_table(
+        pd.concat(tag_rows, ignore_index=True),
         tag_column="样本集",
+        leading_columns=["样本标签", "模型"],
+    )
+    month_result = _sort_report_table(
+        pd.concat(month_rows, ignore_index=True),
         month_column="观察点月",
         leading_columns=["样本标签", "模型"],
     )
+    return tag_result, month_result
 
 
-def _build_model_comparison(
+def _build_model_pair_comparison(
     data: pd.DataFrame,
-    group_cols: Sequence[str],
+    group_mode: str,
     label_list: Sequence[str],
-    score_cols: Sequence[str],
+    model_columns: Sequence[Tuple[str, str]],
     tag_col: str,
     month_col: str,
 ) -> pd.DataFrame:
+    if group_mode not in {"tag", "month"}:
+        raise ValueError(f"Unknown comparison mode: {group_mode}")
+
+    group_cols = [tag_col] if group_mode == "tag" else [month_col]
     frames: List[pd.DataFrame] = []
-    for score_col in score_cols:
-        latest_psi = calculate_latest_month_psi(
-            data,
-            tag_col=tag_col,
-            month_col=month_col,
-            score_col=score_col,
+    latest_map_by_model = {
+        model_name: _build_latest_month_psi_map(
+            data, month_col=month_col, score_col=score_col
         )
+        for model_name, score_col in model_columns
+    }
+
+    for model_name, score_col in model_columns:
         for label_col in label_list:
             train_reference = data.loc[
                 (data[tag_col] == "train") & data[label_col].isin([0, 1]),
                 score_col,
             ]
-            frames.append(
-                _build_group_metrics(
-                    data=data,
-                    group_cols=group_cols,
-                    label_col=label_col,
-                    score_col=score_col,
-                    tag_col=tag_col,
-                    month_col=month_col,
-                    train_reference=train_reference,
-                    latest_month_psi=latest_psi,
-                    model_name=score_col,
-                )
+            table = _build_group_metrics(
+                data=data,
+                group_cols=group_cols,
+                label_col=label_col,
+                score_col=score_col,
+                tag_col=tag_col,
+                month_col=month_col,
+                train_reference=train_reference,
+                model_name=model_name,
             )
-    return _sort_report_table(
-        pd.concat(frames, ignore_index=True),
-        tag_column="样本集",
-        month_column="观察点月",
-        leading_columns=["样本标签", "模型"],
+            if group_mode == "month":
+                table["近期月对比各集合PSI"] = table["观察点月"].map(
+                    latest_map_by_model[model_name]
+                )
+            frames.append(table)
+
+    combined = pd.concat(frames, ignore_index=True)
+    model_order = {
+        model_name: index for index, (model_name, _) in enumerate(model_columns)
+    }
+    return _sort_pair_comparison_table(
+        combined,
+        model_order=model_order,
+        group_mode=group_mode,
     )
 
 
@@ -524,24 +646,88 @@ def _build_group_metrics(
     )
 
 
+def _build_latest_month_psi_map(
+    data: pd.DataFrame,
+    month_col: str,
+    score_col: str,
+) -> Dict[object, float]:
+    if data.empty:
+        return {}
+    marker = "__report_all_tag"
+    psi_data = data.assign(**{marker: "all"})
+    psi_table = calculate_latest_month_psi(
+        psi_data,
+        tag_col=marker,
+        month_col=month_col,
+        score_col=score_col,
+    )
+    if psi_table.empty:
+        return {}
+    return psi_table.set_index(month_col)["latest_month_psi"].to_dict()
+
+
+def _sort_pair_comparison_table(
+    frame: pd.DataFrame,
+    model_order: Dict[str, int],
+    group_mode: str,
+) -> pd.DataFrame:
+    if frame.empty:
+        return frame
+
+    ordered = frame.copy()
+    ordered["_label_order"] = ordered["样本标签"].astype(str)
+    ordered["_model_order"] = ordered["模型"].map(model_order).fillna(99)
+    sort_columns = ["_label_order"]
+    helper_columns = ["_label_order", "_model_order"]
+
+    if group_mode == "tag":
+        ordered["_tag_order"] = ordered["样本集"].map(_tag_sort_key)
+        sort_columns.append("_tag_order")
+        helper_columns.append("_tag_order")
+    else:
+        ordered["_month_order"] = ordered["观察点月"].map(_month_sort_key)
+        sort_columns.append("_month_order")
+        helper_columns.append("_month_order")
+
+    sort_columns.append("_model_order")
+    ordered = ordered.sort_values(sort_columns, kind="mergesort")
+    return ordered.drop(columns=helper_columns, errors="ignore").reset_index(drop=True)
+
+
+def _resolve_score_model_columns(
+    primary_score_name: str,
+    score_list: Sequence[str],
+    report_score_columns: Dict[str, str],
+) -> List[Tuple[str, str]]:
+    pairs: List[Tuple[str, str]] = []
+    for score_name in [primary_score_name, *score_list]:
+        report_column = report_score_columns.get(score_name)
+        if report_column and score_name not in {name for name, _ in pairs}:
+            pairs.append((score_name, report_column))
+    return pairs
+
+
 def _build_dimensional_comparison(
     data: pd.DataFrame,
     dim_list: Sequence[str],
     label_list: Sequence[str],
-    score_cols: Sequence[str],
+    score_model_columns: Sequence[Tuple[str, str]],
 ) -> pd.DataFrame:
     rows: List[Dict[str, object]] = []
     for dim_col in dim_list:
         for dim_value, dim_frame in data.groupby(dim_col, dropna=False):
             for label_col in label_list:
-                for score_col in score_cols:
-                    metrics = calculate_binary_metrics(dim_frame[label_col], dim_frame[score_col])
+                for model_name, score_col in score_model_columns:
+                    metrics = calculate_binary_metrics(
+                        dim_frame[label_col],
+                        dim_frame[score_col],
+                    )
                     rows.append(
                         {
                             "维度列": dim_col,
                             "维度值": dim_value,
                             "样本标签": label_col,
-                            "模型": score_col,
+                            "模型": model_name,
                             **metrics,
                         }
                     )
@@ -562,13 +748,21 @@ def _build_feature_analysis_table(
     if not feature_cols:
         return pd.DataFrame()
 
-    train_iv = calculate_batch_iv(train_frame.loc[:, feature_cols], train_frame[label_col], engine="rust")
+    train_iv = _calculate_batch_iv_with_fallback(
+        train_frame.loc[:, feature_cols],
+        train_frame[label_col],
+    )
     oot_iv = (
-        calculate_batch_iv(oot_frame.loc[:, feature_cols], oot_frame[label_col], engine="rust")
+        _calculate_batch_iv_with_fallback(
+            oot_frame.loc[:, feature_cols],
+            oot_frame[label_col],
+        )
         if not oot_frame.empty
         else pd.DataFrame({"feature": feature_cols, "iv": np.nan})
     )
-    importance_lookup = importance.set_index("feature") if not importance.empty else pd.DataFrame()
+    importance_lookup = (
+        importance.set_index("feature") if not importance.empty else pd.DataFrame()
+    )
     rows: List[Dict[str, object]] = []
 
     for index, feature in enumerate(feature_cols, start=1):
@@ -600,11 +794,11 @@ def _build_feature_analysis_table(
             "来源": meta.get("来源", ""),
             "数据类型": str(train_frame[feature].dtype),
             "缺失率_train": train_frame[feature].isna().mean(),
-            "缺失率_oot": oot_frame[feature].isna().mean() if not oot_frame.empty else np.nan,
-            "iv_train": train_iv.loc[train_iv["feature"] == feature, "iv"].iloc[0],
-            "iv_oot": oot_iv.loc[oot_iv["feature"] == feature, "iv"].iloc[0]
-            if not oot_iv.empty and feature in oot_iv["feature"].values
-            else np.nan,
+            "缺失率_oot": (
+                oot_frame[feature].isna().mean() if not oot_frame.empty else np.nan
+            ),
+            "iv_train": _lookup_iv_value(train_iv, feature),
+            "iv_oot": _lookup_iv_value(oot_iv, feature),
             "ks_train": ks_train,
             "ks_oot": ks_oot,
             "gain": _lookup_importance(importance_lookup, feature, "gain"),
@@ -615,7 +809,31 @@ def _build_feature_analysis_table(
             "指标表英文名": feature,
         }
         rows.append(row)
-    return pd.DataFrame(rows)
+
+    result = pd.DataFrame(rows)
+    if result.empty:
+        return result
+    result = result.sort_values(
+        ["gain", "weight"], ascending=False, kind="mergesort"
+    ).reset_index(drop=True)
+    result["序号"] = np.arange(1, len(result) + 1)
+    return result
+
+
+def _calculate_batch_iv_with_fallback(X: pd.DataFrame, y: pd.Series) -> pd.DataFrame:
+    try:
+        return calculate_batch_iv(X, y, engine="rust")
+    except Exception:
+        return calculate_batch_iv(X, y, engine="python")
+
+
+def _lookup_iv_value(iv_table: pd.DataFrame, feature: str) -> float:
+    if iv_table.empty:
+        return np.nan
+    matched = iv_table.loc[iv_table["feature"] == feature, "iv"]
+    if matched.empty:
+        return np.nan
+    return float(matched.iloc[0])
 
 
 def _build_feature_selection_summary(
@@ -644,7 +862,9 @@ def _build_feature_selection_summary(
         .size()
         .reset_index(name="变量数量")
     )
-    type_table["重要性占比"] = type_table["变量数量"] / max(type_table["变量数量"].sum(), 1)
+    type_table["重要性占比"] = type_table["变量数量"] / max(
+        type_table["变量数量"].sum(), 1
+    )
     type_table = type_table.rename(columns={"来源": "变量类型"})
     return pd.concat([base, type_table], ignore_index=True, sort=False)
 
@@ -673,17 +893,24 @@ def _build_feature_bin_stats(
         grouped["good_prop"].clip(lower=1e-8) / grouped["bad_prop"].clip(lower=1e-8)
     )
     grouped["iv"] = (grouped["good_prop"] - grouped["bad_prop"]) * grouped["woe"]
-    grouped["cum_bads_prop"] = grouped["bads"].cumsum() / max(grouped["bads"].sum(), 1)
-    grouped["cum_goods_prop"] = grouped["goods"].cumsum() / max(grouped["goods"].sum(), 1)
-    grouped["ks"] = abs(grouped["cum_bads_prop"] - grouped["cum_goods_prop"])
-    overall_bad_rate = grouped["bads"].sum() / max(grouped["total"].sum(), 1)
-    grouped["lift"] = grouped["bad_rate"] / max(overall_bad_rate, 1e-8)
     grouped["min"] = grouped["bin"].apply(_interval_left)
     grouped["max"] = grouped["bin"].apply(_interval_right)
     grouped = grouped.assign(
-        _bin_order=grouped["min"].map(_interval_sort_key),
         _missing_order=grouped["bin"].astype(str).eq("Missing").astype(int),
-    ).sort_values(["_missing_order", "_bin_order"], kind="mergesort")
+        _bad_rate_order=grouped["bad_rate"].fillna(-np.inf),
+        _bin_order=grouped["min"].map(_interval_sort_key),
+    ).sort_values(
+        ["_missing_order", "_bad_rate_order", "_bin_order"],
+        ascending=[True, False, True],
+        kind="mergesort",
+    )
+    grouped["cum_bads_prop"] = grouped["bads"].cumsum() / max(grouped["bads"].sum(), 1)
+    grouped["cum_goods_prop"] = grouped["goods"].cumsum() / max(
+        grouped["goods"].sum(), 1
+    )
+    grouped["ks"] = abs(grouped["cum_bads_prop"] - grouped["cum_goods_prop"])
+    overall_bad_rate = grouped["bads"].sum() / max(grouped["total"].sum(), 1)
+    grouped["lift"] = grouped["bad_rate"] / max(overall_bad_rate, 1e-8)
     return grouped[
         [
             "bin",
@@ -716,22 +943,32 @@ def _build_feature_monthly_metrics(
         return pd.DataFrame()
     train_stats = _build_feature_bin_stats(train_frame, feature, label_col, edges)
     train_bin_scores = (
-        train_stats.set_index("bin")["bad_rate"].to_dict() if not train_stats.empty else {}
+        train_stats.set_index("bin")["bad_rate"].to_dict()
+        if not train_stats.empty
+        else {}
     )
     rows: List[Dict[str, object]] = []
     for month_value in _ordered_month_values(all_data[month_col]):
         month_frame = all_data.loc[all_data[month_col] == month_value]
-        clean = month_frame.loc[month_frame[label_col].isin([0, 1]), [feature, label_col]].copy()
+        clean = month_frame.loc[
+            month_frame[label_col].isin([0, 1]), [feature, label_col]
+        ].copy()
         if clean.empty:
             continue
         clean["bin"] = assign_reference_bins(clean[feature], edges)
-        clean["bin_score"] = clean["bin"].map(train_bin_scores).fillna(clean["bin"].astype(str).eq("Missing").astype(float))
+        clean["bin_score"] = (
+            clean["bin"]
+            .map(train_bin_scores)
+            .fillna(clean["bin"].astype(str).eq("Missing").astype(float))
+        )
         metrics = calculate_binary_metrics(clean[label_col], clean["bin_score"])
         rows.append(
             {
                 "month": month_value,
                 **metrics,
-                "PSI": calculate_feature_psi(train_frame[feature], clean[feature], edges),
+                "PSI": calculate_feature_psi(
+                    train_frame[feature], clean[feature], edges
+                ),
             }
         )
     return _sort_report_table(pd.DataFrame(rows), month_column="month")
@@ -784,7 +1021,9 @@ def _lookup_feature_meta(feature_dict: pd.DataFrame, feature: str) -> Dict[str, 
     return matched.iloc[0].to_dict()
 
 
-def _lookup_importance(importance_lookup: pd.DataFrame, feature: str, column: str) -> float:
+def _lookup_importance(
+    importance_lookup: pd.DataFrame, feature: str, column: str
+) -> float:
     if importance_lookup.empty or feature not in importance_lookup.index:
         return 0.0
     return float(importance_lookup.loc[feature, column])

@@ -11,7 +11,6 @@ from newt.metrics.ks import calculate_ks
 from newt.metrics.lift import calculate_lift_at_k
 from newt.metrics.psi import calculate_psi
 
-
 PERCENT_LEVELS = (0.10, 0.05, 0.02, 0.01)
 TAG_ORDER = {"train": 0, "test": 1, "oot": 2, "oos": 3}
 
@@ -121,7 +120,9 @@ def calculate_latest_month_psi(
                     "latest_month_psi": float(psi_value),
                 }
             )
-    return _sort_report_frame(pd.DataFrame(records), tag_column=tag_col, month_column=month_col)
+    return _sort_report_frame(
+        pd.DataFrame(records), tag_column=tag_col, month_column=month_col
+    )
 
 
 def calculate_grouped_binary_metrics(
@@ -143,7 +144,9 @@ def calculate_grouped_binary_metrics(
         if not isinstance(group_values, tuple):
             group_values = (group_values,)
         group_dict = dict(zip(group_cols, group_values))
-        metrics = calculate_binary_metrics(group_frame[label_col], group_frame[score_col])
+        metrics = calculate_binary_metrics(
+            group_frame[label_col], group_frame[score_col]
+        )
         record: Dict[str, object] = {
             "样本标签": label_col,
             "模型": model_name or score_col,
@@ -171,7 +174,9 @@ def calculate_grouped_binary_metrics(
         record["近期月对比各集合PSI"] = latest_value
         records.append(record)
 
-    return _sort_report_frame(pd.DataFrame(records), tag_column="样本集", month_column="观察点月")
+    return _sort_report_frame(
+        pd.DataFrame(records), tag_column="样本集", month_column="观察点月"
+    )
 
 
 def summarize_label_distribution(
@@ -197,7 +202,9 @@ def summarize_label_distribution(
         grey = int((group_frame[label_col] == -1).sum())
         total = good + bad
         channel_value = (
-            group_map.get(channel_col, "") if channel_col and channel_col in group_map else ""
+            group_map.get(channel_col, "")
+            if channel_col and channel_col in group_map
+            else ""
         )
         if include_blank_channel and not channel_value:
             channel_value = ""
@@ -214,7 +221,9 @@ def summarize_label_distribution(
                 "坏占比（去掉灰样本）": float(bad / total) if total else np.nan,
             }
         )
-    return _sort_report_frame(pd.DataFrame(rows), tag_column="样本集", month_column="月")
+    return _sort_report_frame(
+        pd.DataFrame(rows), tag_column="样本集", month_column="月"
+    )
 
 
 def calculate_score_correlation_matrix(
@@ -286,9 +295,11 @@ def calculate_bin_performance_table(
                 "goods": goods,
                 "total": total,
                 "bad_rate": bad_rate,
-                "lift": float(bad_rate / overall_bad_rate)
-                if overall_bad_rate and not np.isnan(overall_bad_rate)
-                else np.nan,
+                "lift": (
+                    float(bad_rate / overall_bad_rate)
+                    if overall_bad_rate and not np.isnan(overall_bad_rate)
+                    else np.nan
+                ),
             }
         )
 
@@ -296,21 +307,35 @@ def calculate_bin_performance_table(
     if result.empty:
         return result
     result = result.assign(
-        _bin_order=result["min"].map(_bin_sort_key),
         _missing_order=result["bin"].eq("Missing").astype(int),
-    ).sort_values(["_missing_order", "_bin_order"], kind="mergesort")
+        _bad_rate_order=result["bad_rate"].fillna(-np.inf),
+        _bin_order=result["min"].map(_bin_sort_key),
+    ).sort_values(
+        ["_missing_order", "_bad_rate_order", "_bin_order"],
+        ascending=[True, False, True],
+        kind="mergesort",
+    )
     result["cum_bads"] = result["bads"].cumsum()
     result["cum_total"] = result["total"].cumsum()
     result["cum_bad_rate"] = result["cum_bads"] / result["cum_total"].clip(lower=1)
     result["cum_bads_prop"] = result["cum_bads"] / max(total_bad, 1)
     if total_all > total_bad:
-        result["cum_goods_prop"] = result["goods"].cumsum() / max(total_all - total_bad, 1)
+        result["cum_goods_prop"] = result["goods"].cumsum() / max(
+            total_all - total_bad, 1
+        )
         result["ks"] = abs(result["cum_bads_prop"] - result["cum_goods_prop"])
     else:
         result["ks"] = np.nan
     result["cum_lift"] = result["cum_bad_rate"] / max(overall_bad_rate, 1e-8)
     return result.drop(
-        columns=["_bin_order", "_missing_order", "cum_bads", "cum_total", "cum_goods_prop"],
+        columns=[
+            "_missing_order",
+            "_bad_rate_order",
+            "_bin_order",
+            "cum_bads",
+            "cum_total",
+            "cum_goods_prop",
+        ],
         errors="ignore",
     ).reset_index(drop=True)
 
@@ -333,7 +358,9 @@ def calculate_feature_psi(
 def _count_bins(values: pd.Series, edges: Sequence[float]) -> np.ndarray:
     numeric = values.to_numpy(dtype=float, copy=False)
     nan_count = int(np.isnan(numeric).sum())
-    counts, _ = np.histogram(numeric[~np.isnan(numeric)], bins=np.asarray(edges, dtype=float))
+    counts, _ = np.histogram(
+        numeric[~np.isnan(numeric)], bins=np.asarray(edges, dtype=float)
+    )
     return np.append(counts, nan_count)
 
 
@@ -345,7 +372,9 @@ def _psi_from_counts(expected_counts: np.ndarray, actual_counts: np.ndarray) -> 
     epsilon = BINNING.DEFAULT_EPSILON
     expected_pct = np.maximum(expected_counts / expected_total, epsilon)
     actual_pct = np.maximum(actual_counts / actual_total, epsilon)
-    return float(np.sum((actual_pct - expected_pct) * np.log(actual_pct / expected_pct)))
+    return float(
+        np.sum((actual_pct - expected_pct) * np.log(actual_pct / expected_pct))
+    )
 
 
 def _extract_interval_left(interval_label: object) -> float:

@@ -9,6 +9,7 @@ import pandas as pd
 
 from newt.reporting.excel_writer import ExcelReportWriter
 from newt.reporting.model_adapter import ModelAdapter
+from newt.reporting.score_prep import prepare_report_scores
 from newt.reporting.tables import build_report_result, resolve_sheet_names
 from newt.results import ModelReportResult
 
@@ -35,16 +36,24 @@ class Report:
     def generate(self) -> str:
         """Generate the report and return the output path."""
         prepared = self._prepare_data()
+        prepared, report_score_columns, score_direction_summary = prepare_report_scores(
+            data=prepared,
+            tag_col=self.tag,
+            label_col=self.label_list[0],
+            score_names=[self.score_col, *self.score_list],
+        )
         selected_sheets = resolve_sheet_names(self.sheet_list)
         adapter = ModelAdapter(self.model)
         result = build_report_result(
             data=prepared,
             model_adapter=adapter,
             tag_col=self.tag,
-            score_col=self.score_col,
             month_col="_report_month",
             label_list=self.label_list,
             score_list=self.score_list,
+            primary_score_name=self.score_col,
+            report_score_columns=report_score_columns,
+            score_direction_summary=score_direction_summary,
             dim_list=self.dim_list,
             var_list=self.var_list,
             feature_path=self.feature_path,
@@ -65,7 +74,11 @@ class Report:
     def _validate_columns(self) -> None:
         required = [self.tag, self.score_col, self.date_col, *self.label_list]
         optional = [*self.score_list, *self.dim_list, *self.var_list]
-        missing = [column for column in [*required, *optional] if column and column not in self.data.columns]
+        missing = [
+            column
+            for column in [*required, *optional]
+            if column and column not in self.data.columns
+        ]
         if missing:
             raise ValueError(f"Missing required columns: {sorted(set(missing))}")
 

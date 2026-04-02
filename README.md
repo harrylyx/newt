@@ -36,6 +36,8 @@ cd newt
 uv sync --group dev
 ```
 
+For Excel report development and validation (including `openpyxl`, `pyarrow`, and `lightgbm`), use the same `uv sync --group dev` environment.
+
 ## Quick Start
 
 ```python

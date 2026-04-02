@@ -4,6 +4,7 @@ import pandas as pd
 from newt.metrics import calculate_psi
 from newt.metrics.reporting import (
     build_reference_quantile_bins,
+    calculate_bin_performance_table,
     calculate_latest_month_psi,
     summarize_label_distribution,
 )
@@ -73,3 +74,25 @@ def test_summarize_label_distribution_counts_grey_good_bad(report_frame):
     )
     assert first_row["渠道"] == ""
     assert first_row["灰"] >= 0
+
+
+def test_calculate_bin_performance_table_sorts_by_bad_rate_desc_and_recomputes_cumulative():
+    data = pd.DataFrame(
+        {
+            "label": [0, 1, 0, 0, 1, 1],
+            "score": [0.10, 0.12, 0.30, 0.32, 0.70, 0.72],
+        }
+    )
+    edges = np.array([-np.inf, 0.2, 0.5, np.inf], dtype=float)
+
+    table = calculate_bin_performance_table(
+        data=data,
+        label_col="label",
+        score_col="score",
+        edges=edges,
+    )
+
+    assert table["bad_rate"].tolist() == sorted(table["bad_rate"].tolist(), reverse=True)
+    assert np.isclose(table.iloc[0]["cum_bad_rate"], 1.0)
+    assert np.isclose(table.iloc[0]["cum_bads_prop"], 2 / 3)
+    assert np.isclose(table.iloc[1]["cum_bads_prop"], 1.0)

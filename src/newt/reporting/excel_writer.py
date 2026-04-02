@@ -16,7 +16,9 @@ class ExcelReportWriter:
     """Write report sheets to a styled Excel workbook."""
 
     def __init__(self) -> None:
-        self.font_name = "PingFang SC" if platform.system() == "Darwin" else "Microsoft YaHei"
+        self.font_name = (
+            "PingFang SC" if platform.system() == "Darwin" else "Microsoft YaHei"
+        )
 
     def write(self, result: ModelReportResult, output_path: str) -> str:
         """Write a report result to disk."""
@@ -174,11 +176,18 @@ class ExcelReportWriter:
         worksheet.insert_chart(insert_row, 0, chart)
         return block.chart.height_rows
 
-    def _format_table(self, worksheet, data: pd.DataFrame, start_row: int, formats: Dict[str, object]) -> None:
+    def _format_table(
+        self, worksheet, data: pd.DataFrame, start_row: int, formats: Dict[str, object]
+    ) -> None:
         for column_index, column_name in enumerate(data.columns):
             worksheet.write(start_row, column_index, column_name, formats["header"])
             number_format = self._choose_body_format(column_name, formats)
-            worksheet.set_column(column_index, column_index, self._column_width(data[column_name], column_name), number_format)
+            worksheet.set_column(
+                column_index,
+                column_index,
+                self._column_width(data[column_name], column_name),
+                number_format,
+            )
             for row_offset, value in enumerate(data[column_name], start=1):
                 if pd.isna(value) or (
                     isinstance(value, (float, np.floating)) and not np.isfinite(value)
@@ -252,18 +261,23 @@ class ExcelReportWriter:
         lower = name.lower()
         if lower == "iv" or lower.startswith("iv_") or lower.endswith("_iv"):
             return formats["iv_decimal"]
-        if any(token in lower for token in ["auc", "ks", "psi", "lift", "gain_per", "weight_per"]):
-            return formats["decimal"]
-        if any(token in name for token in ["占比", "比率"]) or any(
-            token in lower for token in ["prop", "rate", "坏占比"]
+        if (
+            lower.startswith("缺失率_")
+            or lower.endswith("_per")
+            or any(token in name for token in ["占比", "比率"])
+            or any(token in lower for token in ["prop", "rate", "坏占比"])
         ):
             return formats["percent"]
-        if any(token in name for token in ["总", "好", "坏", "灰", "count"]) or lower in {
+        if any(
+            token in lower for token in ["auc", "ks", "psi", "lift", "gain", "weight"]
+        ):
+            return formats["decimal"]
+        if any(
+            token in name for token in ["总", "好", "坏", "灰", "count"]
+        ) or lower in {
             "bads",
             "goods",
             "total",
-            "weight",
-            "gain",
         }:
             return formats["integer"]
         return formats["text"]

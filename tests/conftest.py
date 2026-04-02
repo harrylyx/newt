@@ -86,6 +86,7 @@ def report_frame():
                         "score_new": min(score_base + 0.05 * is_bad, 0.99),
                         "score_old_a": min(score_base + 0.02 * is_bad, 0.99),
                         "score_old_b": min(score_base + 0.01 * sample_index, 0.99),
+                        "score": 1000 - 1000 * min(score_base + 0.02 * is_bad, 0.99),
                         "label_main": main_label,
                         "label_alt": alt_label,
                         "channel_dim": dims[(tag_index + sample_index) % len(dims)],

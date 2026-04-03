@@ -2257,8 +2257,7 @@ dev = [
     { name = "pyarrow", version = "19.0.1", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.9'" },
     { name = "pytest" },
     { name = "pytest-cov" },
-    { name = "toad", version = "0.1.4", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.10'" },
-    { name = "toad", version = "0.1.5", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.10' and python_full_version < '3.12'" },
+    { name = "toad", marker = "python_full_version < '3.12' and platform_machine != 'aarch64' and platform_machine != 'arm64'" },
 ]
 
 [package.metadata]
@@ -2293,7 +2292,7 @@ dev = [
     { name = "pyarrow", specifier = ">=15.0.0,<20.0.0" },
     { name = "pytest", specifier = ">=7.0.0,<8.0.0" },
     { name = "pytest-cov", specifier = ">=4.0.0,<5.0.0" },
-    { name = "toad", marker = "python_full_version < '3.12'", specifier = ">=0.1.0,<0.2.0" },
+    { name = "toad", marker = "python_full_version < '3.12' and platform_machine != 'aarch64' and platform_machine != 'arm64'", specifier = "==0.1.3" },
 ]
 
 [[package]]
@@ -4163,75 +4162,40 @@ wheels = [
 
 [[package]]
 name = "toad"
-version = "0.1.4"
+version = "0.1.3"
 source = { registry = "https://pypi.org/simple" }
-resolution-markers = [
-    "python_full_version == '3.9.*'",
-    "python_full_version < '3.9' and sys_platform == 'win32'",
-    "python_full_version < '3.9' and sys_platform != 'win32'",
-]
 dependencies = [
-    { name = "cython", marker = "python_full_version < '3.10'" },
+    { name = "cython", marker = "python_full_version < '3.12'" },
     { name = "joblib", version = "1.4.2", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.9'" },
-    { name = "joblib", version = "1.5.3", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version == '3.9.*'" },
+    { name = "joblib", version = "1.5.3", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.9' and python_full_version < '3.12'" },
     { name = "numpy", version = "1.24.4", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.9'" },
-    { name = "numpy", version = "1.26.4", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version == '3.9.*'" },
+    { name = "numpy", version = "1.26.4", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.9' and python_full_version < '3.12'" },
     { name = "pandas", version = "2.0.3", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.9'" },
-    { name = "pandas", version = "2.3.3", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version == '3.9.*'" },
+    { name = "pandas", version = "2.3.3", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.9' and python_full_version < '3.12'" },
     { name = "scikit-learn", version = "1.3.2", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.9'" },
     { name = "scikit-learn", version = "1.6.1", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version == '3.9.*'" },
-    { name = "scipy", version = "1.10.1", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.9'" },
-    { name = "scipy", version = "1.13.1", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version == '3.9.*'" },
-    { name = "seaborn", marker = "python_full_version < '3.10'" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/12/b4/2b8bffe01244e6d843d4b5fac8eae159dedf7c3c7eaefa82443b17cdbc1f/toad-0.1.4.tar.gz", hash = "sha256:d8825cd141a48a0f742b7692e630cd5a6949cec8cb7bfef4fc9ff959e2401870", size = 14057457, upload-time = "2024-11-03T15:23:59.412Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/4d/24/14d05aad47a3523170bce603ce5f703028808f580552bd64f2a4e5ef7f22/toad-0.1.4-cp310-cp310-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:ebe24e7e5c2de3def266d595a42ef0f222f489d0f280962b54a70e85829615e6", size = 15081217, upload-time = "2024-11-03T15:23:42.307Z" },
-    { url = "https://files.pythonhosted.org/packages/db/11/edb32cbce6a867cff88cdf083c26dd38e69ac2295ad1a1e56e6c1e578708/toad-0.1.4-cp310-cp310-win_amd64.whl", hash = "sha256:31df5dad9d0b31198e136f62309f4fa9113328b48653dc22981b7be058d0414c", size = 14247653, upload-time = "2024-11-04T02:08:23.411Z" },
-    { url = "https://files.pythonhosted.org/packages/d2/5a/d2abb287fd1aa2719bb1cfc0ce14e5e9feee6f3c48270a888b55ad6e72c1/toad-0.1.4-cp311-cp311-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:1f478ca60c3bb8810408050cd7f09b69739e598da5e6b7d7a4766fea9212e98e", size = 15161683, upload-time = "2024-11-03T15:23:45.998Z" },
-    { url = "https://files.pythonhosted.org/packages/92/a7/78e195779e2f1feeca1d522a0d509c439d5a3e84141a9c506531733c8904/toad-0.1.4-cp311-cp311-win_amd64.whl", hash = "sha256:f25d76f73975c01b926e9bc7aaa1e199e7e8877b533880981a1419d347b39550", size = 14248043, upload-time = "2024-11-04T02:08:26.241Z" },
-    { url = "https://files.pythonhosted.org/packages/04/9d/017324b66bbb3e01ea3a3629a1004b6221ec0a4920942d6aeea1cb38bbbd/toad-0.1.4-cp312-cp312-win_amd64.whl", hash = "sha256:0724d2f685fd8e4b3ef1fc357802c38be786c96d9940ba2abfaa7609a7537465", size = 14246603, upload-time = "2024-11-04T02:08:28.921Z" },
-    { url = "https://files.pythonhosted.org/packages/97/c4/421bf4287f306dce55caf175603771ebf71978713853e789546875f78e39/toad-0.1.4-cp38-cp38-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:b9a4130832214d5b3b1d0d1ea05680b7552f48a8f53d2589a7b997442aff9aaa", size = 15097555, upload-time = "2024-11-03T15:23:52.8Z" },
-    { url = "https://files.pythonhosted.org/packages/3f/97/16b523660c17adbe926f44e7029716e0f2d9ce30adbf20564a80624f25fd/toad-0.1.4-cp39-cp39-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:10a8dbdc5113c61ddf81de56e935270f18ef86d2da33d290ea79231e31aee328", size = 15083334, upload-time = "2024-11-03T15:23:56.411Z" },
-    { url = "https://files.pythonhosted.org/packages/ed/57/12a19e59117804e43a27ac6d82f3393666dc1a27e5a9d47f2c71988c7e2f/toad-0.1.4-cp39-cp39-win_amd64.whl", hash = "sha256:9eca1f0e6ded3096503e18edd9547dbf7ef97e530b902c7752d1712cc47a04db", size = 14270922, upload-time = "2024-11-04T02:08:31.289Z" },
-]
-
-[[package]]
-name = "toad"
-version = "0.1.5"
-source = { registry = "https://pypi.org/simple" }
-resolution-markers = [
-    "python_full_version == '3.11.*'",
-    "python_full_version == '3.10.*'",
-]
-dependencies = [
-    { name = "cython", marker = "python_full_version >= '3.10' and python_full_version < '3.12'" },
-    { name = "joblib", version = "1.5.3", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.10' and python_full_version < '3.12'" },
-    { name = "numpy", version = "1.26.4", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.10' and python_full_version < '3.12'" },
-    { name = "pandas", version = "2.3.3", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.10' and python_full_version < '3.12'" },
     { name = "scikit-learn", version = "1.7.2", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version == '3.10.*'" },
     { name = "scikit-learn", version = "1.8.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version == '3.11.*'" },
+    { name = "scipy", version = "1.10.1", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.9'" },
+    { name = "scipy", version = "1.13.1", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version == '3.9.*'" },
     { name = "scipy", version = "1.15.3", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version == '3.10.*'" },
     { name = "scipy", version = "1.17.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version == '3.11.*'" },
-    { name = "seaborn", marker = "python_full_version >= '3.10' and python_full_version < '3.12'" },
-    { name = "setuptools", version = "82.0.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.10' and python_full_version < '3.12'" },
+    { name = "seaborn", marker = "python_full_version < '3.12'" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/f6/f4/2a05d53a50504aee9dcd95621c3bdb300cedbc1ce7f7d1db1e310f590d04/toad-0.1.5.tar.gz", hash = "sha256:c579ecf650e412bc86f6f443384b56da29ef3f5f95d09e2bcc13f576dfad52de", size = 14057729, upload-time = "2025-02-18T15:33:21.189Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/c1/01/950686b959c0171a0bf1c7845ab346e42c980157ba9dcd7f2f95de556add/toad-0.1.3.tar.gz", hash = "sha256:3e57b9ba4e79e69ee603f5cf4a96c1b1eb98345463c81aba3155eae48e20db2f", size = 14053471, upload-time = "2023-12-10T07:29:45.711Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/d0/22/add07f1fae21bea95d6793ac8c7526a8f116e30fc832b0285520d32354a6/toad-0.1.5-cp310-cp310-macosx_10_9_universal2.whl", hash = "sha256:2f523965b3f620e77f1c19228cb2e606fda35cb3dc50aabbb000f6cadcdd1bd7", size = 14433860, upload-time = "2025-02-19T00:48:10.497Z" },
-    { url = "https://files.pythonhosted.org/packages/57/9c/cf6ad5aee0c81f36ca5c41a435f2b216326410f077d5679d80bf708d1b69/toad-0.1.5-cp310-cp310-macosx_13_0_x86_64.whl", hash = "sha256:f2fef0c60a7a83496ccf8bc02e4b81573653a91a5b2a152a14eebdbb539309d2", size = 14266482, upload-time = "2025-02-19T00:48:13.894Z" },
-    { url = "https://files.pythonhosted.org/packages/88/ce/66efa60a03d3577f32a184e7b066e25b240cae4b01854df4cea93926b00d/toad-0.1.5-cp310-cp310-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:0417c2cb766e80c73a2ba069bc2ec36cc9ae7282de21b87b7a6a991b9da9ce04", size = 15081483, upload-time = "2025-02-18T15:33:02.157Z" },
-    { url = "https://files.pythonhosted.org/packages/37/81/3aa79289680c61ba418540cb7882e5879fcf08052f611463dd12c3b5a611/toad-0.1.5-cp310-cp310-win_amd64.whl", hash = "sha256:48e9f26d6069aacf137b19c0872115ffb2f3fe8ee9d2a716aba9abe2e5cdbdb4", size = 14247610, upload-time = "2025-02-18T15:33:42.384Z" },
-    { url = "https://files.pythonhosted.org/packages/a1/ce/aaa2ea96f3d899cfb0cfce0578b22e608e4f68f8a63bf6c23865449c582a/toad-0.1.5-cp311-cp311-macosx_10_9_universal2.whl", hash = "sha256:1477087f004a51843636a3d4a86764b97fce70904fa6b4594b89a15a4355cd87", size = 14434322, upload-time = "2025-02-19T00:48:17.796Z" },
-    { url = "https://files.pythonhosted.org/packages/4e/16/bc8cae96778556cfc8ebff4127c63b6b52cc4ec5189630f29ee5d0de533d/toad-0.1.5-cp311-cp311-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:eefd268d21bfabf4042085081044feeb51c2f381f10d9c4821a6cbe898c56856", size = 15162005, upload-time = "2025-02-18T15:33:06.201Z" },
-    { url = "https://files.pythonhosted.org/packages/89/1e/b314606107dc133d51c8311e857091e9614e2e695dac7a16aa701319873e/toad-0.1.5-cp311-cp311-win_amd64.whl", hash = "sha256:00349f03b4ec1cf0950f22381324255ccd1d2205a62dd79fe0c2fffeaedddca7", size = 14247865, upload-time = "2025-02-18T15:33:46.376Z" },
-    { url = "https://files.pythonhosted.org/packages/ee/6b/c157455d9dd100f7433e6fcaa03a3900c5ad53017d43f0f66c936fe22ff1/toad-0.1.5-cp312-cp312-macosx_10_13_universal2.whl", hash = "sha256:9eb86befb596dfc8788fac36cc26034f9077c6882e973113403b3a1d95207a84", size = 14436873, upload-time = "2025-02-19T00:48:21.052Z" },
-    { url = "https://files.pythonhosted.org/packages/2f/a5/74c9d8fac426a04ff6ae99d02b17fd547abce89c76258ee0de71fe83c070/toad-0.1.5-cp312-cp312-win_amd64.whl", hash = "sha256:e722e454373f2492378eedbf0e807f7fdf3dea5c9115f345c858ada6d6b7bf0a", size = 14246572, upload-time = "2025-02-18T15:33:50.068Z" },
-    { url = "https://files.pythonhosted.org/packages/33/5c/9902637088689afce2a7e8e07e46a55a6b4564d11e56e02bf8b0f3f84657/toad-0.1.5-cp313-cp313-macosx_10_13_universal2.whl", hash = "sha256:61d5c19dc3bef8e27814450a7d5a4e8d164c4542eb8265764e78c7815e818e65", size = 14431181, upload-time = "2025-02-19T00:48:24.474Z" },
-    { url = "https://files.pythonhosted.org/packages/38/e6/c69b61bb8a4c2cf69ed0c3672e522021301deededf2680165f3339e5b6dd/toad-0.1.5-cp313-cp313-win_amd64.whl", hash = "sha256:3ae073b369bfeb2bc075c0db8896a4da073e13f12f92cc624d2e88e54d37f129", size = 14245890, upload-time = "2025-02-18T15:33:53.752Z" },
-    { url = "https://files.pythonhosted.org/packages/51/32/bf166eb03427fa01aa15831359260cd8654481127f93761044c3cd273efe/toad-0.1.5-cp38-cp38-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:4ef51db666290296c0597232abc2cfd68ab34797d16758106c0860abc9d840a9", size = 15097783, upload-time = "2025-02-18T15:33:13.852Z" },
-    { url = "https://files.pythonhosted.org/packages/67/9f/b117d2ca434286883807129848ae1bde69d48e85b22c2703fd65a81337b6/toad-0.1.5-cp39-cp39-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:a72111beed0400d7ac8681647f71b6275340609fe801d8c2d22a88f0e1e96fc3", size = 15083610, upload-time = "2025-02-18T15:33:17.659Z" },
-    { url = "https://files.pythonhosted.org/packages/4e/9e/3a96ae3347697f97242320e047707e66c22c589b33d39ea9396d93ca2341/toad-0.1.5-cp39-cp39-win_amd64.whl", hash = "sha256:f7ac25a6cbb265eb65881ebb7471050e646f13a605ed8b7562306438e76f4c85", size = 14270452, upload-time = "2025-02-18T15:33:56.473Z" },
+    { url = "https://files.pythonhosted.org/packages/aa/0c/f7552126b9f6e3f22a32ef80327770c39ab229b78debf957797752d71460/toad-0.1.3-cp310-cp310-macosx_11_0_x86_64.whl", hash = "sha256:adaa28c11b8471b0fe0a9a18deeb43be85b7490168f0b19450124f93e57c9b33", size = 14269737, upload-time = "2023-12-10T07:27:56.951Z" },
+    { url = "https://files.pythonhosted.org/packages/11/05/7e38208250484cade101543dbebf8d77a0919907916381be2fd35a083ad1/toad-0.1.3-cp310-cp310-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:5c09106d24f1b903d09ea1280a0d5f03854da863c4fd05784545d4a55fd8b98b", size = 15078279, upload-time = "2023-12-10T07:29:28.335Z" },
+    { url = "https://files.pythonhosted.org/packages/d6/40/4412a9d9d6ba26f97e3e70e6766864f61fd06d94076728f2fe71a4f6f86e/toad-0.1.3-cp310-cp310-win_amd64.whl", hash = "sha256:4ca25482225adcb266dba12dc0b7eafbf6b51ff2d0fb18c281fb30456bd261cb", size = 14244057, upload-time = "2023-12-10T07:54:34.474Z" },
+    { url = "https://files.pythonhosted.org/packages/fd/14/073f287de58e79c52643dbc449970bb494434fd8846cf0eac46e361823d0/toad-0.1.3-cp311-cp311-macosx_10_9_universal2.whl", hash = "sha256:32a90ec6b3ed583b5fc3bc49ce64c2b7cae6097df819e82853972fa2a62aa540", size = 14441930, upload-time = "2023-12-10T07:28:00.063Z" },
+    { url = "https://files.pythonhosted.org/packages/69/57/db3e312c9be51edd7ac1090abea6f3ffa292dab45ba07df2f4471800088f/toad-0.1.3-cp311-cp311-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:68982ce67ce54034a7fe6fd4194d847966e9fd2c263dc402b4c43d024953720e", size = 15159518, upload-time = "2023-12-10T07:29:31.762Z" },
+    { url = "https://files.pythonhosted.org/packages/85/e8/abf1b21190049e6a4c44f582bf1f97dfcc8f1eb2376f239174a8da66b663/toad-0.1.3-cp311-cp311-win_amd64.whl", hash = "sha256:8070e8fcaf22919c38225e95520bcdc2c6930f8852049c266633b2b48b62de77", size = 14244292, upload-time = "2023-12-10T07:54:37.881Z" },
+    { url = "https://files.pythonhosted.org/packages/49/77/67beccbe29b5ee3afc9f86edf62d3be2fbb5291d4b06f0e96c6049207064/toad-0.1.3-cp38-cp38-macosx_11_0_x86_64.whl", hash = "sha256:5209879fc350d3479a08fb7e550ca2b24ec9797b58e8ffcd10c9cdc2399a1778", size = 14265513, upload-time = "2023-12-10T07:28:05.974Z" },
+    { url = "https://files.pythonhosted.org/packages/5c/63/a4cc58fa62be36128583e0b1369f47878fac768e4d5a0f67961dcf9d0106/toad-0.1.3-cp38-cp38-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:8e7490b7f5b77829d1d681cbef868fba161c935d0fb3817fedbcb825284dfaa9", size = 15098585, upload-time = "2023-12-10T07:29:38.755Z" },
+    { url = "https://files.pythonhosted.org/packages/8d/5d/c5d72dff2650ed327dfccb34f4873e14a150291a300ca41fe22a44de8257/toad-0.1.3-cp38-cp38-win_amd64.whl", hash = "sha256:ac0b155ca37c5eb10ef346ba64e7a56450028f111ca034eb20cd5de0395d06a2", size = 14267524, upload-time = "2023-12-10T07:54:40.974Z" },
+    { url = "https://files.pythonhosted.org/packages/2a/1e/c2a46acb887f7d65d315efb99fee2c41e4678b3bc741ff554c6b42bb1d8c/toad-0.1.3-cp39-cp39-macosx_11_0_x86_64.whl", hash = "sha256:7cb0c22cac2edb9f20d035fa9b96c48d537cf9fab393ce2d87eb881c10806f9b", size = 14267916, upload-time = "2023-12-10T07:28:08.99Z" },
+    { url = "https://files.pythonhosted.org/packages/ab/2b/52615f0111dc650c626e031ae24933da9873850886326e38b31444667bab/toad-0.1.3-cp39-cp39-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:2661457738815219c04de7f7b11ef0ff8a609a10978f0b5e73526b103d4e9f20", size = 15080464, upload-time = "2023-12-10T07:29:41.66Z" },
+    { url = "https://files.pythonhosted.org/packages/62/13/4cba92bd8f4e5af962dada7af565e46338614ecabe42ea660d1706de582e/toad-0.1.3-cp39-cp39-win_amd64.whl", hash = "sha256:f20ca8dcdcff9fd52da7c31ba80845196a40f35f701eeadbaba1bb4e0f5edde0", size = 14267240, upload-time = "2023-12-10T07:54:43.312Z" },
 ]
 
 [[package]]

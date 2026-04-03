@@ -10,7 +10,7 @@ Uses German Credit dataset to validate:
 
 import numpy as np  # noqa: F401
 import pandas as pd
-import toad
+import pytest
 from sklearn.linear_model import LogisticRegression
 from sklearn.model_selection import train_test_split
 
@@ -18,6 +18,8 @@ from newt.features.analysis.iv_calculator import calculate_iv
 from newt.features.binning.binner import Binner
 from newt.metrics.auc import calculate_auc
 from newt.metrics.ks import calculate_ks
+
+toad = pytest.importorskip("toad")
 
 
 def load_german_data(path: str) -> pd.DataFrame:

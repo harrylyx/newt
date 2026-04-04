@@ -1,11 +1,11 @@
 from pathlib import Path
 
+import pandas as pd
 import pytest
 
-openpyxl = pytest.importorskip("openpyxl")
-import pandas as pd
-
 from newt.reporting import Report
+
+openpyxl = pytest.importorskip("openpyxl")
 
 
 def test_report_generate_creates_selected_sheets(
@@ -250,8 +250,8 @@ def test_report_formats_iv_with_four_decimals_and_places_chart_after_monthly_tab
     first_bin_block = next(
         block for block in analysis_sheet.blocks if block.title.endswith("分箱表")
     )
-    bad_rates = first_bin_block.data["bad_rate"].dropna().tolist()
-    assert bad_rates == sorted(bad_rates, reverse=True)
+    min_values = first_bin_block.data["min"].dropna().tolist()
+    assert min_values == sorted(min_values)
 
     variable_sheet = report.result_.get_sheet("变量分析")
     first_bin_title = next(
@@ -268,7 +268,7 @@ def test_report_formats_iv_with_four_decimals_and_places_chart_after_monthly_tab
     assert worksheet._charts[0].anchor._from.row + 1 > monthly_title_row
 
 
-def test_report_reorients_score_like_columns_and_records_direction(
+def test_report_records_auc_only_direction_for_score_like_columns(
     tmp_path,
     report_frame,
     fake_lightgbm_model,
@@ -294,7 +294,7 @@ def test_report_reorients_score_like_columns_and_records_direction(
         item for item in score_directions if item["分数字段"] == "score"
     )
     assert score_record["原始方向"] == "高分代表低风险"
-    assert score_record["报表计算方向"] == "已转为坏向分"
+    assert score_record["报表计算方向"] == "AUC反向，其余指标保持原始分数"
     assert score_record["原始AUC"] < 0.5
 
     overview_sheet = report.result_.get_sheet("总览")
@@ -309,6 +309,44 @@ def test_report_reorients_score_like_columns_and_records_direction(
     )
     assert score_auc
     assert min(score_auc) > 0.5
+    score_lift = (
+        paired_block.loc[paired_block["模型"] == "score", "10%lift"].dropna().tolist()
+    )
+    assert score_lift
+    assert min(score_lift) == 0.0
+
+
+def test_report_keeps_raw_score_values_in_model_binning(
+    tmp_path,
+    report_frame,
+    fake_lightgbm_model,
+):
+    output_path = tmp_path / "raw_score_bins.xlsx"
+
+    report = Report(
+        data=report_frame,
+        model=fake_lightgbm_model,
+        tag="tag",
+        score_col="score",
+        date_col="obs_date",
+        label_list=["label_main"],
+        sheet_list=["模型表现"],
+        report_out_path=str(output_path),
+    )
+
+    report.generate()
+
+    performance_sheet = report.result_.get_sheet("模型表现")
+    train_block = performance_sheet.get_block("train").data
+    finite_min = (
+        train_block["min"].replace([-float("inf"), float("inf")], pd.NA).dropna()
+    )
+    finite_max = (
+        train_block["max"].replace([-float("inf"), float("inf")], pd.NA).dropna()
+    )
+
+    assert (finite_min >= 0).all()
+    assert (finite_max >= 0).all()
 
 
 def test_report_pairs_new_old_model_comparisons_by_group(
@@ -342,7 +380,36 @@ def test_report_pairs_new_old_model_comparisons_by_group(
     assert month_compare_score["模型"].tolist() == ["score_new", "score"] * 4
 
 
-def test_report_model_binning_tables_sort_by_bad_rate_desc(
+def test_report_model_design_distribution_layout_and_tag_order(
+    tmp_path,
+    report_frame,
+    fake_lightgbm_model,
+):
+    output_path = tmp_path / "model_design.xlsx"
+
+    report = Report(
+        data=report_frame,
+        model=fake_lightgbm_model,
+        tag="tag",
+        score_col="score_new",
+        date_col="obs_date",
+        label_list=["label_main"],
+        sheet_list=["模型设计"],
+        report_out_path=str(output_path),
+    )
+
+    report.generate()
+
+    design_sheet = report.result_.get_sheet("模型设计")
+    dev_distribution = design_sheet.get_block("开发样本分布表").data
+    model_distribution = design_sheet.get_block("建模样本分布情况表").data
+
+    assert "样本集" not in dev_distribution.columns
+    assert dev_distribution["月"].tolist() == ["202401", "202402", "202403", "202404"]
+    assert model_distribution["样本集"].tolist() == ["train", "test", "oot", "oos"]
+
+
+def test_report_model_binning_tables_sort_by_bin_order(
     tmp_path,
     report_frame,
     fake_lightgbm_model,
@@ -366,5 +433,5 @@ def test_report_model_binning_tables_sort_by_bad_rate_desc(
     train_block = performance_sheet.get_block("train")
     month_block = performance_sheet.get_block("202401")
     for block in [train_block, month_block]:
-        bad_rates = block.data["bad_rate"].dropna().tolist()
-        assert bad_rates == sorted(bad_rates, reverse=True)
+        min_values = block.data["min"].dropna().tolist()
+        assert min_values == sorted(min_values)

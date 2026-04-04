@@ -1,7 +1,7 @@
+from .batch_iv import calculate_batch_iv  # noqa: F401
 from .correlation import (  # noqa: F401
     calculate_correlation_matrix,
     get_high_correlation_pairs,
 )
-from .batch_iv import calculate_batch_iv  # noqa: F401
 from .iv_calculator import calculate_iv  # noqa: F401
 from .woe_calculator import WOEEncoder  # noqa: F401

@@ -9,13 +9,14 @@ import numpy as np
 import pandas as pd
 
 from newt.features.analysis.batch_iv import calculate_batch_iv
+from newt.metrics.auc import calculate_auc
+from newt.metrics.psi import calculate_psi
 from newt.metrics.reporting import (
     assign_reference_bins,
     build_reference_quantile_bins,
     calculate_bin_performance_table,
     calculate_binary_metrics,
     calculate_feature_psi,
-    calculate_grouped_binary_metrics,
     calculate_latest_month_psi,
     calculate_portrait_means_by_score_bin,
     calculate_score_correlation_matrix,
@@ -70,6 +71,7 @@ def build_report_result(
     """Build the full report result object."""
     sheets: Dict[str, ReportSheet] = {}
     feature_dict = _load_feature_dictionary(feature_path)
+    score_metric_options = _build_score_metric_options(score_direction_summary)
     feature_cols = _determine_feature_columns(
         data,
         model_adapter,
@@ -99,6 +101,7 @@ def build_report_result(
             primary_score_name=primary_score_name,
             report_score_columns=report_score_columns,
             score_direction_summary=score_direction_summary,
+            score_metric_options=score_metric_options,
             label_list=label_list,
             score_list=score_list,
             dim_list=dim_list,
@@ -112,6 +115,9 @@ def build_report_result(
             label_list=label_list,
             score_col=primary_report_score,
             model_name=primary_score_name,
+            reverse_auc_label=_lookup_reverse_auc(
+                score_metric_options, primary_score_name
+            ),
         ),
         "变量分析": lambda: build_variable_analysis_sheet(
             data=data,
@@ -132,6 +138,9 @@ def build_report_result(
             model_name=primary_score_name,
             model_adapter=model_adapter,
             score_edges=score_edges,
+            reverse_auc_label=_lookup_reverse_auc(
+                score_metric_options, primary_score_name
+            ),
         ),
     }
 
@@ -157,6 +166,7 @@ def build_overview_sheet(
     primary_score_name: str,
     report_score_columns: Dict[str, str],
     score_direction_summary: pd.DataFrame,
+    score_metric_options: Dict[str, Dict[str, bool]],
     label_list: Sequence[str],
     score_list: Sequence[str],
     dim_list: Sequence[str],
@@ -206,6 +216,7 @@ def build_overview_sheet(
         label_list=label_list,
         score_col=primary_score_col,
         model_name=primary_score_name,
+        reverse_auc_label=_lookup_reverse_auc(score_metric_options, primary_score_name),
     )
     blocks.append(ReportBlock(title="按tag模型效果", data=tag_metrics))
     blocks.append(ReportBlock(title="按月模型效果", data=monthly_metrics))
@@ -217,6 +228,7 @@ def build_overview_sheet(
             dim_list=dim_list,
             label_list=label_list,
             score_model_columns=score_model_columns,
+            score_metric_options=score_metric_options,
         )
         blocks.append(ReportBlock(title="分维度对比模型效果", data=dim_table))
 
@@ -236,6 +248,7 @@ def build_overview_sheet(
                 model_columns=pair_models,
                 tag_col=tag_col,
                 month_col=month_col,
+                score_metric_options=score_metric_options,
             )
             month_compare = _build_model_pair_comparison(
                 data=data,
@@ -244,6 +257,7 @@ def build_overview_sheet(
                 model_columns=pair_models,
                 tag_col=tag_col,
                 month_col=month_col,
+                score_metric_options=score_metric_options,
             )
             blocks.append(
                 ReportBlock(
@@ -287,6 +301,7 @@ def build_model_design_sheet(
     label_list: Sequence[str],
     score_col: str,
     model_name: str,
+    reverse_auc_label: bool = False,
 ) -> ReportSheet:
     """Build sheet 2."""
     blocks = [
@@ -311,15 +326,19 @@ def build_model_design_sheet(
                 tag_col=tag_col,
                 month_col=month_col,
                 include_blank_channel=True,
+                include_tag=False,
             ),
         ),
     ]
 
     sample_rows = []
     for label_col in label_list:
-        for tag_value, tag_frame in data.groupby(tag_col, dropna=False):
-            metrics = calculate_binary_metrics(
-                tag_frame[label_col], tag_frame[score_col]
+        for tag_value in _ordered_tag_values(data[tag_col]):
+            tag_frame = data.loc[data[tag_col] == tag_value]
+            metrics = _calculate_report_metrics(
+                tag_frame[label_col],
+                tag_frame[score_col],
+                reverse_auc_label=reverse_auc_label,
             )
             sample_rows.append(
                 {
@@ -346,6 +365,7 @@ def build_model_design_sheet(
             tag_col=tag_col,
             month_col=month_col,
             model_name=model_name,
+            reverse_auc_label=reverse_auc_label,
         )
         for _, row in effect_table.iterrows():
             effect_rows.append(
@@ -463,6 +483,7 @@ def build_model_performance_sheet(
     model_name: str,
     model_adapter: ModelAdapter,
     score_edges: Sequence[float],
+    reverse_auc_label: bool = False,
 ) -> ReportSheet:
     """Build sheet 4."""
     blocks = [
@@ -475,6 +496,7 @@ def build_model_performance_sheet(
         label_list=label_list,
         score_col=score_col,
         model_name=model_name,
+        reverse_auc_label=reverse_auc_label,
     )
     blocks.append(ReportBlock(title="3.2 按tag模型效果", data=tag_metrics))
     blocks.append(ReportBlock(title="3.2 按月模型效果", data=month_metrics))
@@ -516,6 +538,7 @@ def _build_split_metrics_tables(
     label_list: Sequence[str],
     score_col: str,
     model_name: str,
+    reverse_auc_label: bool = False,
 ) -> Tuple[pd.DataFrame, pd.DataFrame]:
     tag_rows: List[pd.DataFrame] = []
     month_rows: List[pd.DataFrame] = []
@@ -537,6 +560,7 @@ def _build_split_metrics_tables(
             month_col=month_col,
             train_reference=train_reference,
             model_name=model_name,
+            reverse_auc_label=reverse_auc_label,
         )
         tag_rows.append(tag_table)
 
@@ -549,6 +573,7 @@ def _build_split_metrics_tables(
             month_col=month_col,
             train_reference=train_reference,
             model_name=model_name,
+            reverse_auc_label=reverse_auc_label,
         )
         if not month_table.empty:
             month_table["近期月对比各集合PSI"] = month_table["观察点月"].map(
@@ -576,6 +601,7 @@ def _build_model_pair_comparison(
     model_columns: Sequence[Tuple[str, str]],
     tag_col: str,
     month_col: str,
+    score_metric_options: Dict[str, Dict[str, bool]],
 ) -> pd.DataFrame:
     if group_mode not in {"tag", "month"}:
         raise ValueError(f"Unknown comparison mode: {group_mode}")
@@ -604,6 +630,7 @@ def _build_model_pair_comparison(
                 month_col=month_col,
                 train_reference=train_reference,
                 model_name=model_name,
+                reverse_auc_label=_lookup_reverse_auc(score_metric_options, model_name),
             )
             if group_mode == "month":
                 table["近期月对比各集合PSI"] = table["观察点月"].map(
@@ -632,18 +659,78 @@ def _build_group_metrics(
     train_reference: Optional[pd.Series] = None,
     latest_month_psi: Optional[pd.DataFrame] = None,
     model_name: str = "",
+    reverse_auc_label: bool = False,
 ) -> pd.DataFrame:
-    return calculate_grouped_binary_metrics(
-        data=data,
-        group_cols=group_cols,
-        label_col=label_col,
-        score_col=score_col,
-        tag_col=tag_col,
-        month_col=month_col,
-        train_reference=train_reference,
-        latest_month_psi=latest_month_psi,
-        model_name=model_name,
+    records: List[Dict[str, object]] = []
+    ordered = data.sort_values(list(group_cols))
+
+    for group_values, group_frame in ordered.groupby(list(group_cols), dropna=False):
+        if not isinstance(group_values, tuple):
+            group_values = (group_values,)
+        group_dict = dict(zip(group_cols, group_values))
+        metrics = _calculate_report_metrics(
+            group_frame[label_col],
+            group_frame[score_col],
+            reverse_auc_label=reverse_auc_label,
+        )
+        record: Dict[str, object] = {
+            "样本标签": label_col,
+            "模型": model_name or score_col,
+            "样本集": group_dict.get(tag_col, "") if tag_col else "",
+            "观察点月": group_dict.get(month_col, "") if month_col else "",
+            **metrics,
+        }
+
+        binary_scores = group_frame.loc[group_frame[label_col].isin([0, 1]), score_col]
+        if train_reference is None:
+            record["train和各集合的PSI"] = np.nan
+        else:
+            record["train和各集合的PSI"] = float(
+                calculate_psi(train_reference, binary_scores)
+            )
+
+        latest_value = np.nan
+        if latest_month_psi is not None and tag_col and month_col:
+            matched = latest_month_psi.loc[
+                (latest_month_psi[tag_col] == record["样本集"])
+                & (latest_month_psi[month_col] == record["观察点月"])
+            ]
+            if not matched.empty:
+                latest_value = matched["latest_month_psi"].iloc[0]
+        record["近期月对比各集合PSI"] = latest_value
+        records.append(record)
+
+    return _sort_report_table(
+        pd.DataFrame(records), tag_column="样本集", month_column="观察点月"
     )
+
+
+def _calculate_report_metrics(
+    y_true: pd.Series,
+    y_score: pd.Series,
+    reverse_auc_label: bool = False,
+) -> Dict[str, float]:
+    metrics = calculate_binary_metrics(y_true, y_score)
+    if reverse_auc_label:
+        metrics["AUC"] = _calculate_report_auc(y_true, y_score, reverse_auc_label=True)
+    return metrics
+
+
+def _calculate_report_auc(
+    y_true: pd.Series,
+    y_score: pd.Series,
+    reverse_auc_label: bool = False,
+) -> float:
+    mask = y_true.isin([0, 1]) & pd.notna(y_score)
+    y_clean = y_true.loc[mask].astype(int)
+    score_clean = pd.to_numeric(y_score.loc[mask], errors="coerce")
+    valid = pd.notna(score_clean)
+    y_clean = y_clean.loc[valid]
+    score_clean = score_clean.loc[valid]
+    if len(y_clean) == 0 or y_clean.nunique() < 2:
+        return np.nan
+    auc_target = 1 - y_clean if reverse_auc_label else y_clean
+    return float(calculate_auc(auc_target, score_clean))
 
 
 def _build_latest_month_psi_map(
@@ -712,15 +799,19 @@ def _build_dimensional_comparison(
     dim_list: Sequence[str],
     label_list: Sequence[str],
     score_model_columns: Sequence[Tuple[str, str]],
+    score_metric_options: Dict[str, Dict[str, bool]],
 ) -> pd.DataFrame:
     rows: List[Dict[str, object]] = []
     for dim_col in dim_list:
         for dim_value, dim_frame in data.groupby(dim_col, dropna=False):
             for label_col in label_list:
                 for model_name, score_col in score_model_columns:
-                    metrics = calculate_binary_metrics(
+                    metrics = _calculate_report_metrics(
                         dim_frame[label_col],
                         dim_frame[score_col],
+                        reverse_auc_label=_lookup_reverse_auc(
+                            score_metric_options, model_name
+                        ),
                     )
                     rows.append(
                         {
@@ -897,11 +988,10 @@ def _build_feature_bin_stats(
     grouped["max"] = grouped["bin"].apply(_interval_right)
     grouped = grouped.assign(
         _missing_order=grouped["bin"].astype(str).eq("Missing").astype(int),
-        _bad_rate_order=grouped["bad_rate"].fillna(-np.inf),
         _bin_order=grouped["min"].map(_interval_sort_key),
     ).sort_values(
-        ["_missing_order", "_bad_rate_order", "_bin_order"],
-        ascending=[True, False, True],
+        ["_missing_order", "_bin_order"],
+        ascending=[True, True],
         kind="mergesort",
     )
     grouped["cum_bads_prop"] = grouped["bads"].cumsum() / max(grouped["bads"].sum(), 1)
@@ -1043,6 +1133,32 @@ def _determine_feature_columns(
         for column in data.columns
         if column not in excluded_set and pd.api.types.is_numeric_dtype(data[column])
     ]
+
+
+def _build_score_metric_options(
+    score_direction_summary: pd.DataFrame,
+) -> Dict[str, Dict[str, bool]]:
+    if (
+        score_direction_summary.empty
+        or "分数字段" not in score_direction_summary.columns
+    ):
+        return {}
+
+    options: Dict[str, Dict[str, bool]] = {}
+    for _, row in score_direction_summary.iterrows():
+        options[str(row["分数字段"])] = {
+            "reverse_auc_label": bool(row.get("AUC反向", False)),
+        }
+    return options
+
+
+def _lookup_reverse_auc(
+    score_metric_options: Dict[str, Dict[str, bool]],
+    score_name: str,
+) -> bool:
+    return bool(
+        score_metric_options.get(str(score_name), {}).get("reverse_auc_label", False)
+    )
 
 
 def _sort_report_table(

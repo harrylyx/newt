@@ -5,7 +5,6 @@ import pandas as pd
 
 from newt.config import BINNING
 
-
 NAN_STRATEGIES = frozenset(["separate", "exclude"])
 
 

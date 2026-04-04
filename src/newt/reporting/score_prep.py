@@ -32,20 +32,20 @@ def prepare_report_scores(
             label_col=label_col,
             score=numeric,
         )
-        reverse_score = (
+        reverse_auc = (
             "score" in str(score_name).lower() and pd.notna(raw_auc) and raw_auc < 0.5
         )
-        if reverse_score:
-            prepared[report_column] = -numeric
 
         rows.append(
             {
                 "分数字段": score_name,
                 "原始AUC": raw_auc,
                 "原始方向": _original_direction(score_name, raw_auc),
-                "报表计算方向": "已转为坏向分" if reverse_score else "保持坏向分",
+                "报表计算方向": _report_direction(score_name, reverse_auc),
+                "AUC反向": reverse_auc,
+                "保留原始分数": True,
                 "判断依据": _build_reason(
-                    score_name, raw_auc, source_name, reverse_score
+                    score_name, raw_auc, source_name, reverse_auc
                 ),
             }
         )
@@ -102,7 +102,7 @@ def _build_reason(
     score_name: str,
     raw_auc: float,
     source_name: str,
-    reverse_score: bool,
+    reverse_auc: bool,
 ) -> str:
     if "score" not in str(score_name).lower():
         return "列名不包含score，未做方向判断"
@@ -110,8 +110,17 @@ def _build_reason(
         return "无可用二分类样本，未做方向判断"
 
     source_text = "train样本" if source_name == "train" else "全量二分类样本"
-    operator = "<" if reverse_score else ">="
-    return f"{source_text}原始AUC={raw_auc:.4f} {operator} 0.5000"
+    operator = "<" if reverse_auc else ">="
+    suffix = "，报表仅反向计算AUC" if reverse_auc else "，报表保持原始口径"
+    return f"{source_text}原始AUC={raw_auc:.4f} {operator} 0.5000{suffix}"
+
+
+def _report_direction(score_name: str, reverse_auc: bool) -> str:
+    if "score" not in str(score_name).lower():
+        return "保持原始分数"
+    if reverse_auc:
+        return "AUC反向，其余指标保持原始分数"
+    return "保持原始分数"
 
 
 def _dedupe(values: Sequence[str]) -> List[str]:

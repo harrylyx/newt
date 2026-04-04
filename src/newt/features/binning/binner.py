@@ -41,7 +41,7 @@ class BinningResult:
     def plot(
         self,
         x: str = "bin",
-        y: Union[str, List[str]] = ["bad_prop"],
+        y: Optional[Union[str, List[str]]] = None,
         secondary_y: Optional[Union[str, List[str]]] = "bad_rate",
         **kwargs,
     ):
@@ -59,8 +59,11 @@ class BinningResult:
         **kwargs :
             Arguments passed to plot_binning_result.
         """
-        from newt.visualization.binning_viz import plot_binning_result
+        if y is None:
+            y = ["bad_prop"]
+
         from newt.results import BinningPlotData
+        from newt.visualization.binning_viz import plot_binning_result
 
         return plot_binning_result(
             binner=BinningPlotData.from_binner(self._binner, self._feature),
@@ -187,7 +190,7 @@ class Binner(BinnerStatsMixin, BinnerIOMixin, BinnerWOEMixin):
 
         for col in numeric_cols:
             binner_cls = self.method_map.get(method)
-            if not binner_cls:
+            if binner_cls is None:
                 raise ValueError(f"Unknown method: {method}")
 
             kwargs_binner = {"n_bins": n_bins, "monotonic": monotonic}
@@ -330,7 +333,7 @@ class Binner(BinnerStatsMixin, BinnerIOMixin, BinnerWOEMixin):
             Proxy object with stats and plot methods.
         """
         if feature not in self.binners_:
-            raise KeyError(f"Feature '{feature}' not found in binner.")
+            raise KeyError(f"Feature '{feature}' is missing from binner.")
 
         return BinningResult(self, feature)
 

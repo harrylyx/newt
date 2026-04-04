@@ -147,7 +147,8 @@ def calculate_grouped_binary_metrics(
             group_values = (group_values,)
         group_dict = dict(zip(group_cols, group_values))
         metrics = calculate_binary_metrics(
-            group_frame[label_col], group_frame[score_col]
+            group_frame[label_col],
+            group_frame[score_col],
         )
         record: Dict[str, object] = {
             "样本标签": label_col,
@@ -188,11 +189,15 @@ def summarize_label_distribution(
     month_col: str,
     channel_col: Optional[str] = None,
     include_blank_channel: bool = False,
+    include_tag: bool = True,
 ) -> pd.DataFrame:
     """Summarize grey/good/bad counts for sheet 2."""
-    group_cols = [tag_col, month_col]
+    group_cols: List[str] = []
+    if include_tag:
+        group_cols.append(tag_col)
     if channel_col and channel_col in data.columns:
-        group_cols.insert(1, channel_col)
+        group_cols.append(channel_col)
+    group_cols.append(month_col)
 
     rows: List[Dict[str, object]] = []
     for group_values, group_frame in data.groupby(group_cols, dropna=False):
@@ -210,20 +215,24 @@ def summarize_label_distribution(
         )
         if include_blank_channel and not channel_value:
             channel_value = ""
-        rows.append(
-            {
-                "样本集": group_map.get(tag_col, ""),
-                "渠道": channel_value,
-                "月": group_map.get(month_col, ""),
-                "标签": label_col,
-                "好": good,
-                "坏": bad,
-                "灰": grey,
-                "总数（去掉灰样本）": total,
-                "坏占比（去掉灰样本）": float(bad / total) if total else np.nan,
-            }
-        )
-    return _sort_report_frame(pd.DataFrame(rows), tag_column="样本集", month_column="月")
+        row = {
+            "渠道": channel_value,
+            "月": group_map.get(month_col, ""),
+            "标签": label_col,
+            "好": good,
+            "坏": bad,
+            "灰": grey,
+            "总数（去掉灰样本）": total,
+            "坏占比（去掉灰样本）": float(bad / total) if total else np.nan,
+        }
+        if include_tag:
+            row = {"样本集": group_map.get(tag_col, ""), **row}
+        rows.append(row)
+    return _sort_report_frame(
+        pd.DataFrame(rows),
+        tag_column="样本集" if include_tag else None,
+        month_column="月",
+    )
 
 
 def calculate_score_correlation_matrix(
@@ -308,11 +317,10 @@ def calculate_bin_performance_table(
         return result
     result = result.assign(
         _missing_order=result["bin"].eq("Missing").astype(int),
-        _bad_rate_order=result["bad_rate"].fillna(-np.inf),
         _bin_order=result["min"].map(_bin_sort_key),
     ).sort_values(
-        ["_missing_order", "_bad_rate_order", "_bin_order"],
-        ascending=[True, False, True],
+        ["_missing_order", "_bin_order"],
+        ascending=[True, True],
         kind="mergesort",
     )
     result["cum_bads"] = result["bads"].cumsum()
@@ -330,7 +338,6 @@ def calculate_bin_performance_table(
     return result.drop(
         columns=[
             "_missing_order",
-            "_bad_rate_order",
             "_bin_order",
             "cum_bads",
             "cum_total",

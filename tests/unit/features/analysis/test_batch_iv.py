@@ -17,7 +17,9 @@ def test_calculate_batch_iv_rust_matches_python():
     rust_result = calculate_batch_iv(data, y, engine="rust", bins=4)
     python_result = calculate_batch_iv(data, y, engine="python", bins=4)
 
-    merged = rust_result.merge(python_result, on="feature", suffixes=("_rust", "_python"))
+    merged = rust_result.merge(
+        python_result, on="feature", suffixes=("_rust", "_python")
+    )
 
     assert np.allclose(merged["iv_rust"], merged["iv_python"], atol=1e-6)
 

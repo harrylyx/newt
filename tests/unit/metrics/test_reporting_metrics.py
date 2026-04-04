@@ -32,9 +32,9 @@ def test_calculate_latest_month_psi_uses_latest_month_as_base():
     )
 
     jan_psi = psi_table.loc[psi_table["month"] == "202401", "latest_month_psi"].iloc[0]
-    latest_psi = psi_table.loc[
-        psi_table["month"] == "202403", "latest_month_psi"
-    ].iloc[0]
+    latest_psi = psi_table.loc[psi_table["month"] == "202403", "latest_month_psi"].iloc[
+        0
+    ]
 
     assert np.isclose(jan_psi, jan_expected)
     assert latest_psi == 0.0
@@ -76,7 +76,7 @@ def test_summarize_label_distribution_counts_grey_good_bad(report_frame):
     assert first_row["灰"] >= 0
 
 
-def test_calculate_bin_performance_table_sorts_by_bad_rate_desc_and_recomputes_cumulative():
+def test_calculate_bin_performance_table_sorts_by_bin_order_and_recomputes_cumulative():
     data = pd.DataFrame(
         {
             "label": [0, 1, 0, 0, 1, 1],
@@ -92,7 +92,8 @@ def test_calculate_bin_performance_table_sorts_by_bad_rate_desc_and_recomputes_c
         edges=edges,
     )
 
-    assert table["bad_rate"].tolist() == sorted(table["bad_rate"].tolist(), reverse=True)
-    assert np.isclose(table.iloc[0]["cum_bad_rate"], 1.0)
-    assert np.isclose(table.iloc[0]["cum_bads_prop"], 2 / 3)
-    assert np.isclose(table.iloc[1]["cum_bads_prop"], 1.0)
+    assert table["min"].tolist() == [-np.inf, 0.2, 0.5]
+    assert np.isclose(table.iloc[0]["cum_bad_rate"], 0.5)
+    assert np.isclose(table.iloc[0]["cum_bads_prop"], 1 / 3)
+    assert np.isclose(table.iloc[1]["cum_bads_prop"], 1 / 3)
+    assert np.isclose(table.iloc[2]["cum_bads_prop"], 1.0)

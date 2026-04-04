@@ -42,7 +42,9 @@ class ModelAdapter:
         if self.model_family == "lightgbm":
             booster = self._get_lightgbm_booster()
             features = self.get_feature_names()
-            gain = np.asarray(booster.feature_importance(importance_type="gain"), dtype=float)
+            gain = np.asarray(
+                booster.feature_importance(importance_type="gain"), dtype=float
+            )
             weight = np.asarray(
                 booster.feature_importance(importance_type="split"),
                 dtype=float,
@@ -51,13 +53,23 @@ class ModelAdapter:
             booster = self._get_xgboost_booster()
             gain_map = booster.get_score(importance_type="gain")
             weight_map = booster.get_score(importance_type="weight")
-            features = sorted(set(gain_map) | set(weight_map) | set(self.get_feature_names()))
-            gain = np.asarray([float(gain_map.get(feature, 0.0)) for feature in features])
-            weight = np.asarray([float(weight_map.get(feature, 0.0)) for feature in features])
+            features = sorted(
+                set(gain_map) | set(weight_map) | set(self.get_feature_names())
+            )
+            gain = np.asarray(
+                [float(gain_map.get(feature, 0.0)) for feature in features]
+            )
+            weight = np.asarray(
+                [float(weight_map.get(feature, 0.0)) for feature in features]
+            )
         else:
             features = self.get_feature_names()
             raw = np.asarray(
-                getattr(self.model, "feature_importances_", np.zeros(len(features), dtype=float)),
+                getattr(
+                    self.model,
+                    "feature_importances_",
+                    np.zeros(len(features), dtype=float),
+                ),
                 dtype=float,
             )
             if not features:
@@ -76,7 +88,9 @@ class ModelAdapter:
                 "weight_per": weight / weight_total if weight_total else 0.0,
             }
         )
-        return table.sort_values(["gain", "weight"], ascending=False).reset_index(drop=True)
+        return table.sort_values(["gain", "weight"], ascending=False).reset_index(
+            drop=True
+        )
 
     def get_param_table(self) -> pd.DataFrame:
         """Return a parameter table for the report."""
@@ -98,7 +112,9 @@ class ModelAdapter:
             return "lightgbm"
         if "xgboost" in module_name or "xgb" in class_name:
             return "xgboost"
-        if hasattr(self.model, "booster_") and hasattr(self.model.booster_, "feature_importance"):
+        if hasattr(self.model, "booster_") and hasattr(
+            self.model.booster_, "feature_importance"
+        ):
             return "lightgbm"
         if hasattr(self.model, "get_booster"):
             return "xgboost"

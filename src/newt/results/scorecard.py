@@ -135,8 +135,7 @@ class ScorecardSpec:
                 for feature, score_spec in self.feature_scores.items()
             },
             "binning_rules": {
-                feature: rule.to_dict()
-                for feature, rule in self.binning_rules.items()
+                feature: rule.to_dict() for feature, rule in self.binning_rules.items()
             },
         }
 

@@ -278,7 +278,7 @@ class OptBinningBinner(BaseBinner):
             raise ImportError(
                 "optbinning is not installed. "
                 "Install the optional dependency with "
-                "`pip install \"newt[optbinning]\"`."
+                '`pip install "newt[optbinning]"`.'
             )
 
         if y is None:

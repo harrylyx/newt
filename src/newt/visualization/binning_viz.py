@@ -38,7 +38,7 @@ def _normalize_columns(
     normalized = [columns] if isinstance(columns, str) else list(columns)
     missing = [column for column in normalized if column not in stats.columns]
     if missing:
-        raise ValueError(f"Columns not found in binning stats: {missing}")
+        raise ValueError(f"Columns missing from binning stats: {missing}")
     return normalized
 
 
@@ -272,7 +272,7 @@ def plot_iv_ranking(
         ax.text(
             bar.get_width() + 0.002,
             bar.get_y() + bar.get_height() / 2,
-            f"{iv:.4f}",
+            "{:.4f}".format(iv),
             va="center",
             fontsize=9,
         )
@@ -340,9 +340,7 @@ def plot_woe_pattern(
     ax.set_xlabel("Bin")
     ax.set_ylabel("WOE")
     ax.set_xticks(x_pos)
-    ax.set_xticklabels(
-        [str(b)[:15] for b in summary["bin"]], rotation=45, ha="right"
-    )
+    ax.set_xticklabels([str(b)[:15] for b in summary["bin"]], rotation=45, ha="right")
 
     # Add IV annotation
     iv = woe_encoder.iv_ if hasattr(woe_encoder, "iv_") else None
@@ -350,7 +348,7 @@ def plot_woe_pattern(
         ax.text(
             0.02,
             0.98,
-            f"IV = {iv:.4f}",
+            "IV = {:.4f}".format(iv),
             transform=ax.transAxes,
             fontsize=12,
             verticalalignment="top",

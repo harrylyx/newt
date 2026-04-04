@@ -29,6 +29,12 @@ jobs:
       - name: Install cibuildwheel
         run: python -m pip install cibuildwheel
 
+      - name: Set up QEMU for Linux aarch64 wheels
+        if: runner.os == 'Linux'
+        uses: docker/setup-qemu-action@v3
+        with:
+          platforms: arm64
+
       - name: Pre-pull Linux wheel images
         if: runner.os == 'Linux'
         run: |

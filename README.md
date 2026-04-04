@@ -14,6 +14,17 @@ A lightweight Python toolkit for efficient feature analysis and statistical diag
 - **Visualization Tools**: Binning plots, IV ranking, WOE patterns, PSI comparison
 - **Excel Model Report**: Multi-sheet model report generation with overview, model design, variable analysis, and model performance output
 
+## Recent Changes
+
+- `v0.1.4`: Linux wheels now build on native `x86_64` and native `aarch64` runners (no Linux QEMU emulation path).
+- `v0.1.2-v0.1.3`: Reporting and release workflow stability fixes.
+- `v0.1.1`: IV defaults to Rust, with toad-aligned IV smoothing across Rust and Python engines.
+
+See full notes:
+
+- [Recent Release Notes (English)](docs/release_notes.md)
+- [最近版本更新说明 (中文)](docs/release_notes_zh.md)
+
 ## Installation
 
 Newt supports Python `>=3.8.5,<3.13` (Python `3.8.5` through `3.12.x`).
@@ -49,6 +60,8 @@ Install the optional optimal binning stack only when you need `method='opt'`:
 ```bash
 pip install "newt[optbinning]"
 ```
+
+`optbinning` extras are available on Python `<3.12`. The Newt core package still supports Python `3.8.5` through `3.12.x`.
 
 ### Default Local Environments
 
@@ -301,6 +314,8 @@ fig = plot_psi_comparison(psi_dict, threshold=0.25)
 
 - [User Guide (English)](docs/user_guide.md) - Comprehensive end-to-end workflow guide
 - [用户指南 (中文)](docs/user_guide_zh.md) - Chinese version of the user guide
+- [Recent Release Notes (English)](docs/release_notes.md) - Summary of `v0.1.1` to `v0.1.4`
+- [最近版本更新说明 (中文)](docs/release_notes_zh.md) - `v0.1.1` 到 `v0.1.4` 版本汇总
 - [Benchmark Guide](docs/benchmarks/metric_vs_toad.md) - Compare Newt metrics against toad on the bundled sample dataset
 - [Examples](examples/) - Jupyter notebook examples
 

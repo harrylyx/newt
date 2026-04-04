@@ -4,6 +4,11 @@ This guide covers the end-to-end workflow for credit scorecard development using
 
 The project supports Python `>=3.8.5,<3.13` (Python `3.8.5` through `3.12.x`).
 
+For recent production changes, see:
+
+- [Recent Release Notes (English)](release_notes.md)
+- [最近版本更新说明 (中文)](release_notes_zh.md)
+
 ## Installation
 
 ### From PyPI
@@ -53,6 +58,19 @@ batch_py = calculate_batch_iv(X, y, engine="python")
 If the Rust extension is not available (e.g. source install without Rust
 toolchain), requesting `engine="rust"` raises a clear `ImportError` with
 instructions. The Python fallback is always available via `engine="python"`.
+
+### Optional `opt` Method Dependency Scope
+
+The optional `opt` binning stack (`newt[optbinning]`) is available on Python
+`<3.12` because of upstream dependency limits. This does not change Newt core
+support (`3.8.5` through `3.12.x`).
+
+### Default Local Runtime Split
+
+When working inside this repository, keep environments split by purpose:
+
+- `.venv` (Python `3.8.5`) for development, tests, linting, and package edits.
+- `.venv-benchmark-3.10` (Python `3.10.19`) for `newt-benchmark` and `toad`.
 
 ## Table of Contents
 

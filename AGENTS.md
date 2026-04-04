@@ -16,6 +16,7 @@ Newt is a lightweight Python toolkit for efficient feature analysis and statisti
   - Pipeline-style workflow
   - Visualization tools (binning plots, IV ranking, WOE patterns, PSI comparison)
   - Excel model report generation (`Report`)
+  - Rust-first IV calculation for both single-feature and batch paths
 
 ## 2. Development Environment
 
@@ -126,7 +127,11 @@ newt/
 │   └── conftest.py              # Shared fixtures
 ├── docs/                         # Documentation
 │   ├── user_guide.md           # English user guide
-│   └── user_guide_zh.md        # Chinese user guide
+│   ├── user_guide_zh.md        # Chinese user guide
+│   ├── release_notes.md        # Recent release notes (English)
+│   ├── release_notes_zh.md     # Recent release notes (Chinese)
+│   └── benchmarks/
+│       └── metric_vs_toad.md   # Benchmark guide and parity notes
 ├── examples/                      # Example notebooks
 │   ├── 01-basic-usage.ipynb
 │   ├── 02-advanced-analysis.ipynb
@@ -135,7 +140,7 @@ newt/
 │       ├── statlog+german+credit+data/
 │       └── test_data/          # Sample report dataset/model
 ├── rust/
-│   └── newt_iv_rust/           # Rust extension for batch IV
+│   └── newt_iv_rust/           # Rust extension for single + batch IV
 ├── pyproject.toml                # maturin/PEP 621 configuration
 ├── README.md                     # Package README
 └── AGENTS.md                    # This file
@@ -457,15 +462,30 @@ uv run pre-commit run --all-files
 
 - `.github/workflows/build-wheels.yml`:
   - Builds multi-platform wheels using `cibuildwheel`
-  - Targets macOS arm64, Windows x86_64, Linux x86_64/arm64
-  - Builds wheels for CPython `cp38` through `cp312`
+  - Uses separate native Linux jobs:
+    - `ubuntu-latest` for Linux `x86_64`
+    - `ubuntu-24.04-arm` for Linux `aarch64`
+  - Targets macOS arm64 and Windows AMD64
+  - Builds wheels for CPython `cp38` through `cp312` only
+  - Does not use QEMU emulation in the current baseline
   - Runs installed-wheel smoke tests
 
 - `.github/workflows/release.yml`:
   - Runs on GitHub release creation
-  - Builds all platform wheels and source distribution
+  - Rebuilds all platform wheels and source distribution
   - Uploads artifacts to GitHub Releases
   - PyPI publishing deferred to later phase
+
+### 8.1 Release Baseline (Current)
+
+- Current package line: `v0.1.4`
+- Python compatibility contract: `>=3.8.5,<3.13`
+- Wheel build matrix: `cp38`, `cp39`, `cp310`, `cp311`, `cp312`
+- Release flow:
+  1. Update version files (`pyproject.toml`, `src/newt/__init__.py`, `uv.lock`)
+  2. Commit to `main`
+  3. Create and push tag (`vX.Y.Z`)
+  4. Create GitHub Release from the tag
 
 ## 9. Key Design Patterns
 
@@ -578,8 +598,10 @@ fig = plot_woe_pattern(woe_encoder['age'], 'age')
 When adding new features:
 1. Update `docs/user_guide.md` (English)
 2. Update `docs/user_guide_zh.md` (Chinese)
-3. Update `README.md` if API changes
-4. Add example in `examples/` notebooks if applicable
+3. Update `docs/release_notes.md` and `docs/release_notes_zh.md` if behavior or release process changed
+4. Update `docs/benchmarks/metric_vs_toad.md` if benchmark policy or runtime environment changed
+5. Update `README.md` if API or operational baseline changed
+6. Add example in `examples/` notebooks if applicable
 
 ## 11. Dependencies
 

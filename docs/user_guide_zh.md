@@ -4,6 +4,11 @@
 
 当前项目支持 Python `>=3.8.5,<3.13`（即 Python `3.8.5` 到 `3.12.x`）。
 
+近期线上版本变更可参考：
+
+- [Recent Release Notes (English)](release_notes.md)
+- [最近版本更新说明 (中文)](release_notes_zh.md)
+
 ## 安装
 
 ### 从 PyPI 安装
@@ -48,6 +53,18 @@ batch_py = calculate_batch_iv(X, y, engine="python")
 ```
 
 如果 Rust 扩展不可用（例如从源码安装且没有 Rust 工具链），请求 `engine="rust"` 会抛出明确的 `ImportError` 并附带安装指引。Python 回退实现始终可通过 `engine="python"` 使用。
+
+### `opt` 方法的可选依赖范围
+
+`newt[optbinning]` 这组可选依赖目前仅适用于 Python `<3.12`（受上游依赖限制）。
+这不影响 Newt 核心包的支持范围，核心仍支持 Python `3.8.5` 到 `3.12.x`。
+
+### 仓库内默认环境分工
+
+在本仓库开发时，建议按用途固定两个环境：
+
+- `.venv`（Python `3.8.5`）：开发、测试、lint、打包修改。
+- `.venv-benchmark-3.10`（Python `3.10.19`）：运行 `newt-benchmark` 和 `toad` 对齐验证。
 
 ## 目录
 

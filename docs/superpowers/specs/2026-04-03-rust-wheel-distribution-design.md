@@ -21,7 +21,6 @@ After a user installs Newt from an official release artifact, Rust-backed IV cal
 
 The release pipeline will produce wheels for the following targets:
 
-- `macOS x86_64`
 - `macOS arm64`
 - `Windows x86_64`
 - `Linux x86_64`

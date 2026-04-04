@@ -38,7 +38,7 @@ def test_report_generate_creates_selected_sheets(
     workbook = openpyxl.load_workbook(generated)
     assert workbook.sheetnames == ["总览", "模型表现"]
     assert workbook["总览"]["A1"].value == "一、目标与设计方案"
-    assert workbook["模型表现"]["A1"].value == "3.1 建模方法选择"
+    assert workbook["模型表现"]["A1"].value == "一、建模方法选择"
 
 
 def test_report_overview_metrics_expand_all_labels(
@@ -144,9 +144,9 @@ def test_report_sorts_month_sections_and_splits_model_binning_tables(
 
     performance_sheet = report.result_.get_sheet("模型表现")
     block_titles = [block.title for block in performance_sheet.blocks]
-    assert "3.2 按tag模型效果" in block_titles
-    assert "3.2 按月模型效果" in block_titles
-    split_index = block_titles.index("3.3 模型分箱表现")
+    assert "二、按tag模型效果" in block_titles
+    assert "三、按月模型效果" in block_titles
+    split_index = block_titles.index("四、模型分箱表现")
     bin_blocks = performance_sheet.blocks[split_index + 1 :]
 
     assert [block.title for block in bin_blocks[:4]] == ["train", "test", "oot", "oos"]
@@ -186,7 +186,7 @@ def test_report_formats_iv_with_four_decimals_and_places_chart_after_monthly_tab
     workbook = openpyxl.load_workbook(generated)
     worksheet = workbook["变量分析"]
     analysis_sheet = report.result_.get_sheet("变量分析")
-    analysis_block = analysis_sheet.get_block("2. 变量分析")
+    analysis_block = analysis_sheet.get_block("二、变量分析")
 
     analysis_header_row = next(
         row[0].row
@@ -290,30 +290,24 @@ def test_report_records_auc_only_direction_for_score_like_columns(
     report.generate()
 
     score_directions = report.result_.metadata["score_directions"]
-    score_record = next(
-        item for item in score_directions if item["分数字段"] == "score"
-    )
+    score_record = next(item for item in score_directions if item["分数字段"] == "score")
     assert score_record["原始方向"] == "高分代表低风险"
-    assert score_record["报表计算方向"] == "AUC反向，其余指标保持原始分数"
+    assert score_record["报表计算方向"] == "AUC和Lift按风险方向，其余指标保持原始分数"
     assert score_record["原始AUC"] < 0.5
 
     overview_sheet = report.result_.get_sheet("总览")
     direction_block = overview_sheet.get_block("分数字段方向说明")
-    assert {"分数字段", "原始方向", "报表计算方向", "判断依据"}.issubset(
-        direction_block.data.columns
-    )
+    assert {"分数字段", "原始方向", "报表计算方向", "判断依据"}.issubset(direction_block.data.columns)
 
     paired_block = overview_sheet.get_block("按tag新老模型对比(score)").data
-    score_auc = (
-        paired_block.loc[paired_block["模型"] == "score", "AUC"].dropna().tolist()
-    )
+    score_auc = paired_block.loc[paired_block["模型"] == "score", "AUC"].dropna().tolist()
     assert score_auc
     assert min(score_auc) > 0.5
     score_lift = (
         paired_block.loc[paired_block["模型"] == "score", "10%lift"].dropna().tolist()
     )
     assert score_lift
-    assert min(score_lift) == 0.0
+    assert min(score_lift) > 0.0
 
 
 def test_report_keeps_raw_score_values_in_model_binning(
@@ -401,10 +395,13 @@ def test_report_model_design_distribution_layout_and_tag_order(
     report.generate()
 
     design_sheet = report.result_.get_sheet("模型设计")
+    raw_distribution = design_sheet.get_block("原始样本分布表").data
     dev_distribution = design_sheet.get_block("开发样本分布表").data
     model_distribution = design_sheet.get_block("建模样本分布情况表").data
 
+    assert "样本集" not in raw_distribution.columns
     assert "样本集" not in dev_distribution.columns
+    assert raw_distribution["月"].tolist() == ["202401", "202402", "202403", "202404"]
     assert dev_distribution["月"].tolist() == ["202401", "202402", "202403", "202404"]
     assert model_distribution["样本集"].tolist() == ["train", "test", "oot", "oos"]
 

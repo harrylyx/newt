@@ -44,9 +44,7 @@ def prepare_report_scores(
                 "报表计算方向": _report_direction(score_name, reverse_auc),
                 "AUC反向": reverse_auc,
                 "保留原始分数": True,
-                "判断依据": _build_reason(
-                    score_name, raw_auc, source_name, reverse_auc
-                ),
+                "判断依据": _build_reason(score_name, raw_auc, source_name, reverse_auc),
             }
         )
         score_columns[score_name] = report_column
@@ -111,7 +109,7 @@ def _build_reason(
 
     source_text = "train样本" if source_name == "train" else "全量二分类样本"
     operator = "<" if reverse_auc else ">="
-    suffix = "，报表仅反向计算AUC" if reverse_auc else "，报表保持原始口径"
+    suffix = "，报表按风险方向计算AUC和Lift，其余指标保持原始口径" if reverse_auc else "，报表保持原始口径"
     return f"{source_text}原始AUC={raw_auc:.4f} {operator} 0.5000{suffix}"
 
 
@@ -119,7 +117,7 @@ def _report_direction(score_name: str, reverse_auc: bool) -> str:
     if "score" not in str(score_name).lower():
         return "保持原始分数"
     if reverse_auc:
-        return "AUC反向，其余指标保持原始分数"
+        return "AUC和Lift按风险方向，其余指标保持原始分数"
     return "保持原始分数"
 
 

@@ -4,8 +4,8 @@ import pandas as pd
 
 from newt import Report
 
-df = pd.read_parquet("./examples/data/test_data/data.pq")
-model = pickle.load(open("./examples/data/test_data/model.pkl", "rb"))
+df = pd.read_parquet("./examples/data/test_data/all_data.pq")
+model = pickle.load(open("./examples/data/test_data/all_model.pkl", "rb"))
 
 report = Report(
     data=df,

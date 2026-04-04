@@ -56,8 +56,15 @@ def assign_reference_bins(values: pd.Series, edges: Sequence[float]) -> pd.Serie
 def calculate_binary_metrics(
     y_true: pd.Series,
     y_score: pd.Series,
+    lift_use_descending_score: bool = True,
 ) -> Dict[str, float]:
-    """Calculate summary metrics for a binary label/score pair."""
+    """Calculate summary metrics for a binary label/score pair.
+
+    Args:
+        y_true: Binary labels.
+        y_score: Numeric score/probability.
+        lift_use_descending_score: Whether lift top-k uses higher score as higher risk.
+    """
     mask = y_true.isin([0, 1]) & pd.notna(y_score)
     y_clean = y_true.loc[mask].astype(int)
     score_clean = pd.to_numeric(y_score.loc[mask], errors="coerce")
@@ -75,6 +82,7 @@ def calculate_binary_metrics(
         metrics = {"KS": np.nan, "AUC": np.nan}
         lifts = {f"{int(level * 100)}%lift": np.nan for level in PERCENT_LEVELS}
     else:
+        lift_score = score_clean if lift_use_descending_score else -score_clean
         metrics = {
             "KS": calculate_ks(y_clean, score_clean),
             "AUC": calculate_auc(y_clean, score_clean),
@@ -82,7 +90,7 @@ def calculate_binary_metrics(
         lifts = {
             f"{int(level * 100)}%lift": calculate_lift_at_k(
                 y_clean.to_numpy(),
-                score_clean.to_numpy(),
+                lift_score.to_numpy(),
                 k=level,
             )
             for level in PERCENT_LEVELS

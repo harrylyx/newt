@@ -285,9 +285,7 @@ def build_overview_sheet(
             score_cols=[column for _, column in score_model_columns],
             variable_cols=var_list,
         )
-        portrait["模型"] = (
-            portrait["模型"].map(display_by_column).fillna(portrait["模型"])
-        )
+        portrait["模型"] = portrait["模型"].map(display_by_column).fillna(portrait["模型"])
         blocks.append(ReportBlock(title="OOT画像变量均值对比", data=portrait))
 
     return ReportSheet(name="总览", blocks=blocks)
@@ -310,11 +308,12 @@ def build_model_design_sheet(
         ReportBlock(
             title="原始样本分布表",
             data=summarize_label_distribution(
-                data=data,
+                data=data.loc[data[tag_col].notna()],
                 label_col=primary_label,
                 tag_col=tag_col,
                 month_col=month_col,
                 include_blank_channel=True,
+                include_tag=False,
             ),
         ),
         ReportBlock(title="样本筛选条件", blank_rows_after=2),
@@ -351,9 +350,7 @@ def build_model_design_sheet(
                     "备注": "",
                 }
             )
-    blocks.append(
-        ReportBlock(title="建模样本分布情况表", data=pd.DataFrame(sample_rows))
-    )
+    blocks.append(ReportBlock(title="建模样本分布情况表", data=pd.DataFrame(sample_rows)))
 
     effect_rows = []
     for label_col in label_list:
@@ -412,10 +409,10 @@ def build_variable_analysis_sheet(
 
     blocks = [
         ReportBlock(
-            title="1. 变量筛选",
+            title="一、变量筛选",
             data=_build_feature_selection_summary(feature_table, feature_dict),
         ),
-        ReportBlock(title="2. 变量分析", data=feature_table),
+        ReportBlock(title="二、变量分析", data=feature_table),
     ]
 
     for rank, feature in enumerate(top_features, start=1):
@@ -435,9 +432,7 @@ def build_variable_analysis_sheet(
             month_col=month_col,
             edges=edges,
         )
-        display_name = _lookup_feature_meta(feature_dict, feature_name).get(
-            "中文名", ""
-        )
+        display_name = _lookup_feature_meta(feature_dict, feature_name).get("中文名", "")
         title_prefix = f"{rank}.{feature_name}"
         if display_name:
             title_prefix = f"{title_prefix} {display_name}"
@@ -486,9 +481,7 @@ def build_model_performance_sheet(
     reverse_auc_label: bool = False,
 ) -> ReportSheet:
     """Build sheet 4."""
-    blocks = [
-        ReportBlock(title="3.1 建模方法选择", data=model_adapter.get_param_table())
-    ]
+    blocks = [ReportBlock(title="一、建模方法选择", data=model_adapter.get_param_table())]
     tag_metrics, month_metrics = _build_split_metrics_tables(
         data=data,
         tag_col=tag_col,
@@ -498,11 +491,11 @@ def build_model_performance_sheet(
         model_name=model_name,
         reverse_auc_label=reverse_auc_label,
     )
-    blocks.append(ReportBlock(title="3.2 按tag模型效果", data=tag_metrics))
-    blocks.append(ReportBlock(title="3.2 按月模型效果", data=month_metrics))
+    blocks.append(ReportBlock(title="二、按tag模型效果", data=tag_metrics))
+    blocks.append(ReportBlock(title="三、按月模型效果", data=month_metrics))
 
     binary_data = data.loc[data[primary_label].isin([0, 1])].copy()
-    blocks.append(ReportBlock(title="3.3 模型分箱表现", blank_rows_after=1))
+    blocks.append(ReportBlock(title="四、模型分箱表现", blank_rows_after=1))
     for tag_value in _ordered_tag_values(binary_data[tag_col]):
         tag_frame = binary_data.loc[binary_data[tag_col] == tag_value]
         table = calculate_bin_performance_table(
@@ -576,9 +569,7 @@ def _build_split_metrics_tables(
             reverse_auc_label=reverse_auc_label,
         )
         if not month_table.empty:
-            month_table["近期月对比各集合PSI"] = month_table["观察点月"].map(
-                month_latest_psi
-            )
+            month_table["近期月对比各集合PSI"] = month_table["观察点月"].map(month_latest_psi)
         month_rows.append(month_table)
 
     tag_result = _sort_report_table(
@@ -710,7 +701,11 @@ def _calculate_report_metrics(
     y_score: pd.Series,
     reverse_auc_label: bool = False,
 ) -> Dict[str, float]:
-    metrics = calculate_binary_metrics(y_true, y_score)
+    metrics = calculate_binary_metrics(
+        y_true,
+        y_score,
+        lift_use_descending_score=not reverse_auc_label,
+    )
     if reverse_auc_label:
         metrics["AUC"] = _calculate_report_auc(y_true, y_score, reverse_auc_label=True)
     return metrics
@@ -953,9 +948,7 @@ def _build_feature_selection_summary(
         .size()
         .reset_index(name="变量数量")
     )
-    type_table["重要性占比"] = type_table["变量数量"] / max(
-        type_table["变量数量"].sum(), 1
-    )
+    type_table["重要性占比"] = type_table["变量数量"] / max(type_table["变量数量"].sum(), 1)
     type_table = type_table.rename(columns={"来源": "变量类型"})
     return pd.concat([base, type_table], ignore_index=True, sort=False)
 
@@ -1138,10 +1131,7 @@ def _determine_feature_columns(
 def _build_score_metric_options(
     score_direction_summary: pd.DataFrame,
 ) -> Dict[str, Dict[str, bool]]:
-    if (
-        score_direction_summary.empty
-        or "分数字段" not in score_direction_summary.columns
-    ):
+    if score_direction_summary.empty or "分数字段" not in score_direction_summary.columns:
         return {}
 
     options: Dict[str, Dict[str, bool]] = {}

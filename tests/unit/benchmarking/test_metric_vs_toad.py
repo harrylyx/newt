@@ -118,13 +118,13 @@ def test_make_serializable_keeps_boolean_values():
 
 
 def test_resolve_python_interpreter_prefers_uv_version_lookup(monkeypatch):
-    uv_python = "/tmp/uv-python3.10"
-    broken_shim = "/tmp/pyenv-python3.10"
+    uv_python = "/tmp/uv-python3.99"
+    broken_shim = "/tmp/pyenv-python3.99"
 
     def fake_which(name):
         mapping = {
             "uv": "/usr/bin/uv",
-            "python3.10": broken_shim,
+            "python3.99": broken_shim,
         }
         return mapping.get(name)
 
@@ -135,7 +135,7 @@ def test_resolve_python_interpreter_prefers_uv_version_lookup(monkeypatch):
             self.stderr = stderr
 
     def fake_run(command, capture_output, text, check):
-        if command == ["/usr/bin/uv", "python", "find", "3.10"]:
+        if command == ["/usr/bin/uv", "python", "find", "3.99"]:
             return Completed(0, "{}\n".format(uv_python))
         if command == [uv_python, "-c", "import sys; print(sys.executable)"]:
             return Completed(0, "{}\n".format(uv_python))
@@ -144,17 +144,17 @@ def test_resolve_python_interpreter_prefers_uv_version_lookup(monkeypatch):
     monkeypatch.setattr("newt.benchmarking.metric_vs_toad.shutil.which", fake_which)
     monkeypatch.setattr("newt.benchmarking.metric_vs_toad.subprocess.run", fake_run)
 
-    assert resolve_python_interpreter("3.10") == uv_python
+    assert resolve_python_interpreter("3.99") == uv_python
 
 
 def test_resolve_python_interpreter_falls_back_when_uv_python_is_broken(monkeypatch):
-    broken_uv_python = "/tmp/uv-python3.10"
-    direct_python = "/tmp/direct-python3.10"
+    broken_uv_python = "/tmp/uv-python3.99"
+    direct_python = "/tmp/direct-python3.99"
 
     def fake_which(name):
         mapping = {
             "uv": "/usr/bin/uv",
-            "python3.10": direct_python,
+            "python3.99": direct_python,
         }
         return mapping.get(name)
 
@@ -165,7 +165,7 @@ def test_resolve_python_interpreter_falls_back_when_uv_python_is_broken(monkeypa
             self.stderr = stderr
 
     def fake_run(command, capture_output, text, check):
-        if command == ["/usr/bin/uv", "python", "find", "3.10"]:
+        if command == ["/usr/bin/uv", "python", "find", "3.99"]:
             return Completed(0, "{}\n".format(broken_uv_python))
         if command == [broken_uv_python, "-c", "import sys; print(sys.executable)"]:
             return Completed(1, "", "broken")
@@ -176,4 +176,4 @@ def test_resolve_python_interpreter_falls_back_when_uv_python_is_broken(monkeypa
     monkeypatch.setattr("newt.benchmarking.metric_vs_toad.shutil.which", fake_which)
     monkeypatch.setattr("newt.benchmarking.metric_vs_toad.subprocess.run", fake_run)
 
-    assert resolve_python_interpreter("3.10") == direct_python
+    assert resolve_python_interpreter("3.99") == direct_python

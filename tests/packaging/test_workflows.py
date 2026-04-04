@@ -32,6 +32,13 @@ def test_build_wheels_workflow_covers_all_platforms():
     assert "ubuntu" in content.lower() or "linux" in content.lower()
 
 
+def test_build_wheels_workflow_uses_native_linux_arm_runner():
+    """Linux aarch64 builds should run on a native ARM runner."""
+    content = (WORKFLOWS / "build-wheels.yml").read_text()
+    assert "ubuntu-24.04-arm" in content
+    assert "docker/setup-qemu-action" not in content
+
+
 def test_ci_workflow_does_not_build_wheels():
     """CI workflow should stay lean and not run cibuildwheel."""
     content = (WORKFLOWS / "ci.yml").read_text()
@@ -50,6 +57,13 @@ def test_wheel_matrix_excludes_cp313():
     release = (WORKFLOWS / "release.yml").read_text()
     assert "cp313" not in build
     assert "cp313" not in release
+
+
+def test_release_workflow_uses_native_linux_arm_runner():
+    """Release builds should use the same native Linux runner split."""
+    content = (WORKFLOWS / "release.yml").read_text()
+    assert "ubuntu-24.04-arm" in content
+    assert "docker/setup-qemu-action" not in content
 
 
 def test_sdist_build_uses_project_root_context():

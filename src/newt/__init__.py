@@ -10,7 +10,7 @@ A comprehensive Python library for building credit scorecards with:
 - Pipeline-style workflow
 """
 
-__version__ = "0.1.2"
+__version__ = "0.1.3"
 
 # WOE analysis
 from newt.features.analysis import WOEEncoder

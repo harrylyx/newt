@@ -2,14 +2,8 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from src.newt.features.binning.supervised import (
-    ChiMergeBinner,
-    DecisionTreeBinner,
-)
-from src.newt.features.binning.unsupervised import (
-    EqualFrequencyBinner,
-    EqualWidthBinner,
-)
+from newt.features.binning.supervised import ChiMergeBinner, DecisionTreeBinner
+from newt.features.binning.unsupervised import EqualFrequencyBinner, EqualWidthBinner
 
 
 @pytest.fixture

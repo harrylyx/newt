@@ -2,11 +2,11 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from src.newt.metrics.auc import calculate_auc
-from src.newt.metrics.gini import calculate_gini
-from src.newt.metrics.ks import calculate_ks
-from src.newt.metrics.lift import calculate_lift
-from src.newt.metrics.psi import calculate_psi
+from newt.metrics.auc import calculate_auc
+from newt.metrics.gini import calculate_gini
+from newt.metrics.ks import calculate_ks
+from newt.metrics.lift import calculate_lift
+from newt.metrics.psi import calculate_psi
 
 
 # Use the fixture defined in conftest.py

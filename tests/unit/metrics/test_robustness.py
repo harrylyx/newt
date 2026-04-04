@@ -2,9 +2,9 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from src.newt.metrics.ks import calculate_ks
-from src.newt.metrics.lift import calculate_lift_at_k
-from src.newt.metrics.psi import calculate_psi
+from newt.metrics.ks import calculate_ks
+from newt.metrics.lift import calculate_lift_at_k
+from newt.metrics.psi import calculate_psi
 
 
 def test_psi_nan_bucket():

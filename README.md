@@ -68,6 +68,16 @@ maturin develop --manifest-path rust/newt_iv_rust/Cargo.toml --release
 
 For Excel report development and validation (including `openpyxl`, `pyarrow`, and `lightgbm`), use the same `uv sync --group dev` environment.
 
+For local validation across the supported Python versions, the primary project checks target Python `3.8`, `3.10`, and `3.12`:
+
+```bash
+uv sync --group dev --python 3.8
+uv sync --group dev --python 3.10
+uv sync --group dev --python 3.12
+```
+
+The optional `optbinning` stack remains pinned to Python `< 3.12`. On the current `macOS arm64` toolchain, `optbinning`, `ortools`, and `cvxpy` do not pass a clean Python `3.12` smoke test together.
+
 ## Quick Start
 
 ```python
@@ -260,7 +270,23 @@ fig = plot_psi_comparison(psi_dict, threshold=0.25)
 
 - [User Guide (English)](docs/user_guide.md) - Comprehensive end-to-end workflow guide
 - [用户指南 (中文)](docs/user_guide_zh.md) - Chinese version of the user guide
+- [Benchmark Guide](docs/benchmarks/metric_vs_toad.md) - Compare Newt metrics against toad on the bundled sample dataset
 - [Examples](examples/) - Jupyter notebook examples
+
+## Benchmark
+
+Run the bundled benchmark on `examples/data/test_data/all_data.pq`:
+
+```bash
+uv run newt-benchmark
+```
+
+This writes:
+
+- `out/benchmarks/metric_vs_toad.json`
+- `out/benchmarks/metric_vs_toad.md`
+
+The benchmark runs Newt in the current environment and spins up an isolated toad worker for comparison. It prefers Python `3.12` for the toad side, and falls back to Python `3.10` when the upstream `toad` package cannot be installed cleanly on the preferred interpreter.
 
 ## Dependencies
 

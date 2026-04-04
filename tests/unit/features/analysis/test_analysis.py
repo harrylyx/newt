@@ -2,12 +2,12 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from src.newt.features.analysis.correlation import (
+from newt.features.analysis.correlation import (
     calculate_correlation_matrix,
     get_high_correlation_pairs,
 )
-from src.newt.features.analysis.iv_calculator import calculate_iv
-from src.newt.features.analysis.woe_calculator import WOEEncoder
+from newt.features.analysis.iv_calculator import calculate_iv
+from newt.features.analysis.woe_calculator import WOEEncoder
 
 
 @pytest.fixture

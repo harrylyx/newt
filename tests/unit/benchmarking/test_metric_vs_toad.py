@@ -1,15 +1,20 @@
+import sys
+import types
+
 import pandas as pd
+import pytest
 
 from newt.benchmarking.metric_vs_toad import (
     METADATA_COLUMNS,
     apply_reference_bins,
     build_newt_psi_breakpoints,
+    compute_toad_results,
     get_feature_columns,
     get_numeric_feature_columns,
     make_serializable,
+    parse_args,
     prepare_feature_for_iv,
     render_markdown,
-    resolve_python_interpreter,
 )
 
 
@@ -65,7 +70,7 @@ def test_build_newt_psi_breakpoints_and_apply_reference_bins_keep_missing_bucket
     assert list(binned.astype(str))[-1] == "Missing"
 
 
-def test_render_markdown_mentions_toad_fallback():
+def test_render_markdown_mentions_direct_benchmark_environment():
     report = {
         "metadata": {
             "generated_at": "2026-04-04T12:00:00",
@@ -79,11 +84,11 @@ def test_render_markdown_mentions_toad_fallback():
             "newt_runtime": {"python": "3.12.12", "platform": "macOS"},
             "toad_runtime": {
                 "status": "ok",
-                "requested_python": "3.12",
                 "python": "3.10.19",
-                "used_python": "/tmp/python3.10",
+                "executable": (
+                    "/Users/cabbage/Project/newt/.venv-benchmark-3.10/bin/python"
+                ),
                 "toad_version": "0.1.5",
-                "fallback_used": True,
             },
             "toad_status": "ok",
         },
@@ -110,70 +115,82 @@ def test_render_markdown_mentions_toad_fallback():
 
     markdown = render_markdown(report)
 
-    assert "fell back to a lower Python version" in markdown
+    assert "Toad Python: `3.10.19`" in markdown
+    assert "benchmark requested `3.12`" not in markdown
+
+
+def test_parse_args_uses_one_benchmark_environment_only():
+    args = parse_args([])
+
+    assert args.repeat == 5
+    assert args.warmup == 1
+    assert args.iv_buckets == 10
+    assert args.psi_buckets == 10
+    assert not hasattr(args, "toad_version")
+    assert not hasattr(args, "toad_python")
+    assert not hasattr(args, "toad_fallback_python")
+    assert not hasattr(args, "worker")
+    assert not hasattr(args, "result_json")
+
+
+def test_compute_toad_results_uses_current_environment(monkeypatch):
+    fake_toad = types.ModuleType("toad")
+    fake_toad.__version__ = "0.1.5"
+    fake_toad.metrics = types.SimpleNamespace(
+        AUC=lambda values, labels: float(values.mean() + labels.mean()),
+        KS=lambda values, labels: float(values.mean() - labels.mean()),
+        PSI=lambda actual, expected: float(len(actual) + len(expected)),
+    )
+
+    def fake_quality(frame, target, iv_only):
+        feature_names = [column for column in frame.columns if column != target]
+        return pd.DataFrame(
+            {"iv": [0.11 * (index + 1) for index, _ in enumerate(feature_names)]},
+            index=feature_names,
+        )
+
+    fake_toad.quality = fake_quality
+    monkeypatch.setitem(sys.modules, "toad", fake_toad)
+
+    binary = pd.DataFrame(
+        {
+            "target": [0, 1, 0, 1],
+            "flag_train": [True, True, False, False],
+            "flag_test": [False, False, True, False],
+            "flag_oot": [False, False, False, True],
+            "score_p": [0.1, 0.9, 0.2, 0.8],
+            "score_old_p": [0.2, 0.8, 0.3, 0.7],
+            "feature_a": [1.0, 2.0, 3.0, 4.0],
+            "feature_b": ["a", "b", "a", "b"],
+        }
+    )
+    splits = {
+        "train": binary.loc[binary["flag_train"]].copy(),
+        "test": binary.loc[binary["flag_test"]].copy(),
+        "oot": binary.loc[binary["flag_oot"]].copy(),
+    }
+
+    result = compute_toad_results(
+        binary=binary,
+        splits=splits,
+        feature_columns=["feature_a", "feature_b"],
+        numeric_features=["feature_a"],
+        repeat=1,
+        warmup=0,
+        iv_buckets=2,
+        psi_buckets=2,
+    )
+
+    meta = result["metadata"]["toad_runtime"]
+
+    assert meta["status"] == "ok"
+    assert meta["python"] == sys.version.split()[0]
+    assert meta["executable"] == sys.executable
+    assert meta["toad_version"] == "0.1.5"
+    assert "requested_python" not in meta
+    assert "fallback_used" not in meta
+    assert result["correctness"]["iv"][0]["value"] == pytest.approx(0.11)
 
 
 def test_make_serializable_keeps_boolean_values():
     assert make_serializable(True) is True
-
-
-def test_resolve_python_interpreter_prefers_uv_version_lookup(monkeypatch):
-    uv_python = "/tmp/uv-python3.99"
-    broken_shim = "/tmp/pyenv-python3.99"
-
-    def fake_which(name):
-        mapping = {
-            "uv": "/usr/bin/uv",
-            "python3.99": broken_shim,
-        }
-        return mapping.get(name)
-
-    class Completed:
-        def __init__(self, returncode, stdout="", stderr=""):
-            self.returncode = returncode
-            self.stdout = stdout
-            self.stderr = stderr
-
-    def fake_run(command, capture_output, text, check):
-        if command == ["/usr/bin/uv", "python", "find", "3.99"]:
-            return Completed(0, "{}\n".format(uv_python))
-        if command == [uv_python, "-c", "import sys; print(sys.executable)"]:
-            return Completed(0, "{}\n".format(uv_python))
-        raise AssertionError("unexpected command: {}".format(command))
-
-    monkeypatch.setattr("newt.benchmarking.metric_vs_toad.shutil.which", fake_which)
-    monkeypatch.setattr("newt.benchmarking.metric_vs_toad.subprocess.run", fake_run)
-
-    assert resolve_python_interpreter("3.99") == uv_python
-
-
-def test_resolve_python_interpreter_falls_back_when_uv_python_is_broken(monkeypatch):
-    broken_uv_python = "/tmp/uv-python3.99"
-    direct_python = "/tmp/direct-python3.99"
-
-    def fake_which(name):
-        mapping = {
-            "uv": "/usr/bin/uv",
-            "python3.99": direct_python,
-        }
-        return mapping.get(name)
-
-    class Completed:
-        def __init__(self, returncode, stdout="", stderr=""):
-            self.returncode = returncode
-            self.stdout = stdout
-            self.stderr = stderr
-
-    def fake_run(command, capture_output, text, check):
-        if command == ["/usr/bin/uv", "python", "find", "3.99"]:
-            return Completed(0, "{}\n".format(broken_uv_python))
-        if command == [broken_uv_python, "-c", "import sys; print(sys.executable)"]:
-            return Completed(1, "", "broken")
-        if command == [direct_python, "-c", "import sys; print(sys.executable)"]:
-            return Completed(0, "{}\n".format(direct_python))
-        raise AssertionError("unexpected command: {}".format(command))
-
-    monkeypatch.setattr("newt.benchmarking.metric_vs_toad.shutil.which", fake_which)
-    monkeypatch.setattr("newt.benchmarking.metric_vs_toad.subprocess.run", fake_run)
-
-    assert resolve_python_interpreter("3.99") == direct_python

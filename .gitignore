@@ -17,6 +17,7 @@ rust/**/target/
 
 # Virtual environments and local env files
 .venv/
+.venv-benchmark-3.10/
 venv/
 .env
 .env.*
@@ -31,6 +32,7 @@ htmlcov/
 
 # Local dependency cache
 .uv-cache/
+.uv-python/
 .worktrees/
 .superpowers/
 

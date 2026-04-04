@@ -5,13 +5,9 @@ from __future__ import annotations
 import argparse
 import json
 import math
-import os
 import platform
-import shutil
 import statistics
-import subprocess
 import sys
-import tempfile
 import time
 from datetime import datetime
 from pathlib import Path
@@ -28,9 +24,6 @@ SPLIT_FLAGS = {
     "oot": "flag_oot",
 }
 PSI_SPLITS = (("train", "test"), ("train", "oot"))
-DEFAULT_TOAD_VERSION = "0.1.5"
-DEFAULT_TOAD_PYTHONS = ("3.12", "3.10")
-TOAD_INSTALL_TIMEOUT_SECONDS = 600
 BENCHMARK_OUTPUT_JSON = "metric_vs_toad.json"
 BENCHMARK_OUTPUT_MD = "metric_vs_toad.md"
 METADATA_COLUMNS = frozenset(
@@ -290,230 +283,6 @@ def sort_top_rows(
         reverse=True,
     )
     return list(ordered[:limit])
-
-
-def resolve_python_interpreter(candidate: str) -> Optional[str]:
-    """Resolve a Python interpreter from a version or executable name."""
-    candidate = str(candidate).strip()
-    current_version = f"{sys.version_info.major}.{sys.version_info.minor}"
-    if candidate == current_version:
-        return sys.executable
-
-    def _is_usable_python(path: str) -> bool:
-        completed = subprocess.run(
-            [path, "-c", "import sys; print(sys.executable)"],
-            capture_output=True,
-            text=True,
-            check=False,
-        )
-        return completed.returncode == 0
-
-    if os.path.sep in candidate and Path(candidate).exists():
-        return candidate if _is_usable_python(candidate) else None
-
-    uv = shutil.which("uv")
-    if uv:
-        completed = subprocess.run(
-            [uv, "python", "find", candidate],
-            capture_output=True,
-            text=True,
-            check=False,
-        )
-        if completed.returncode == 0:
-            resolved = completed.stdout.strip()
-            if resolved and _is_usable_python(resolved):
-                return resolved
-
-    direct = shutil.which(candidate)
-    if direct and _is_usable_python(direct):
-        return direct
-
-    version_name = "python{}".format(candidate)
-    direct = shutil.which(version_name)
-    if direct and _is_usable_python(direct):
-        return direct
-
-    return None
-
-
-def _subprocess_summary(completed: subprocess.CompletedProcess) -> str:
-    output = []
-    if completed.stdout:
-        output.append(completed.stdout.strip())
-    if completed.stderr:
-        output.append(completed.stderr.strip())
-    return "\n".join(part for part in output if part)[:6000]
-
-
-def _run_checked_command(
-    command: Sequence[str],
-    timeout_seconds: int,
-) -> subprocess.CompletedProcess:
-    return subprocess.run(
-        list(command),
-        capture_output=True,
-        text=True,
-        check=False,
-        timeout=timeout_seconds,
-    )
-
-
-def run_toad_worker_attempt(
-    python_path: str,
-    version_spec: str,
-    script_path: Path,
-    data_path: Path,
-    repeat: int,
-    warmup: int,
-    iv_buckets: int,
-    psi_buckets: int,
-) -> Dict[str, Any]:
-    """Create a temporary toad environment and run the worker process."""
-    attempt: Dict[str, Any] = {
-        "requested_python": python_path,
-        "toad_version": version_spec,
-        "status": "error",
-    }
-
-    with tempfile.TemporaryDirectory(prefix="newt-toad-benchmark-") as temp_dir:
-        temp_path = Path(temp_dir)
-        venv_path = temp_path / "venv"
-        result_path = temp_path / "toad_results.json"
-        pip_path = venv_path / "bin" / "pip"
-        venv_python = venv_path / "bin" / "python"
-
-        commands = [
-            ([python_path, "-m", "venv", str(venv_path)], "create_venv"),
-            (
-                [
-                    str(pip_path),
-                    "install",
-                    "-q",
-                    "--upgrade",
-                    "pip",
-                    "setuptools",
-                    "wheel",
-                ],
-                "bootstrap_pip",
-            ),
-            (
-                [str(pip_path), "install", "-q", version_spec, "pyarrow"],
-                "install_toad",
-            ),
-            (
-                [
-                    str(venv_python),
-                    str(script_path),
-                    "--worker",
-                    "toad",
-                    "--data-path",
-                    str(data_path),
-                    "--result-json",
-                    str(result_path),
-                    "--repeat",
-                    str(repeat),
-                    "--warmup",
-                    str(warmup),
-                    "--iv-buckets",
-                    str(iv_buckets),
-                    "--psi-buckets",
-                    str(psi_buckets),
-                ],
-                "run_worker",
-            ),
-        ]
-
-        for command, step in commands:
-            completed = _run_checked_command(command, TOAD_INSTALL_TIMEOUT_SECONDS)
-            if completed.returncode != 0:
-                attempt["step"] = step
-                attempt["error"] = _subprocess_summary(completed)
-                return attempt
-
-        if not result_path.exists():
-            attempt["step"] = "load_worker_result"
-            attempt["error"] = "toad worker did not produce a result file."
-            return attempt
-
-        payload = json.loads(result_path.read_text(encoding="utf-8"))
-        attempt.update(payload.get("metadata", {}).get("toad_runtime", {}))
-        attempt["status"] = "ok"
-        attempt["worker"] = payload
-        return attempt
-
-
-def run_toad_with_fallback(
-    data_path: Path,
-    repeat: int,
-    warmup: int,
-    iv_buckets: int,
-    psi_buckets: int,
-    requested_python: str,
-    fallback_pythons: Sequence[str],
-    toad_version: str,
-) -> Dict[str, Any]:
-    """Run the toad worker, falling back if the preferred interpreter fails."""
-    script_path = repo_root() / "scripts" / "benchmark.py"
-    attempts: List[Dict[str, Any]] = []
-    seen: set = set()
-    candidates = [requested_python] + list(fallback_pythons)
-
-    for candidate in candidates:
-        if candidate in seen:
-            continue
-        seen.add(candidate)
-
-        resolved = resolve_python_interpreter(candidate)
-        if resolved is None:
-            attempts.append(
-                {
-                    "requested_python": candidate,
-                    "status": "error",
-                    "step": "resolve_python",
-                    "error": "Python interpreter not found.",
-                }
-            )
-            continue
-
-        attempt = run_toad_worker_attempt(
-            python_path=resolved,
-            version_spec="toad=={}".format(toad_version),
-            script_path=script_path,
-            data_path=data_path,
-            repeat=repeat,
-            warmup=warmup,
-            iv_buckets=iv_buckets,
-            psi_buckets=psi_buckets,
-        )
-        attempt["requested_python"] = candidate
-        attempt["resolved_python"] = resolved
-        attempts.append(attempt)
-
-        if attempt["status"] == "ok":
-            worker = attempt["worker"]
-            worker["metadata"]["toad_runtime"]["requested_python"] = requested_python
-            worker["metadata"]["toad_runtime"]["used_python"] = resolved
-            worker["metadata"]["toad_runtime"]["fallback_used"] = (
-                candidate != requested_python
-            )
-            worker["metadata"]["toad_runtime"]["attempts"] = [
-                {key: value for key, value in item.items() if key != "worker"}
-                for item in attempts
-            ]
-            return worker
-
-    return {
-        "metadata": {
-            "toad_runtime": {
-                "status": "error",
-                "requested_python": requested_python,
-                "toad_version": toad_version,
-                "attempts": attempts,
-            }
-        },
-        "correctness": {},
-        "efficiency": {},
-    }
 
 
 def compute_newt_results(
@@ -1134,44 +903,23 @@ def render_markdown(report: Dict[str, Any]) -> str:
         lines.extend(
             [
                 "",
-                "Toad requested Python: `{}`".format(
-                    toad_runtime.get("requested_python", "n/a")
-                ),
+                "Toad Python: `{}`".format(toad_runtime.get("python", "n/a")),
                 "",
-                "Toad used Python: `{}`".format(toad_runtime.get("python", "n/a")),
-                "",
-                "Toad executable: `{}`".format(toad_runtime.get("used_python", "n/a")),
+                "Toad executable: `{}`".format(toad_runtime.get("executable", "n/a")),
                 "",
                 "Toad version: `{}`".format(toad_runtime.get("toad_version", "n/a")),
             ]
         )
-        if toad_runtime.get("fallback_used"):
-            lines.extend(
-                [
-                    "",
-                    (
-                        "Toad fallback: benchmark requested `3.12`, but the "
-                        "script fell back to a lower Python version after an "
-                        "installation failure in the preferred environment."
-                    ),
-                ]
-            )
     else:
         lines.extend(
             [
                 "",
-                "Toad benchmark failed. Attempts:",
-                "",
+                "Toad benchmark failed.",
             ]
         )
-        for attempt in toad_runtime.get("attempts", []):
-            lines.append(
-                "- `{} -> {}`: {}".format(
-                    attempt.get("requested_python", "unknown"),
-                    attempt.get("step", "error"),
-                    attempt.get("error", "unknown failure").splitlines()[0],
-                )
-            )
+        error = toad_runtime.get("error")
+        if error:
+            lines.extend(["", f"Reason: `{error}`"])
 
     auc_rows = [
         {
@@ -1360,22 +1108,6 @@ def parse_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
         default=str(default_output_dir()),
         help="Directory that will receive JSON and Markdown benchmark reports.",
     )
-    parser.add_argument(
-        "--toad-version",
-        default=DEFAULT_TOAD_VERSION,
-        help="Preferred toad version for the isolated worker environment.",
-    )
-    parser.add_argument(
-        "--toad-python",
-        default=DEFAULT_TOAD_PYTHONS[0],
-        help="Preferred Python version for the toad worker environment.",
-    )
-    parser.add_argument(
-        "--toad-fallback-python",
-        nargs="*",
-        default=list(DEFAULT_TOAD_PYTHONS[1:]),
-        help="Fallback Python versions for the toad worker environment.",
-    )
     parser.add_argument("--repeat", type=int, default=5, help="Benchmark repeats.")
     parser.add_argument("--warmup", type=int, default=1, help="Benchmark warmup runs.")
     parser.add_argument(
@@ -1390,15 +1122,6 @@ def parse_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
         default=10,
         help="Number of buckets used for PSI calculations.",
     )
-    parser.add_argument(
-        "--worker",
-        choices=["toad"],
-        help=argparse.SUPPRESS,
-    )
-    parser.add_argument(
-        "--result-json",
-        help=argparse.SUPPRESS,
-    )
     return parser.parse_args(argv)
 
 
@@ -1411,25 +1134,6 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     feature_columns = get_feature_columns(binary)
     numeric_features = get_numeric_feature_columns(binary)
 
-    if args.worker == "toad":
-        worker_result = compute_toad_results(
-            binary=binary,
-            splits=splits,
-            feature_columns=feature_columns,
-            numeric_features=numeric_features,
-            repeat=args.repeat,
-            warmup=args.warmup,
-            iv_buckets=args.iv_buckets,
-            psi_buckets=args.psi_buckets,
-        )
-        result_path = Path(args.result_json)
-        result_path.parent.mkdir(parents=True, exist_ok=True)
-        result_path.write_text(
-            json.dumps(make_serializable(worker_result), indent=2, ensure_ascii=False),
-            encoding="utf-8",
-        )
-        return 0
-
     newt_results = compute_newt_results(
         binary=binary,
         splits=splits,
@@ -1441,15 +1145,15 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         psi_buckets=args.psi_buckets,
     )
 
-    toad_results = run_toad_with_fallback(
-        data_path=data_path,
+    toad_results = compute_toad_results(
+        binary=binary,
+        splits=splits,
+        feature_columns=feature_columns,
+        numeric_features=numeric_features,
         repeat=args.repeat,
         warmup=args.warmup,
         iv_buckets=args.iv_buckets,
         psi_buckets=args.psi_buckets,
-        requested_python=args.toad_python,
-        fallback_pythons=args.toad_fallback_python,
-        toad_version=args.toad_version,
     )
 
     report = build_report(

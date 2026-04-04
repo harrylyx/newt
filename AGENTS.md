@@ -21,10 +21,20 @@ Newt is a lightweight Python toolkit for efficient feature analysis and statisti
 
 **IMPORTANT:** Use `uv` for environment and dependency management.
 
-- **OS**: Windows 11
-- **Terminal**: PowerShell
-- **Environment**: No global environment variables configured
-- **Command Prefix**: Prefer `uv run` for Python tooling commands
+Default repo-local environments:
+
+- `.venv`: Python 3.8.5, for day-to-day development, unit tests, linting, and package edits.
+- `.venv-benchmark-3.10`: Python 3.10.19, for `newt-benchmark`, benchmark checks, and `toad`.
+
+Rules:
+
+- Keep only these two repo-local environments.
+- Do not create extra `.venv-*` directories in the repository unless you are debugging a specific issue, and remove them afterward.
+- Use `.venv` for normal development work.
+- Use `.venv-benchmark-3.10` for benchmark runs.
+- The benchmark environment includes `toad==0.1.5` and runs the comparison directly in that environment. Do not add another worker venv layer.
+- If you need a throwaway environment, create it under `/tmp`, not inside the repo.
+- Prefer `uv run` inside the selected environment for Python tooling commands.
 
 ```bash
 # ❌ Do NOT use bare Python tooling commands
@@ -33,7 +43,8 @@ python -m pytest
 python -m pip install ...
 
 # ✅ Use uv-managed workflows
-uv sync --group dev
+UV_PROJECT_ENVIRONMENT=.venv UV_PYTHON_INSTALL_DIR=.uv-python uv sync --python 3.8.5 --group dev --frozen
+UV_PROJECT_ENVIRONMENT=.venv-benchmark-3.10 UV_PYTHON_INSTALL_DIR=.uv-python uv sync --python 3.10.19 --group dev --group benchmark --frozen
 uv run pytest
 uv run python -m pytest
 ```

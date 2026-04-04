@@ -50,6 +50,15 @@ Install the optional optimal binning stack only when you need `method='opt'`:
 pip install "newt[optbinning]"
 ```
 
+### Default Local Environments
+
+This repo uses two repo-local environments by default:
+
+- `.venv`: Python `3.8.5` for development, tests, linting, and package edits.
+- `.venv-benchmark-3.10`: Python `3.10.19` for `newt-benchmark` and `toad`.
+
+Do not create extra repo-local `.venv-*` directories unless you are debugging a specific issue and plan to delete them afterward.
+
 ### Development
 
 For development with uv:
@@ -58,25 +67,31 @@ For development with uv:
 # Clone the repository
 git clone https://github.com/harrylyx/newt.git
 cd newt
-
-# Install dependencies (including dev group)
-uv sync --group dev
-
-# Build the Rust extension for development
-maturin develop --manifest-path rust/newt_iv_rust/Cargo.toml --release
 ```
 
-For Excel report development and validation (including `openpyxl`, `pyarrow`, and `lightgbm`), use the same `uv sync --group dev` environment.
-
-For local validation across the supported Python versions, the primary project checks target Python `3.8`, `3.10`, and `3.12`:
+Then recreate the default dev environment with:
 
 ```bash
-uv sync --group dev --python 3.8
-uv sync --group dev --python 3.10
-uv sync --group dev --python 3.12
+UV_PROJECT_ENVIRONMENT=.venv UV_PYTHON_INSTALL_DIR=.uv-python uv sync --python 3.8.5 --group dev --frozen
 ```
 
-The optional `optbinning` stack remains pinned to Python `< 3.12`. On the current `macOS arm64` toolchain, `optbinning`, `ortools`, and `cvxpy` do not pass a clean Python `3.12` smoke test together.
+To recreate the benchmark environment, use:
+
+```bash
+UV_PROJECT_ENVIRONMENT=.venv-benchmark-3.10 UV_PYTHON_INSTALL_DIR=.uv-python uv sync --python 3.10.19 --group dev --group benchmark --frozen
+```
+
+Use `.venv` for normal development work, tests, and linting. Use `.venv-benchmark-3.10` for benchmark runs.
+
+If you need a one-off interpreter check, use a temporary environment outside the repository and delete it afterward.
+
+For Excel report development and validation (including `openpyxl`, `pyarrow`, and `lightgbm`), use the default `.venv` environment.
+
+Build the Rust extension for development after syncing the environment:
+
+```bash
+maturin develop --manifest-path rust/newt_iv_rust/Cargo.toml --release
+```
 
 ## Quick Start
 
@@ -275,10 +290,10 @@ fig = plot_psi_comparison(psi_dict, threshold=0.25)
 
 ## Benchmark
 
-Run the bundled benchmark on `examples/data/test_data/all_data.pq`:
+Run the bundled benchmark on `examples/data/test_data/all_data.pq` from the benchmark environment:
 
 ```bash
-uv run newt-benchmark
+./.venv-benchmark-3.10/bin/newt-benchmark
 ```
 
 This writes:
@@ -286,7 +301,7 @@ This writes:
 - `out/benchmarks/metric_vs_toad.json`
 - `out/benchmarks/metric_vs_toad.md`
 
-The benchmark runs Newt in the current environment and spins up an isolated toad worker for comparison. It prefers Python `3.12` for the toad side, and falls back to Python `3.10` when the upstream `toad` package cannot be installed cleanly on the preferred interpreter.
+The benchmark runs Newt and toad in the same benchmark environment. It does not create a separate worker virtual environment. In this repository, the default host environment for that command is `.venv-benchmark-3.10`.
 
 ## Dependencies
 

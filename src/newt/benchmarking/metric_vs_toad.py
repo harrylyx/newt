@@ -16,6 +16,8 @@ from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
 import numpy as np
 import pandas as pd
 
+from newt.features.analysis.iv_math import prepare_feature_for_iv as prepare_iv_feature
+
 TARGET_COL = "target"
 SCORE_COLUMNS = ("score_p", "score_old_p")
 SPLIT_FLAGS = {
@@ -93,16 +95,7 @@ def get_numeric_feature_columns(frame: pd.DataFrame) -> List[str]:
 
 def prepare_feature_for_iv(series: pd.Series, buckets: int) -> pd.Series:
     """Prepare a feature so Newt and toad use the same IV bins."""
-    prepared: pd.Series
-    if pd.api.types.is_numeric_dtype(series) and series.nunique(dropna=True) > buckets:
-        try:
-            prepared = pd.qcut(series, q=buckets, duplicates="drop").astype("object")
-        except ValueError:
-            prepared = pd.cut(series, bins=buckets).astype("object")
-    else:
-        prepared = series.astype("object")
-
-    return prepared.where(pd.notna(prepared), "Missing").astype(str)
+    return prepare_iv_feature(series, buckets=buckets)
 
 
 def prepare_feature_frame_for_iv(
@@ -436,6 +429,7 @@ def compute_newt_results(
             target=TARGET_COL,
             feature=feature,
             buckets=iv_buckets,
+            engine="rust",
         )["iv"]
         iv_rows.append(
             {
@@ -453,6 +447,7 @@ def compute_newt_results(
                 target=TARGET_COL,
                 feature=feature,
                 buckets=iv_buckets,
+                engine="rust",
             )["iv"]
             for feature in feature_columns
         ],

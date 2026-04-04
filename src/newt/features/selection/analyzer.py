@@ -171,6 +171,7 @@ class FeatureAnalyzer:
                     "target",
                     "feature",
                     buckets=self.iv_bins,
+                    engine="rust",
                 )
                 result["iv"] = float(iv_result["iv"])
             except Exception:

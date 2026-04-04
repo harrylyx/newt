@@ -16,7 +16,7 @@ A lightweight Python toolkit for efficient feature analysis and statistical diag
 
 ## Installation
 
-Newt supports Python `3.8.1` up to but not including `4.0`, so Python `3.8.5` is within the supported range.
+Newt supports Python `>=3.8.5,<3.13` (Python `3.8.5` through `3.12.x`).
 
 ```bash
 pip install newt
@@ -91,6 +91,22 @@ Build the Rust extension for development after syncing the environment:
 
 ```bash
 maturin develop --manifest-path rust/newt_iv_rust/Cargo.toml --release
+```
+
+### IV Engine Defaults
+
+Single-feature and batch IV both use the Rust engine by default.
+
+```python
+from newt.features.analysis import calculate_batch_iv, calculate_iv
+
+# Default: Rust engine
+single = calculate_iv(df, target="target", feature="age")
+batch = calculate_batch_iv(X, y)
+
+# Explicit Python fallback
+single_py = calculate_iv(df, target="target", feature="age", engine="python")
+batch_py = calculate_batch_iv(X, y, engine="python")
 ```
 
 ## Quick Start
@@ -306,7 +322,7 @@ The benchmark runs Newt and toad in the same benchmark environment. It does not 
 ## Dependencies
 
 **Core Dependencies:**
-- Python >= 3.8.1, < 4.0
+- Python >= 3.8.5, < 3.13
 - numpy < 2.0.0
 - pandas >= 2.0.0
 - scikit-learn >= 1.3.0

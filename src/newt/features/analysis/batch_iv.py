@@ -10,6 +10,8 @@ import pandas as pd
 
 from newt.config import BINNING
 
+from .iv_math import calculate_iv_from_counts
+
 
 def calculate_batch_iv(
     X: pd.DataFrame,
@@ -88,9 +90,9 @@ def _calculate_single_iv(
     if total_good == 0 or total_bad == 0:
         return 0.0
 
-    dist_good = np.maximum(good_counts / total_good, epsilon)
-    dist_bad = np.maximum(bad_counts / total_bad, epsilon)
-    return float(np.sum((dist_good - dist_bad) * np.log(dist_good / dist_bad)))
+    # Kept for API compatibility; toad-compatible smoothing is now fixed.
+    _ = epsilon
+    return calculate_iv_from_counts(good_counts, bad_counts)
 
 
 def _build_quantile_edges(values: np.ndarray, bins: int) -> np.ndarray:

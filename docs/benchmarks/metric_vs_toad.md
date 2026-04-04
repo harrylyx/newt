@@ -42,7 +42,7 @@ The JSON file contains the full machine-readable report. The Markdown file is a 
 
 ## Python and Dependency Notes
 
-- Newt core remains compatible with Python `3.8+`
+- Newt core remains compatible with Python `3.8.5` through `3.12.x`
 - The benchmark environment is `.venv-benchmark-3.10`
 - That environment includes `toad==0.1.5` through the `benchmark` dependency group
 - The benchmark runs `toad` directly in the same environment; no worker venv or Python fallback is used
@@ -52,3 +52,16 @@ The JSON file contains the full machine-readable report. The Markdown file is a 
 - `AUC` and `KS` compare the public metric functions directly
 - `PSI` uses Newt's reference quantile bucket logic on both sides so the comparison measures the metric calculation, not bucket-definition drift
 - `IV` uses the same prepared feature frame for both libraries to avoid mixing metric differences with different default binning rules
+
+## Latest Verified Run
+
+Latest benchmark run (generated on `2026-04-04T21:22:44`) from `.venv-benchmark-3.10`:
+
+- IV mean absolute diff: `4.949931178722187e-16`
+- IV max absolute diff: `1.4033219031261979e-13`
+- `userinfo_24` IV:
+  - Newt: `1.727905`
+  - toad: `1.727905`
+
+This confirms the current IV implementation is aligned with toad on the prepared
+benchmark input.

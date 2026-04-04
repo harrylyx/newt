@@ -4,7 +4,7 @@
 
 Newt is a lightweight Python toolkit for efficient feature analysis and statistical diagnostics in credit risk modeling.
 
-- **Python Version**: >=3.8.1, <4.0
+- **Python Version**: >=3.8.5, <3.13
 - **Dependency Management**: uv
 - **Core Features**:
   - 6 binning algorithms (ChiMerge, Decision Tree, K-Means, Equal Frequency, Equal Width, Optimal)
@@ -458,7 +458,7 @@ uv run pre-commit run --all-files
 - `.github/workflows/build-wheels.yml`:
   - Builds multi-platform wheels using `cibuildwheel`
   - Targets macOS arm64, Windows x86_64, Linux x86_64/arm64
-  - Python 3.8+ through actively supported versions
+  - Builds wheels for CPython `cp38` through `cp312`
   - Runs installed-wheel smoke tests
 
 - `.github/workflows/release.yml`:

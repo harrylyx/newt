@@ -2,7 +2,7 @@
 
 本指南涵盖使用 `newt` 进行信用评分卡开发的端到端工作流程，包括分箱、特征选择、WOE/IV 分析、建模和评分卡生成。
 
-当前项目声明支持 Python `3.8.1` 及以上、`4.0` 以下版本，因此 Python `3.8.5` 在支持范围内。
+当前项目支持 Python `>=3.8.5,<3.13`（即 Python `3.8.5` 到 `3.12.x`）。
 
 ## 安装
 
@@ -31,18 +31,20 @@ pip install newt-<版本号>-<平台>.whl
 
 从官方 wheel 安装时无需安装 Rust 工具链。
 
-### 基于 Rust 的批量 IV 计算
+### 基于 Rust 的 IV 计算（单特征 + 批量）
 
-Newt 包含一个高性能的 Rust 扩展用于批量 IV 计算。从官方 wheel 安装后可直接使用：
+Newt 包含一个高性能的 Rust 扩展用于单特征 IV 和批量 IV 计算。从官方 wheel 安装后可直接使用：
 
 ```python
-from newt.features.analysis.batch_iv import calculate_batch_iv
+from newt.features.analysis import calculate_batch_iv, calculate_iv
 
 # 默认使用 Rust 引擎
-results = calculate_batch_iv(X, y, engine="rust")
+single = calculate_iv(df, target="target", feature="age")
+batch = calculate_batch_iv(X, y)
 
 # 显式使用 Python 回退实现
-results = calculate_batch_iv(X, y, engine="python")
+single_py = calculate_iv(df, target="target", feature="age", engine="python")
+batch_py = calculate_batch_iv(X, y, engine="python")
 ```
 
 如果 Rust 扩展不可用（例如从源码安装且没有 Rust 工具链），请求 `engine="rust"` 会抛出明确的 `ImportError` 并附带安装指引。Python 回退实现始终可通过 `engine="python"` 使用。

@@ -80,7 +80,13 @@ def compare_iv(df: pd.DataFrame) -> float:
 
     for feat in features:
         try:
-            res = calculate_iv(df, target="target", feature=feat, buckets=10)
+            res = calculate_iv(
+                df,
+                target="target",
+                feature=feat,
+                buckets=10,
+                engine="rust",
+            )
             newt_val = res["iv"]
             toad_val = toad_iv_dict.get(feat, np.nan)
 

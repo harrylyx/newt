@@ -2,7 +2,7 @@
 
 This guide covers the end-to-end workflow for credit scorecard development using `newt`, including binning, feature selection, WOE/IV analysis, modeling, and scorecard generation.
 
-The project declares support for Python `3.8.1` and above, but below `4.0`, so Python `3.8.5` is within the supported range.
+The project supports Python `>=3.8.5,<3.13` (Python `3.8.5` through `3.12.x`).
 
 ## Installation
 
@@ -32,19 +32,22 @@ Supported platforms for prebuilt wheels:
 
 No Rust toolchain is required when installing from an official wheel.
 
-### Rust-Backed Batch IV
+### Rust-Backed IV (Single + Batch)
 
-Newt includes a high-performance Rust extension for batch IV calculation.
+Newt includes a high-performance Rust extension for both single-feature IV and
+batch IV calculation.
 When installed from an official wheel, it works immediately:
 
 ```python
-from newt.features.analysis.batch_iv import calculate_batch_iv
+from newt.features.analysis import calculate_batch_iv, calculate_iv
 
 # Uses the Rust engine by default
-results = calculate_batch_iv(X, y, engine="rust")
+single = calculate_iv(df, target="target", feature="age")
+batch = calculate_batch_iv(X, y)
 
 # Explicit Python fallback
-results = calculate_batch_iv(X, y, engine="python")
+single_py = calculate_iv(df, target="target", feature="age", engine="python")
+batch_py = calculate_batch_iv(X, y, engine="python")
 ```
 
 If the Rust extension is not available (e.g. source install without Rust

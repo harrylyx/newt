@@ -83,6 +83,9 @@ def test_installed_wheel_can_import_rust_extension(tmp_path: Path):
                 """\
                 import newt._newt_iv_rust as ext
                 assert hasattr(ext, "calculate_batch_iv"), "missing calculate_batch_iv"
+                assert hasattr(
+                    ext, "calculate_categorical_iv"
+                ), "missing calculate_categorical_iv"
                 print("RUST_IMPORT_OK")
                 """
             ),

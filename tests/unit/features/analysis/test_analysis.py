@@ -62,7 +62,7 @@ def test_correlation(analysis_data):
 def test_iv_calculator(analysis_data):
     df = analysis_data
     # x1 is predictive
-    res = calculate_iv(df, target="target", feature="x1", buckets=5)
+    res = calculate_iv(df, target="target", feature="x1", buckets=5, engine="python")
 
     iv = res["iv"]
     table = res["woe_table"]
@@ -75,7 +75,13 @@ def test_iv_calculator(analysis_data):
     assert "iv_contribution" in table.columns
 
     # Check x3 (random) -> Low IV
-    res_rand = calculate_iv(df, target="target", feature="x3", buckets=5)
+    res_rand = calculate_iv(
+        df,
+        target="target",
+        feature="x3",
+        buckets=5,
+        engine="python",
+    )
     assert res_rand["iv"] < res["iv"]
 
 

@@ -42,3 +42,19 @@ def test_build_wheels_workflow_has_smoke_test():
     """The build workflow must include a post-install smoke test."""
     content = (WORKFLOWS / "build-wheels.yml").read_text()
     assert "newt._newt_iv_rust" in content or "smoke" in content.lower()
+
+
+def test_wheel_matrix_excludes_cp313():
+    """Wheel matrix should align with supported Python 3.8.5-3.12."""
+    build = (WORKFLOWS / "build-wheels.yml").read_text()
+    release = (WORKFLOWS / "release.yml").read_text()
+    assert "cp313" not in build
+    assert "cp313" not in release
+
+
+def test_sdist_build_uses_project_root_context():
+    """sdist should be built from pyproject context, not Cargo manifest path."""
+    build = (WORKFLOWS / "build-wheels.yml").read_text()
+    release = (WORKFLOWS / "release.yml").read_text()
+    assert "maturin sdist --out dist" in build
+    assert "maturin sdist --out dist" in release

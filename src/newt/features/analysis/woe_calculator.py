@@ -6,11 +6,12 @@ Provides WOE transformation for binned/categorical features.
 
 from typing import Any, Dict
 
-import numpy as np
 import pandas as pd
 
 from newt.config import BINNING
 from newt.utils.decorators import requires_fit
+
+from .iv_math import build_iv_summary
 
 
 class WOEEncoder:
@@ -41,8 +42,10 @@ class WOEEncoder:
         Parameters
         ----------
         epsilon : float
-            Smoothing factor to avoid division by zero. Default 1e-8.
+            Retained for backward compatibility. IV smoothing follows
+            toad-compatible defaults.
         """
+        # Kept for API compatibility; IV smoothing now follows toad semantics.
         self.epsilon = epsilon
         self.woe_map_: Dict[Any, float] = {}
         self.iv_: float = 0.0
@@ -65,50 +68,13 @@ class WOEEncoder:
         WOEEncoder
             Fitted instance.
         """
-        X = X.copy()
-        y = y.copy()
-
-        # Convert to string for consistent mapping
-        # This handles: integers, floats, categories, intervals, strings
-        X_str = X.astype(str)
-
-        # Create temporary dataframe for aggregation
-        df = pd.DataFrame({"bin": X_str, "target": y})
-
-        # Calculate Good/Bad stats
-        grouped = df.groupby("bin", observed=True)["target"].agg(["count", "sum"])
-        grouped = grouped.rename(columns={"count": "total", "sum": "bad"})
-        grouped["good"] = grouped["total"] - grouped["bad"]
-
-        total_bad = grouped["bad"].sum()
-        total_good = grouped["good"].sum()
-
-        if total_bad == 0 or total_good == 0:
-            # Degenerate case, set everything to 0
-            self.iv_ = 0.0
-            self.woe_map_ = {k: 0.0 for k in grouped.index}
-            self.summary_ = grouped.copy()
-            self.is_fitted_ = True
-            return self
-
-        # Distributions with smoothing
-        dist_bad = (grouped["bad"] / total_bad).clip(lower=self.epsilon)
-        dist_good = (grouped["good"] / total_good).clip(lower=self.epsilon)
-
-        # WoE and IV
-        woe = np.log(dist_good / dist_bad)
-        iv_contrib = (dist_good - dist_bad) * woe
-
-        # Store results
-        self.woe_map_ = woe.to_dict()
-        self.iv_ = float(iv_contrib.sum())
-
-        # Create summary table
-        self.summary_ = grouped.copy()
-        self.summary_["dist_good"] = dist_good
-        self.summary_["dist_bad"] = dist_bad
-        self.summary_["woe"] = woe
-        self.summary_["iv_contribution"] = iv_contrib
+        summary, iv_value = build_iv_summary(X.copy(), y.copy())
+        self.summary_ = summary
+        self.iv_ = float(iv_value)
+        if "woe" in summary.columns:
+            self.woe_map_ = summary["woe"].to_dict()
+        else:
+            self.woe_map_ = {}
 
         self.is_fitted_ = True
         return self

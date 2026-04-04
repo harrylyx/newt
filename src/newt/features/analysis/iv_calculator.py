@@ -1,10 +1,11 @@
+import importlib
 from typing import Dict, Union
 
 import pandas as pd
 
 from newt.config import BINNING
 
-from .woe_calculator import WOEEncoder
+from .iv_math import build_iv_summary, prepare_feature_for_iv
 
 
 def calculate_iv(
@@ -13,40 +14,62 @@ def calculate_iv(
     feature: str,
     buckets: int = BINNING.DEFAULT_BUCKETS,
     epsilon: float = BINNING.DEFAULT_EPSILON,
+    engine: str = "rust",
 ) -> Dict[str, Union[float, pd.DataFrame]]:
     """
     Calculate Information Value (IV) for a feature.
-    High performance implementation using vectorized operations via WOEEncoder.
 
     Args:
         df: Input DataFrame.
         target: Target column name (binary 0/1).
         feature: Feature column name.
         buckets: Number of buckets for numerical features (if not already binned).
-        epsilon: Small constant to avoid division by zero or log(0).
+        epsilon: Retained for backward compatibility.
+        engine: IV engine, either "rust" (default) or "python".
 
     Returns:
         Dict containing 'iv' (float) and 'woe_table' (pd.DataFrame).
     """
-    # If feature is numeric and has many unique values, bin it
-    if pd.api.types.is_numeric_dtype(df[feature]) and df[feature].nunique() > buckets:
-        try:
-            # Try quantile binning first
-            binned = pd.qcut(
-                df[feature],
-                q=buckets,
-                duplicates="drop",
-            ).astype(str)
-        except ValueError:
-            # Fall back to equal-width binning if quantiles fail.
-            binned = pd.cut(df[feature], bins=buckets).astype(str)
+    if engine not in {"rust", "python"}:
+        raise ValueError("engine must be 'rust' or 'python'")
 
-        feature_data = binned
+    feature_data = prepare_feature_for_iv(df[feature], buckets=buckets)
+    woe_table, python_iv = build_iv_summary(feature_data, df[target])
+
+    # Keep epsilon in the signature for API compatibility.
+    _ = epsilon
+
+    if engine == "python":
+        iv_value = float(python_iv)
     else:
-        # Categorical or low-cardinality numeric
-        feature_data = df[feature]
+        rust_module = _load_rust_extension()
+        target_numeric = pd.to_numeric(df[target], errors="coerce")
+        valid_mask = target_numeric.isin([0, 1])
+        prepared_feature = (
+            feature_data.loc[valid_mask]
+            .astype("object")
+            .where(lambda s: s.notna(), None)
+            .tolist()
+        )
+        target_values = target_numeric.loc[valid_mask].astype(int).tolist()
+        iv_value = float(
+            rust_module.calculate_categorical_iv(
+                prepared_feature,
+                target_values,
+            )
+        )
 
-    encoder = WOEEncoder(epsilon=epsilon)
-    encoder.fit(feature_data, df[target])
+    return {"iv": iv_value, "woe_table": woe_table}
 
-    return {"iv": float(encoder.iv_), "woe_table": encoder.summary_}
+
+def _load_rust_extension():
+    """Import the compiled Rust extension from the package."""
+    try:
+        return importlib.import_module("newt._newt_iv_rust")
+    except ImportError:
+        raise ImportError(
+            "The compiled Rust IV extension (newt._newt_iv_rust) is not "
+            "available. Install Newt from an official wheel that includes "
+            "the prebuilt Rust extension, or build from source with "
+            "'maturin develop --manifest-path rust/newt_iv_rust/Cargo.toml'."
+        )

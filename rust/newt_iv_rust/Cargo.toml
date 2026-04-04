@@ -1,10 +1,10 @@
 [package]
-name = "newt_iv_rust"
+name = "newt-iv-rust"
 version = "0.1.0"
 edition = "2021"
 
 [lib]
-name = "newt_iv_rust"
+name = "_newt_iv_rust"
 crate-type = ["cdylib"]
 
 [dependencies]

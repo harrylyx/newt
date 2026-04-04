@@ -14,7 +14,6 @@ dependencies = [
     "matplotlib>=3.7.0,<4.0.0",
     "statsmodels>=0.14.0,<0.15.0",
     "xlsxwriter>=3.2.0,<4.0.0",
-    "maturin>=1.8.0,<2.0.0",
 ]
 
 [project.optional-dependencies]
@@ -44,11 +43,14 @@ dev = [
 ]
 
 [build-system]
-requires = ["hatchling>=1.25.0"]
-build-backend = "hatchling.build"
+requires = ["maturin>=1.8.0,<2.0.0"]
+build-backend = "maturin"
 
-[tool.hatch.build.targets.wheel]
-packages = ["src/newt"]
+[tool.maturin]
+python-source = "src"
+module-name = "newt._newt_iv_rust"
+manifest-path = "rust/newt_iv_rust/Cargo.toml"
+features = ["pyo3/extension-module"]
 
 [tool.black]
 line-length = 88

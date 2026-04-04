@@ -114,7 +114,7 @@ fn calculate_batch_iv(
 }
 
 #[pymodule]
-fn newt_iv_rust(_py: Python<'_>, module: &Bound<'_, PyModule>) -> PyResult<()> {
+fn _newt_iv_rust(_py: Python<'_>, module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_function(wrap_pyfunction!(calculate_batch_iv, module)?)?;
     Ok(())
 }

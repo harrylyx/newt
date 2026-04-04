@@ -76,7 +76,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "newt_iv_rust"
+name = "newt-iv-rust"
 version = "0.1.0"
 dependencies = [
  "pyo3",

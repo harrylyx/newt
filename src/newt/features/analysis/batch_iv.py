@@ -3,12 +3,7 @@
 from __future__ import annotations
 
 import importlib
-import os
-import shutil
-import subprocess
-import sys
-from pathlib import Path
-from typing import Iterable, List, Optional, Sequence
+from typing import Optional, Sequence
 
 import numpy as np
 import pandas as pd
@@ -123,50 +118,19 @@ def _bin_index(value: object, edges: np.ndarray) -> int:
 
 
 def _load_rust_extension():
-    module_name = "newt_iv_rust"
+    """Import the compiled Rust extension from the package.
+
+    In installed environments the extension is available as
+    ``newt._newt_iv_rust``.  If the extension is not present (e.g. when
+    installed from a pure-Python sdist without a Rust toolchain), a clear
+    ``ImportError`` is raised.  No hidden local compilation is attempted.
+    """
     try:
-        return importlib.import_module(module_name)
+        return importlib.import_module("newt._newt_iv_rust")
     except ImportError:
-        _build_rust_extension()
-        return importlib.import_module(module_name)
-
-
-def _build_rust_extension() -> None:
-    repo_root = Path(__file__).resolve().parents[4]
-    manifest_path = repo_root / "rust" / "newt_iv_rust" / "Cargo.toml"
-    if not manifest_path.exists():
-        raise FileNotFoundError(f"Rust manifest not found: {manifest_path}")
-
-    command = [
-        str(_resolve_maturin_executable()),
-        "develop",
-        "--manifest-path",
-        str(manifest_path),
-        "--release",
-        "--quiet",
-    ]
-    env = dict(os.environ)
-    env.setdefault("PYO3_PYTHON", sys.executable)
-    completed = subprocess.run(
-        command,
-        cwd=repo_root,
-        env=env,
-        capture_output=True,
-        text=True,
-        check=False,
-    )
-    if completed.returncode != 0:
-        raise RuntimeError(
-            "Failed to build Rust IV extension.\n"
-            f"stdout:\n{completed.stdout}\n\nstderr:\n{completed.stderr}"
+        raise ImportError(
+            "The compiled Rust IV extension (newt._newt_iv_rust) is not "
+            "available. Install Newt from an official wheel that includes "
+            "the prebuilt Rust extension, or build from source with "
+            "'maturin develop --manifest-path rust/newt_iv_rust/Cargo.toml'."
         )
-
-
-def _resolve_maturin_executable() -> Path:
-    direct = shutil.which("maturin")
-    if direct:
-        return Path(direct)
-    candidate = Path(sys.executable).resolve().parent / "maturin"
-    if candidate.exists():
-        return candidate
-    raise FileNotFoundError("maturin executable not found in the current environment.")

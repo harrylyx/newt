@@ -4,6 +4,49 @@
 
 当前项目声明支持 Python `3.8.1` 及以上、`4.0` 以下版本，因此 Python `3.8.5` 在支持范围内。
 
+## 安装
+
+### 从 PyPI 安装
+
+```bash
+pip install newt
+```
+
+### 从 GitHub Release 安装（推荐，可获得 Rust IV 引擎）
+
+包含预编译 Rust IV 计算引擎的 wheel 文件可从
+[GitHub Releases](https://github.com/harrylyx/newt/releases) 下载。选择与您的操作系统和 Python 版本匹配的 wheel 文件：
+
+```bash
+pip install newt-<版本号>-<平台>.whl
+```
+
+预编译 wheel 支持的平台：
+
+| 操作系统 | 架构 |
+|---|---|
+| macOS | arm64 |
+| Windows | x86_64 |
+| Linux | x86_64, arm64 |
+
+从官方 wheel 安装时无需安装 Rust 工具链。
+
+### 基于 Rust 的批量 IV 计算
+
+Newt 包含一个高性能的 Rust 扩展用于批量 IV 计算。从官方 wheel 安装后可直接使用：
+
+```python
+from newt.features.analysis.batch_iv import calculate_batch_iv
+
+# 默认使用 Rust 引擎
+results = calculate_batch_iv(X, y, engine="rust")
+
+# 显式使用 Python 回退实现
+results = calculate_batch_iv(X, y, engine="python")
+```
+
+如果 Rust 扩展不可用（例如从源码安装且没有 Rust 工具链），请求 `engine="rust"` 会抛出明确的 `ImportError` 并附带安装指引。Python 回退实现始终可通过 `engine="python"` 使用。
+
 ## 目录
 
 1. [特征分箱](#1-特征分箱)

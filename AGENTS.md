@@ -107,6 +107,9 @@ newt/
 │   │   ├── results/
 │   │   ├── utils/
 │   │   └── visualization/
+│   ├── packaging/               # Packaging & wheel tests
+│   │   ├── test_install_from_wheel.py
+│   │   └── test_workflows.py
 │   ├── cross_val/                # Cross-validation tests
 │   │   └── compare_with_toad.py
 │   └── conftest.py              # Shared fixtures
@@ -122,7 +125,7 @@ newt/
 │       └── test_data/          # Sample report dataset/model
 ├── rust/
 │   └── newt_iv_rust/           # Rust extension for batch IV
-├── pyproject.toml                # uv/PEP 621 configuration
+├── pyproject.toml                # maturin/PEP 621 configuration
 ├── README.md                     # Package README
 └── AGENTS.md                    # This file
 ```
@@ -355,6 +358,9 @@ tests/
 │   ├── results/
 │   ├── utils/
 │   └── visualization/
+├── packaging/                    # Packaging & wheel tests
+│   ├── test_install_from_wheel.py
+│   └── test_workflows.py
 ├── cross_val/                    # Cross-validation tests
 │   └── compare_with_toad.py
 └── integration/                   # Integration tests (to be added)
@@ -436,10 +442,19 @@ uv run pre-commit run --all-files
   - Runs on push to main/master or PR
   - Tests Python 3.8, 3.9, 3.10
   - Runs flake8 and pytest with coverage
+  - `packaging-check` job validates workflow configs and packaging tests
+
+- `.github/workflows/build-wheels.yml`:
+  - Builds multi-platform wheels using `cibuildwheel`
+  - Targets macOS arm64, Windows x86_64, Linux x86_64/arm64
+  - Python 3.8+ through actively supported versions
+  - Runs installed-wheel smoke tests
 
 - `.github/workflows/release.yml`:
   - Runs on GitHub release creation
-  - Publishes to PyPI
+  - Builds all platform wheels and source distribution
+  - Uploads artifacts to GitHub Releases
+  - PyPI publishing deferred to later phase
 
 ## 9. Key Design Patterns
 
@@ -563,7 +578,7 @@ When adding new features:
 - **Scientific**: scipy, scikit-learn, statsmodels
 - **Binning**: optbinning (optional, for optimal binning)
 - **Reporting**: xlsxwriter
-- **Rust bridge**: maturin
+- **Build (Rust extension)**: maturin (build-time only), cibuildwheel (CI)
 - **Visualization**: matplotlib, seaborn
 - **Testing**: pytest, pytest-cov, coverage
 - **Code Quality**: black, isort, flake8

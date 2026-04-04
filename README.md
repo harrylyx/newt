@@ -22,11 +22,35 @@ Newt supports Python `3.8.1` up to but not including `4.0`, so Python `3.8.5` is
 pip install newt
 ```
 
+### Install from GitHub Release
+
+Prebuilt wheels with the Rust-backed IV engine are available from
+[GitHub Releases](https://github.com/harrylyx/newt/releases). Download the
+wheel matching your platform and Python version, then install directly:
+
+```bash
+pip install newt-<version>-<platform-wheel>.whl
+```
+
+**Supported platforms:**
+
+| OS | Architecture |
+|---|---|
+| macOS | arm64 |
+| Windows | x86_64 |
+| Linux | x86_64, arm64 |
+
+No Rust toolchain is required when installing from an official wheel.
+
+### Optional Dependencies
+
 Install the optional optimal binning stack only when you need `method='opt'`:
 
 ```bash
 pip install "newt[optbinning]"
 ```
+
+### Development
 
 For development with uv:
 
@@ -37,6 +61,9 @@ cd newt
 
 # Install dependencies (including dev group)
 uv sync --group dev
+
+# Build the Rust extension for development
+maturin develop --manifest-path rust/newt_iv_rust/Cargo.toml --release
 ```
 
 For Excel report development and validation (including `openpyxl`, `pyarrow`, and `lightgbm`), use the same `uv sync --group dev` environment.

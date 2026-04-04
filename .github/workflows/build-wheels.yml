@@ -1,8 +1,10 @@
-name: Release
+name: Build Wheels
 
 on:
-  release:
-    types: [created]
+  workflow_dispatch:
+  push:
+    tags:
+      - "v*"
 
 jobs:
   build-wheels:
@@ -69,29 +71,3 @@ jobs:
         with:
           name: sdist
           path: dist/*.tar.gz
-
-  publish-github-release:
-    name: Upload to GitHub Release
-    needs: [build-wheels, build-sdist]
-    runs-on: ubuntu-latest
-    permissions:
-      contents: write
-
-    steps:
-      - name: Download all wheel artifacts
-        uses: actions/download-artifact@v4
-        with:
-          pattern: wheels-*
-          merge-multiple: true
-          path: dist/
-
-      - name: Download sdist artifact
-        uses: actions/download-artifact@v4
-        with:
-          name: sdist
-          path: dist/
-
-      - name: Upload release assets
-        uses: softprops/action-gh-release@v2
-        with:
-          files: dist/*

@@ -438,10 +438,33 @@ def _calculate_psi_batch_with_rust(
     reference: _PsiReference,
     actual_groups: Sequence[Union[np.ndarray, list, pd.Series]],
 ) -> Optional[List[float]]:
-    rust_fn = _load_rust_psi_batch_fn()
-    if rust_fn is None:
+    module = _load_rust_module()
+    if module is None:
         return None
 
+    # Prefer numpy path (zero-copy, avoids List[Optional[float]] overhead)
+    numpy_fn = getattr(module, "calculate_psi_batch_from_edges_numpy", None)
+    if callable(numpy_fn):
+        try:
+            group_arrays = [
+                np.ascontiguousarray(_to_numeric_array(group))
+                for group in actual_groups
+            ]
+            values = numpy_fn(
+                np.ascontiguousarray(reference.edges, dtype=np.float64),
+                np.ascontiguousarray(reference.expected_counts, dtype=np.float64),
+                group_arrays,
+                bool(reference.include_missing_bucket),
+                float(reference.epsilon),
+            )
+            return [float(item) for item in values]
+        except Exception:
+            pass  # fall through to legacy path
+
+    # Legacy path: List[Optional[float]]
+    legacy_fn = getattr(module, "calculate_psi_batch_from_edges", None)
+    if not callable(legacy_fn):
+        return None
     try:
         group_values = [_to_optional_float_list(group) for group in actual_groups]
         args_common = (
@@ -450,17 +473,15 @@ def _calculate_psi_batch_with_rust(
             group_values,
         )
         try:
-            # New signature: (..., include_missing_bucket, epsilon)
-            values = rust_fn(
+            values = legacy_fn(
                 *args_common,
                 bool(reference.include_missing_bucket),
                 float(reference.epsilon),
             )
         except TypeError:
-            # Backward compatibility with old signature: (..., epsilon)
             if not reference.include_missing_bucket:
                 return None
-            values = rust_fn(
+            values = legacy_fn(
                 *args_common,
                 float(reference.epsilon),
             )
@@ -476,15 +497,12 @@ def _to_optional_float_list(
     return [None if np.isnan(item) else float(item) for item in numeric.tolist()]
 
 
-def _load_rust_psi_batch_fn():
+def _load_rust_module():
     for module_name in ("newt._newt_iv_rust", "_newt_iv_rust"):
         try:
-            module = importlib.import_module(module_name)
+            return importlib.import_module(module_name)
         except Exception:
             continue
-        function = getattr(module, "calculate_psi_batch_from_edges", None)
-        if callable(function):
-            return function
     return None
 
 

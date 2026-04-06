@@ -43,6 +43,31 @@ def calculate_batch_iv(
         raise ValueError("engine must be 'rust' or 'python'")
 
     rust_module = _load_rust_extension()
+
+    # Prefer numpy path (zero-copy, avoids per-feature List[Optional[float]])
+    numpy_fn = getattr(rust_module, "calculate_batch_iv_numpy", None)
+    if callable(numpy_fn):
+        feature_arrays = [
+            np.ascontiguousarray(
+                pd.to_numeric(
+                    X.loc[valid_target, feature],
+                    errors="coerce",
+                ).to_numpy(dtype=np.float64),
+            )
+            for feature in feature_names
+        ]
+        target_array = np.ascontiguousarray(
+            target.loc[valid_target].astype(np.int64).to_numpy()
+        )
+        values = numpy_fn(
+            feature_arrays,
+            target_array,
+            int(bins),
+            float(epsilon),
+        )
+        return pd.DataFrame({"feature": feature_names, "iv": values})
+
+    # Legacy path: List[Optional[float]]
     feature_vectors = [
         [
             None if pd.isna(value) else float(value)

@@ -19,8 +19,14 @@ report = Report(
     date_col="listinginfo",
     label_list=["target"],
     score_list=["score"],
-    dim_list=["userinfo_9"],
-    var_list=["thirdparty_info_period1_6"],
+    dim_list=["userinfo_9", "education_info2"],
+    var_list=[
+        "thirdparty_info_period1_6",
+        "thirdparty_info_period2_6",
+        "thirdparty_info_period4_10",
+        "thirdparty_info_period6_2",
+        "thirdparty_info_period4_9",
+    ],
     feature_path="",
     report_out_path="./examples/data/test_data/model_report.xlsx",
 )

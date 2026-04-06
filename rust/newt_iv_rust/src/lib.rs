@@ -1,3 +1,4 @@
+use numpy::PyReadonlyArray1;
 use pyo3::prelude::*;
 use rayon::prelude::*;
 use std::collections::HashMap;
@@ -250,10 +251,190 @@ fn calculate_categorical_iv(feature: Vec<Option<String>>, target: Vec<i64>) -> P
     Ok(iv_from_counts(&good_counts, &bad_counts))
 }
 
+#[pyfunction]
+fn calculate_psi_batch_from_edges_numpy(
+    py: Python<'_>,
+    edges: PyReadonlyArray1<f64>,
+    expected_counts: PyReadonlyArray1<f64>,
+    groups: Vec<PyReadonlyArray1<f64>>,
+    include_missing_bucket: bool,
+    epsilon: f64,
+) -> PyResult<Vec<f64>> {
+    let edges_slice = edges.as_slice().map_err(|e| {
+        pyo3::exceptions::PyValueError::new_err(format!("edges not contiguous: {}", e))
+    })?;
+    let expected_slice = expected_counts.as_slice().map_err(|e| {
+        pyo3::exceptions::PyValueError::new_err(format!(
+            "expected_counts not contiguous: {}",
+            e
+        ))
+    })?;
+    if edges_slice.len() < 2 {
+        return Err(pyo3::exceptions::PyValueError::new_err(
+            "Edges must contain at least 2 values.",
+        ));
+    }
+    let expected_len = if include_missing_bucket {
+        edges_slice.len()
+    } else {
+        edges_slice.len() - 1
+    };
+    if expected_slice.len() != expected_len {
+        return Err(pyo3::exceptions::PyValueError::new_err(
+            "Expected counts length is incompatible with edges and missing-bucket setting.",
+        ));
+    }
+
+    // Collect slices outside par_iter (PyReadonlyArray borrows Python GIL)
+    let group_vecs: Vec<Vec<f64>> = groups
+        .iter()
+        .map(|group| group.as_slice().map(|slice| slice.to_vec()))
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|e| {
+            pyo3::exceptions::PyValueError::new_err(format!("group not contiguous: {}", e))
+        })?;
+
+    py.allow_threads(|| {
+        Ok(group_vecs
+            .par_iter()
+            .map(|group_slice| {
+                let actual_counts =
+                    count_with_edges_f64(group_slice, edges_slice, include_missing_bucket);
+                psi_from_counts(expected_slice, &actual_counts, epsilon)
+            })
+            .collect())
+    })
+}
+
+/// Count values into bins from a raw f64 slice where NaN represents missing.
+fn count_with_edges_f64(
+    values: &[f64],
+    edges: &[f64],
+    include_missing_bucket: bool,
+) -> Vec<f64> {
+    let non_missing_bins = edges.len() - 1;
+    let missing_index = non_missing_bins;
+    let mut counts = if include_missing_bucket {
+        vec![0.0_f64; non_missing_bins + 1]
+    } else {
+        vec![0.0_f64; non_missing_bins]
+    };
+
+    for value in values {
+        if value.is_nan() {
+            if include_missing_bucket {
+                counts[missing_index] += 1.0;
+            }
+        } else {
+            let mut index = non_missing_bins - 1;
+            for (offset, edge) in edges[1..non_missing_bins].iter().enumerate() {
+                if *value < *edge {
+                    index = offset;
+                    break;
+                }
+            }
+            counts[index] += 1.0;
+        }
+    }
+
+    counts
+}
+
+#[pyfunction]
+fn calculate_batch_iv_numpy(
+    py: Python<'_>,
+    features: Vec<PyReadonlyArray1<f64>>,
+    target: PyReadonlyArray1<i64>,
+    bins: usize,
+    epsilon: f64,
+) -> PyResult<Vec<f64>> {
+    let target_slice = target.as_slice().map_err(|e| {
+        pyo3::exceptions::PyValueError::new_err(format!("target not contiguous: {}", e))
+    })?;
+
+    // Copy feature data out of GIL-bound numpy arrays
+    let feature_vecs: Vec<Vec<f64>> = features
+        .iter()
+        .map(|feature| {
+            let slice = feature.as_slice().map_err(|e| {
+                pyo3::exceptions::PyValueError::new_err(format!(
+                    "feature not contiguous: {}",
+                    e
+                ))
+            })?;
+            Ok(slice.to_vec())
+        })
+        .collect::<PyResult<Vec<_>>>()?;
+
+    for feature_vec in &feature_vecs {
+        if feature_vec.len() != target_slice.len() {
+            return Err(pyo3::exceptions::PyValueError::new_err(
+                "Feature length must match target length.",
+            ));
+        }
+    }
+
+    let target_vec: Vec<i64> = target_slice.to_vec();
+    py.allow_threads(|| {
+        Ok(feature_vecs
+            .par_iter()
+            .map(|feature_vec| calculate_single_iv_f64(feature_vec, &target_vec, bins, epsilon))
+            .collect())
+    })
+}
+
+/// Calculate IV from a raw f64 slice where NaN represents missing.
+fn calculate_single_iv_f64(
+    feature: &[f64],
+    target: &[i64],
+    bins: usize,
+    _epsilon: f64,
+) -> f64 {
+    let values: Vec<f64> = feature.iter().filter(|v| !v.is_nan()).copied().collect();
+    if values.is_empty() {
+        return 0.0;
+    }
+
+    let edges = build_edges(&values, bins);
+    let bucket_count = edges.len();
+    let mut good_counts = vec![0.0_f64; bucket_count];
+    let mut bad_counts = vec![0.0_f64; bucket_count];
+
+    for (value, label) in feature.iter().zip(target.iter()) {
+        let index = if value.is_nan() {
+            edges.len() - 1
+        } else {
+            let mut idx = edges.len() - 2;
+            for (offset, edge) in edges[1..edges.len() - 1].iter().enumerate() {
+                if *value < *edge {
+                    idx = offset;
+                    break;
+                }
+            }
+            idx
+        };
+        if *label == 1 {
+            bad_counts[index] += 1.0;
+        } else {
+            good_counts[index] += 1.0;
+        }
+    }
+
+    let total_good: f64 = good_counts.iter().sum();
+    let total_bad: f64 = bad_counts.iter().sum();
+    if total_good == 0.0 || total_bad == 0.0 {
+        return 0.0;
+    }
+
+    iv_from_counts(&good_counts, &bad_counts)
+}
+
 #[pymodule]
 fn _newt_iv_rust(_py: Python<'_>, module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_function(wrap_pyfunction!(calculate_batch_iv, module)?)?;
+    module.add_function(wrap_pyfunction!(calculate_batch_iv_numpy, module)?)?;
     module.add_function(wrap_pyfunction!(calculate_categorical_iv, module)?)?;
     module.add_function(wrap_pyfunction!(calculate_psi_batch_from_edges, module)?)?;
+    module.add_function(wrap_pyfunction!(calculate_psi_batch_from_edges_numpy, module)?)?;
     Ok(())
 }

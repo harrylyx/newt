@@ -1419,6 +1419,33 @@ def _build_feature_analysis_table(
         if not oot_frame.empty
         else {}
     )
+
+    # Pre-compute all feature train-vs-oot PSI in one batch
+    step_start = time.perf_counter()
+    feature_psi_lookup: Dict[str, float] = {}
+    psi_engine = build_context.options.engine if build_context else "python"
+    if not oot_frame.empty and feature_cols:
+        batch_actual = [oot_frame[feature] for feature in feature_cols]
+        for feature_name, train_series in zip(
+            feature_cols,
+            [train_frame[feature] for feature in feature_cols],
+        ):
+            psi_values = calculate_psi_batch(
+                expected=train_series,
+                actual_groups=[batch_actual[feature_cols.index(feature_name)]],
+                buckets=10,
+                engine=psi_engine,
+            )
+            feature_psi_lookup[feature_name] = (
+                float(psi_values[0]) if psi_values else float("nan")
+            )
+    LOGGER.debug(
+        "build_feature_analysis_table step finished | step=batch_feature_psi "
+        "elapsed=%.3fs features=%d",
+        time.perf_counter() - step_start,
+        len(feature_psi_lookup),
+    )
+
     total_features = len(feature_cols)
     worker_count = 1
     if (
@@ -1450,15 +1477,7 @@ def _build_feature_analysis_table(
             edges=train_edges,
             metric_name="ks",
         )
-        psi_values = calculate_psi_batch(
-            expected=train_frame[feature],
-            actual_groups=[
-                oot_frame[feature] if not oot_frame.empty else pd.Series(dtype=float)
-            ],
-            buckets=10,
-            engine=build_context.options.engine if build_context else "python",
-        )
-        psi_value = float(psi_values[0]) if psi_values else float("nan")
+        psi_value = feature_psi_lookup.get(feature, float("nan"))
         row = {
             "序号": index,
             "vars": feature,
@@ -1695,35 +1714,50 @@ def _build_feature_monthly_metrics(
     ].clip(min=1.0)
 
     rows: List[Dict[str, object]] = []
-    for month_value in _ordered_month_values(all_data[month_col]):
+    ordered_months = _ordered_month_values(all_data[month_col])
+    month_data_list: List[Tuple[object, np.ndarray, np.ndarray]] = []
+    for month_value in ordered_months:
         month_frame = all_data.loc[all_data[month_col] == month_value]
-        month_values, month_labels = _extract_feature_arrays(
+        month_vals, month_labs = _extract_feature_arrays(
             month_frame,
             feature=feature,
             label_col=label_col,
         )
-        if month_values.size == 0:
+        if month_vals.size == 0:
             continue
-        month_indices = _assign_bin_indices(month_values, edges_array)
+        month_data_list.append((month_value, month_vals, month_labs))
+
+    # Batch PSI: one call for all months
+    if month_data_list:
+        psi_values = calculate_psi_batch(
+            expected=pd.Series(train_values),
+            actual_groups=[
+                pd.Series(month_vals) for _, month_vals, _ in month_data_list
+            ],
+            buckets=10,
+            engine=engine,
+        )
+    else:
+        psi_values = []
+
+    for idx, (month_value, month_vals, month_labs) in enumerate(month_data_list):
+        month_indices = _assign_bin_indices(month_vals, edges_array)
         month_bin_scores = train_bin_scores[month_indices]
         fallback = (month_indices == non_missing_bins).astype(float)
         month_bin_scores = np.where(
             np.isnan(month_bin_scores), fallback, month_bin_scores
         )
         metrics = calculate_binary_metrics(
-            pd.Series(month_labels),
+            pd.Series(month_labs),
             pd.Series(month_bin_scores),
         )
         rows.append(
             {
                 "month": month_value,
                 **metrics,
-                "PSI": calculate_psi_batch(
-                    expected=pd.Series(train_values),
-                    actual_groups=[pd.Series(month_values)],
-                    buckets=10,
-                    engine=engine,
-                )[0],
+                "PSI": (
+                    float(psi_values[idx]) if idx < len(psi_values) else float("nan")
+                ),
             }
         )
     return _sort_report_table(pd.DataFrame(rows), month_column="month")

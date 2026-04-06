@@ -1,5 +1,6 @@
 from pathlib import Path
 
+import numpy as np
 import pandas as pd
 import pytest
 
@@ -125,8 +126,8 @@ def test_report_sorts_month_sections_and_splits_model_binning_tables(
     overview_sheet = report.result_.get_sheet("总览")
     tag_metrics = overview_sheet.get_block("按tag模型效果").data
     monthly_metrics = overview_sheet.get_block("按月模型效果").data
-    assert set(tag_metrics["观察点月"]) == {""}
-    assert set(monthly_metrics["样本集"]) == {""}
+    assert set(tag_metrics["观察点月"]) == {"20240131-20240430"}
+    assert set(monthly_metrics["样本集"]) == {"train,test,oot,oos"}
     train_months = monthly_metrics.loc[
         monthly_metrics["样本标签"] == "label_main",
         "观察点月",
@@ -143,6 +144,10 @@ def test_report_sorts_month_sections_and_splits_model_binning_tables(
     )
 
     performance_sheet = report.result_.get_sheet("模型表现")
+    perf_tag_metrics = performance_sheet.get_block("二、按tag模型效果").data
+    perf_month_metrics = performance_sheet.get_block("三、按月模型效果").data
+    assert set(perf_tag_metrics["观察点月"]) == {"20240131-20240430"}
+    assert set(perf_month_metrics["样本集"]) == {"train,test,oot,oos"}
     block_titles = [block.title for block in performance_sheet.blocks]
     assert "二、按tag模型效果" in block_titles
     assert "三、按月模型效果" in block_titles
@@ -372,6 +377,47 @@ def test_report_pairs_new_old_model_comparisons_by_group(
     assert tag_compare_a["模型"].tolist() == ["score_new", "score_old_a"] * 4
     assert tag_compare_score["模型"].tolist() == ["score_new", "score"] * 4
     assert month_compare_score["模型"].tolist() == ["score_new", "score"] * 4
+    assert set(tag_compare_a["观察点月"]) == {"20240131-20240430"}
+    assert set(tag_compare_score["观察点月"]) == {"20240131-20240430"}
+    assert set(month_compare_score["样本集"]) == {"train,test,oot,oos"}
+
+
+def test_report_overview_corr_precision_and_portrait_wide_layout(
+    tmp_path,
+    report_frame,
+    fake_lightgbm_model,
+):
+    output_path = tmp_path / "overview_corr_portrait.xlsx"
+
+    report = Report(
+        data=report_frame,
+        model=fake_lightgbm_model,
+        tag="tag",
+        score_col="score_new",
+        date_col="obs_date",
+        label_list=["label_main"],
+        score_list=["score_old_a"],
+        var_list=["profile_income", "profile_age"],
+        sheet_list=["总览"],
+        report_out_path=str(output_path),
+    )
+
+    report.generate()
+
+    overview_sheet = report.result_.get_sheet("总览")
+    corr = overview_sheet.get_block("OOT相关性矩阵").data
+    numeric_corr = corr.drop(columns=["模型"]).apply(pd.to_numeric, errors="coerce")
+    assert np.allclose(
+        numeric_corr.to_numpy(dtype=float),
+        np.round(numeric_corr.to_numpy(dtype=float), 4),
+        equal_nan=True,
+    )
+
+    portrait = overview_sheet.get_block("OOT画像变量均值对比").data
+    expected_columns = ["画像变量", "模型", *[str(i) for i in range(1, 11)], "Missing"]
+    assert list(portrait.columns) == expected_columns
+    assert set(portrait["画像变量"]) == {"profile_income", "profile_age"}
+    assert len(portrait) == 4
 
 
 def test_report_model_design_distribution_layout_and_tag_order(

@@ -179,6 +179,7 @@ def build_report_result(
     model_adapter: ModelAdapter,
     tag_col: str,
     month_col: str,
+    raw_date_col: str,
     label_list: Sequence[str],
     score_list: Sequence[str],
     primary_score_name: str,
@@ -271,6 +272,7 @@ def build_report_result(
             data=data,
             tag_col=tag_col,
             month_col=month_col,
+            raw_date_col=raw_date_col,
             primary_score_name=primary_score_name,
             report_score_columns=report_score_columns,
             score_direction_summary=score_direction_summary,
@@ -285,6 +287,7 @@ def build_report_result(
             data=data,
             tag_col=tag_col,
             month_col=month_col,
+            raw_date_col=raw_date_col,
             primary_label=primary_label,
             label_list=label_list,
             score_col=primary_report_score,
@@ -308,6 +311,7 @@ def build_report_result(
             data=data,
             tag_col=tag_col,
             month_col=month_col,
+            raw_date_col=raw_date_col,
             label_list=label_list,
             primary_label=primary_label,
             score_col=primary_report_score,
@@ -388,6 +392,7 @@ def build_overview_sheet(
     data: pd.DataFrame,
     tag_col: str,
     month_col: str,
+    raw_date_col: str,
     primary_score_name: str,
     report_score_columns: Dict[str, str],
     score_direction_summary: pd.DataFrame,
@@ -439,6 +444,7 @@ def build_overview_sheet(
         data=data,
         tag_col=tag_col,
         month_col=month_col,
+        raw_date_col=raw_date_col,
         label_list=label_list,
         score_col=primary_score_col,
         model_name=primary_score_name,
@@ -475,6 +481,7 @@ def build_overview_sheet(
                 model_columns=pair_models,
                 tag_col=tag_col,
                 month_col=month_col,
+                raw_date_col=raw_date_col,
                 score_metric_options=score_metric_options,
                 build_context=build_context,
             )
@@ -485,6 +492,7 @@ def build_overview_sheet(
                 model_columns=pair_models,
                 tag_col=tag_col,
                 month_col=month_col,
+                raw_date_col=raw_date_col,
                 score_metric_options=score_metric_options,
                 build_context=build_context,
             )
@@ -504,6 +512,7 @@ def build_overview_sheet(
             oot_frame,
             [column for _, column in score_model_columns],
         )
+        corr = corr.round(4)
         corr = corr.rename(index=display_by_column, columns=display_by_column)
         corr.index.name = "模型"
         blocks.append(ReportBlock(title="OOT相关性矩阵", data=corr.reset_index()))
@@ -515,6 +524,7 @@ def build_overview_sheet(
             variable_cols=var_list,
         )
         portrait["模型"] = portrait["模型"].map(display_by_column).fillna(portrait["模型"])
+        portrait = _reshape_portrait_table(portrait)
         blocks.append(ReportBlock(title="OOT画像变量均值对比", data=portrait))
 
     return ReportSheet(name="总览", blocks=blocks)
@@ -524,6 +534,7 @@ def build_model_design_sheet(
     data: pd.DataFrame,
     tag_col: str,
     month_col: str,
+    raw_date_col: str,
     primary_label: str,
     label_list: Sequence[str],
     score_col: str,
@@ -591,6 +602,7 @@ def build_model_design_sheet(
             score_col=score_col,
             tag_col=tag_col,
             month_col=month_col,
+            raw_date_col=raw_date_col,
             model_name=model_name,
             reverse_auc_label=reverse_auc_label,
             build_context=build_context,
@@ -793,6 +805,7 @@ def build_model_performance_sheet(
     data: pd.DataFrame,
     tag_col: str,
     month_col: str,
+    raw_date_col: str,
     label_list: Sequence[str],
     primary_label: str,
     score_col: str,
@@ -808,6 +821,7 @@ def build_model_performance_sheet(
         data=data,
         tag_col=tag_col,
         month_col=month_col,
+        raw_date_col=raw_date_col,
         label_list=label_list,
         score_col=score_col,
         model_name=model_name,
@@ -851,6 +865,7 @@ def _build_split_metrics_tables(
     data: pd.DataFrame,
     tag_col: str,
     month_col: str,
+    raw_date_col: str,
     label_list: Sequence[str],
     score_col: str,
     model_name: str,
@@ -864,6 +879,7 @@ def _build_split_metrics_tables(
         bool(reverse_auc_label),
         tag_col,
         month_col,
+        raw_date_col,
     )
     if build_context is not None:
         cached = build_context.cache_get_split_metrics(cache_key)
@@ -891,6 +907,7 @@ def _build_split_metrics_tables(
             score_col=score_col,
             tag_col=tag_col,
             month_col=month_col,
+            raw_date_col=raw_date_col,
             train_reference=train_reference,
             model_name=model_name,
             reverse_auc_label=reverse_auc_label,
@@ -905,6 +922,7 @@ def _build_split_metrics_tables(
             score_col=score_col,
             tag_col=tag_col,
             month_col=month_col,
+            raw_date_col=raw_date_col,
             train_reference=train_reference,
             model_name=model_name,
             reverse_auc_label=reverse_auc_label,
@@ -936,6 +954,7 @@ def _build_model_pair_comparison(
     model_columns: Sequence[Tuple[str, str]],
     tag_col: str,
     month_col: str,
+    raw_date_col: str,
     score_metric_options: Dict[str, Dict[str, bool]],
     build_context: Optional[ReportBuildContext] = None,
 ) -> pd.DataFrame:
@@ -967,6 +986,7 @@ def _build_model_pair_comparison(
                 score_col=score_col,
                 tag_col=tag_col,
                 month_col=month_col,
+                raw_date_col=raw_date_col,
                 train_reference=train_reference,
                 model_name=model_name,
                 reverse_auc_label=_lookup_reverse_auc(score_metric_options, model_name),
@@ -996,6 +1016,7 @@ def _build_group_metrics(
     score_col: str,
     tag_col: str,
     month_col: str,
+    raw_date_col: str,
     train_reference: Optional[pd.Series] = None,
     latest_month_psi: Optional[pd.DataFrame] = None,
     model_name: str = "",
@@ -1008,6 +1029,7 @@ def _build_group_metrics(
         score_col,
         tag_col,
         month_col,
+        raw_date_col,
         model_name,
         bool(reverse_auc_label),
         bool(train_reference is not None),
@@ -1018,7 +1040,11 @@ def _build_group_metrics(
             return cached
 
     records: List[Dict[str, object]] = []
-    required_columns = list(dict.fromkeys([*group_cols, label_col, score_col]))
+    required_columns = list(
+        dict.fromkeys(
+            [*group_cols, label_col, score_col, tag_col, month_col, raw_date_col]
+        )
+    )
     ordered = data.loc[:, required_columns].copy()
     for group_col in group_cols:
         ordered[group_col] = (
@@ -1047,17 +1073,29 @@ def _build_group_metrics(
     for group_index, (group_values, group_frame) in enumerate(grouped_frames):
         if not isinstance(group_values, tuple):
             group_values = (group_values,)
-        group_dict = dict(zip(group_cols, group_values))
         metrics = _calculate_report_metrics(
             group_frame[label_col],
             group_frame[score_col],
             reverse_auc_label=reverse_auc_label,
         )
+        sample_tag_value = _resolve_sample_set_label(
+            group_frame=group_frame,
+            group_cols=group_cols,
+            tag_col=tag_col,
+            month_col=month_col,
+        )
+        observation_month_value = _resolve_observation_window(
+            group_frame=group_frame,
+            group_cols=group_cols,
+            tag_col=tag_col,
+            month_col=month_col,
+            raw_date_col=raw_date_col,
+        )
         record: Dict[str, object] = {
             "样本标签": label_col,
             "模型": model_name or score_col,
-            "样本集": group_dict.get(tag_col, "") if tag_col else "",
-            "观察点月": group_dict.get(month_col, "") if month_col else "",
+            "样本集": sample_tag_value,
+            "观察点月": observation_month_value,
             **metrics,
         }
 
@@ -1224,6 +1262,91 @@ def _build_dimensional_comparison(
                         }
                     )
     return pd.DataFrame(rows)
+
+
+def _resolve_sample_set_label(
+    group_frame: pd.DataFrame,
+    group_cols: Sequence[str],
+    tag_col: str,
+    month_col: str,
+) -> str:
+    if list(group_cols) == [tag_col]:
+        first = group_frame[tag_col].iloc[0] if not group_frame.empty else ""
+        return "" if pd.isna(first) else str(first)
+    if list(group_cols) == [month_col]:
+        return _join_present_tags(group_frame[tag_col])
+    return ""
+
+
+def _resolve_observation_window(
+    group_frame: pd.DataFrame,
+    group_cols: Sequence[str],
+    tag_col: str,
+    month_col: str,
+    raw_date_col: str,
+) -> str:
+    if list(group_cols) == [tag_col]:
+        return _format_date_range(group_frame[raw_date_col])
+    if list(group_cols) == [month_col]:
+        first = group_frame[month_col].iloc[0] if not group_frame.empty else ""
+        return "" if pd.isna(first) else str(first)
+    return ""
+
+
+def _format_date_range(values: pd.Series) -> str:
+    parsed = pd.to_datetime(values, errors="coerce").dropna()
+    if parsed.empty:
+        return ""
+    return f"{parsed.min().strftime('%Y%m%d')}-{parsed.max().strftime('%Y%m%d')}"
+
+
+def _join_present_tags(values: pd.Series) -> str:
+    tags = [
+        str(value) for value in values.dropna().tolist() if str(value).strip() != ""
+    ]
+    if not tags:
+        return ""
+    ordered = sorted(set(tags), key=_tag_sort_key)
+    return ",".join(ordered)
+
+
+def _reshape_portrait_table(portrait: pd.DataFrame) -> pd.DataFrame:
+    target_columns = [
+        "画像变量",
+        "模型",
+        *[str(index) for index in range(1, 11)],
+        "Missing",
+    ]
+    if portrait.empty:
+        return pd.DataFrame(columns=target_columns)
+
+    working = portrait.copy()
+    non_missing_bins = sorted(
+        {
+            str(value)
+            for value in working["分组"].astype(str).tolist()
+            if str(value) != "Missing"
+        },
+        key=_interval_left,
+    )
+    bin_label_map = {
+        label: str(index + 1) for index, label in enumerate(non_missing_bins[:10])
+    }
+    working["_bin_label"] = working["分组"].astype(str).map(bin_label_map)
+    working.loc[working["分组"].astype(str) == "Missing", "_bin_label"] = "Missing"
+    working = working.loc[working["_bin_label"].notna()]
+
+    pivoted = (
+        working.pivot_table(
+            index=["画像变量", "模型"],
+            columns="_bin_label",
+            values="均值",
+            aggfunc="mean",
+        )
+        .reindex(columns=[str(index) for index in range(1, 11)] + ["Missing"])
+        .reset_index()
+    )
+    return pivoted.reindex(columns=target_columns)
 
 
 def _build_feature_analysis_table(

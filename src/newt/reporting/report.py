@@ -129,6 +129,7 @@ class Report:
             model_adapter=adapter,
             tag_col=self.tag,
             month_col="_report_month",
+            raw_date_col=self.date_col,
             label_list=self.label_list,
             score_list=self.score_list,
             primary_score_name=self.score_col,

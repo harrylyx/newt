@@ -34,12 +34,12 @@ def test_report_generate_creates_selected_sheets(
 
     assert generated == str(output_path)
     assert Path(generated).exists()
-    assert report.result_.sheet_names == ["总览", "模型表现"]
+    assert report.result_.sheet_names == ["总览", "3.模型表现"]
 
     workbook = openpyxl.load_workbook(generated)
-    assert workbook.sheetnames == ["总览", "模型表现"]
+    assert workbook.sheetnames == ["总览", "3.模型表现"]
     assert workbook["总览"]["A1"].value == "一、目标与设计方案"
-    assert workbook["模型表现"]["A1"].value == "一、建模方法选择"
+    assert workbook["3.模型表现"]["A1"].value == "一、建模方法选择"
 
 
 def test_report_overview_metrics_expand_all_labels(
@@ -96,7 +96,15 @@ def test_report_generate_all_sheets_handles_interval_cells(
     generated = report.generate()
     workbook = openpyxl.load_workbook(generated)
 
-    assert workbook.sheetnames == ["总览", "模型设计", "变量分析", "模型表现"]
+    assert workbook.sheetnames == [
+        "总览",
+        "1.模型设计",
+        "2.变量分析",
+        "3.模型表现",
+        "附1 分维度对比",
+        "附2 新老模型对比",
+        "附3 画像变量",
+    ]
 
 
 def test_report_sorts_month_sections_and_splits_model_binning_tables(
@@ -134,7 +142,7 @@ def test_report_sorts_month_sections_and_splits_model_binning_tables(
     ].tolist()
     assert train_months == ["202401", "202402", "202403", "202404"]
 
-    variable_sheet = report.result_.get_sheet("变量分析")
+    variable_sheet = report.result_.get_sheet("2.变量分析")
     feature_month_blocks = [
         block for block in variable_sheet.blocks if block.title.endswith("按月效果")
     ]
@@ -143,7 +151,7 @@ def test_report_sorts_month_sections_and_splits_model_binning_tables(
         feature_month_blocks[0].data["month"].tolist()
     )
 
-    performance_sheet = report.result_.get_sheet("模型表现")
+    performance_sheet = report.result_.get_sheet("3.模型表现")
     perf_tag_metrics = performance_sheet.get_block("二、按tag模型效果").data
     perf_month_metrics = performance_sheet.get_block("三、按月模型效果").data
     assert set(perf_tag_metrics["观察点月"]) == {"20240131-20240430"}
@@ -189,8 +197,8 @@ def test_report_formats_iv_with_four_decimals_and_places_chart_after_monthly_tab
 
     generated = report.generate()
     workbook = openpyxl.load_workbook(generated)
-    worksheet = workbook["变量分析"]
-    analysis_sheet = report.result_.get_sheet("变量分析")
+    worksheet = workbook["2.变量分析"]
+    analysis_sheet = report.result_.get_sheet("2.变量分析")
     analysis_block = analysis_sheet.get_block("二、变量分析")
 
     analysis_header_row = next(
@@ -258,7 +266,7 @@ def test_report_formats_iv_with_four_decimals_and_places_chart_after_monthly_tab
     min_values = first_bin_block.data["min"].dropna().tolist()
     assert min_values == sorted(min_values)
 
-    variable_sheet = report.result_.get_sheet("变量分析")
+    variable_sheet = report.result_.get_sheet("2.变量分析")
     first_bin_title = next(
         block.title for block in variable_sheet.blocks if block.title.endswith("分箱表")
     )
@@ -335,7 +343,7 @@ def test_report_keeps_raw_score_values_in_model_binning(
 
     report.generate()
 
-    performance_sheet = report.result_.get_sheet("模型表现")
+    performance_sheet = report.result_.get_sheet("3.模型表现")
     train_block = performance_sheet.get_block("train").data
     finite_min = (
         train_block["min"].replace([-float("inf"), float("inf")], pd.NA).dropna()
@@ -446,7 +454,7 @@ def test_report_model_design_distribution_layout_and_tag_order(
 
     report.generate()
 
-    design_sheet = report.result_.get_sheet("模型设计")
+    design_sheet = report.result_.get_sheet("1.模型设计")
     raw_distribution = design_sheet.get_block("原始样本分布表").data
     dev_distribution = design_sheet.get_block("开发样本分布表").data
     model_distribution = design_sheet.get_block("建模样本分布情况表").data
@@ -478,7 +486,7 @@ def test_report_model_binning_tables_sort_by_bin_order(
 
     report.generate()
 
-    performance_sheet = report.result_.get_sheet("模型表现")
+    performance_sheet = report.result_.get_sheet("3.模型表现")
     train_block = performance_sheet.get_block("train")
     month_block = performance_sheet.get_block("202401")
     for block in [train_block, month_block]:
@@ -511,7 +519,15 @@ def test_report_parallel_sheets_preserve_order_and_record_runtime_options(
 
     report.generate()
 
-    assert report.result_.sheet_names == ["总览", "模型设计", "变量分析", "模型表现"]
+    assert report.result_.sheet_names == [
+        "总览",
+        "1.模型设计",
+        "2.变量分析",
+        "3.模型表现",
+        "附1 分维度对比",
+        "附2 新老模型对比",
+        "附3 画像变量",
+    ]
     options = report.result_.metadata["report_compute_options"]
     assert options == {
         "engine": "python",
@@ -520,6 +536,145 @@ def test_report_parallel_sheets_preserve_order_and_record_runtime_options(
         "memory_mode": "compact",
     }
     assert report.result_.metadata["report_compute_top_timings"]
+
+
+@pytest.mark.parametrize(
+    ("dim_list", "score_list", "var_list", "expected_appendix_names"),
+    [
+        ([], [], [], []),
+        (["channel_dim"], [], [], ["附1 分维度对比"]),
+        ([], ["score_old_a"], [], ["附1 新老模型对比"]),
+        ([], [], ["profile_income"], ["附1 画像变量"]),
+        (
+            ["channel_dim"],
+            ["score_old_a"],
+            ["profile_income"],
+            ["附1 分维度对比", "附2 新老模型对比", "附3 画像变量"],
+        ),
+    ],
+)
+def test_report_appendix_sheet_numbering(
+    tmp_path,
+    report_frame,
+    fake_lightgbm_model,
+    dim_list,
+    score_list,
+    var_list,
+    expected_appendix_names,
+):
+    output_path = tmp_path / "appendix_numbering.xlsx"
+    report = Report(
+        data=report_frame,
+        model=fake_lightgbm_model,
+        tag="tag",
+        score_col="score_new",
+        date_col="obs_date",
+        label_list=["label_main"],
+        dim_list=dim_list,
+        score_list=score_list,
+        var_list=var_list,
+        report_out_path=str(output_path),
+    )
+
+    report.generate()
+
+    expected_names = [
+        "总览",
+        "1.模型设计",
+        "2.变量分析",
+        "3.模型表现",
+        *expected_appendix_names,
+    ]
+    assert report.result_.sheet_names == expected_names
+
+
+def test_report_sheet_selector_rejects_numbered_sheet_name(
+    report_frame,
+    fake_lightgbm_model,
+):
+    report = Report(
+        data=report_frame,
+        model=fake_lightgbm_model,
+        tag="tag",
+        score_col="score_new",
+        date_col="obs_date",
+        label_list=["label_main"],
+        sheet_list=["1.模型设计"],
+    )
+
+    with pytest.raises(ValueError, match="Unknown sheet name"):
+        report.generate()
+
+
+def test_report_overview_reuses_child_sheet_blocks(
+    tmp_path,
+    report_frame,
+    fake_lightgbm_model,
+    monkeypatch,
+):
+    from newt.reporting import tables
+
+    call_count = {"value": 0}
+    original = tables._build_split_metrics_tables
+
+    def _counted(*args, **kwargs):
+        call_count["value"] += 1
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(tables, "_build_split_metrics_tables", _counted)
+
+    output_path = tmp_path / "overview_reuse.xlsx"
+    report = Report(
+        data=report_frame,
+        model=fake_lightgbm_model,
+        tag="tag",
+        score_col="score_new",
+        date_col="obs_date",
+        label_list=["label_main"],
+        score_list=["score_old_a"],
+        dim_list=["channel_dim"],
+        var_list=["profile_income"],
+        sheet_list=["总览", "模型表现", "分维度对比", "新老模型对比", "画像变量"],
+        report_out_path=str(output_path),
+    )
+
+    report.generate()
+
+    overview = report.result_.get_sheet("总览")
+    performance = report.result_.get_sheet("3.模型表现")
+    dimensional = report.result_.get_sheet("附1 分维度对比")
+    comparison = report.result_.get_sheet("附2 新老模型对比")
+    portrait = report.result_.get_sheet("附3 画像变量")
+
+    pd.testing.assert_frame_equal(
+        overview.get_block("按tag模型效果").data.reset_index(drop=True),
+        performance.get_block("二、按tag模型效果").data.reset_index(drop=True),
+    )
+    pd.testing.assert_frame_equal(
+        overview.get_block("按月模型效果").data.reset_index(drop=True),
+        performance.get_block("三、按月模型效果").data.reset_index(drop=True),
+    )
+    pd.testing.assert_frame_equal(
+        overview.get_block("分维度对比模型效果").data.reset_index(drop=True),
+        dimensional.get_block("分维度对比模型效果").data.reset_index(drop=True),
+    )
+    pd.testing.assert_frame_equal(
+        overview.get_block("按tag新老模型对比(score_old_a)").data.reset_index(drop=True),
+        comparison.get_block("按tag新老模型对比(score_old_a)").data.reset_index(drop=True),
+    )
+    pd.testing.assert_frame_equal(
+        overview.get_block("按月新老模型对比(score_old_a)").data.reset_index(drop=True),
+        comparison.get_block("按月新老模型对比(score_old_a)").data.reset_index(drop=True),
+    )
+    pd.testing.assert_frame_equal(
+        overview.get_block("OOT相关性矩阵").data.reset_index(drop=True),
+        comparison.get_block("OOT相关性矩阵").data.reset_index(drop=True),
+    )
+    pd.testing.assert_frame_equal(
+        overview.get_block("OOT画像变量均值对比").data.reset_index(drop=True),
+        portrait.get_block("OOT画像变量均值对比").data.reset_index(drop=True),
+    )
+    assert call_count["value"] == 1
 
 
 def test_report_runtime_option_validation_rejects_invalid_engine(

@@ -17,7 +17,7 @@ from newt.reporting.score_prep import prepare_report_scores
 from newt.reporting.tables import (
     ReportBuildOptions,
     build_report_result,
-    resolve_sheet_names,
+    resolve_sheet_keys,
 )
 from newt.results import ModelReportResult
 
@@ -106,12 +106,12 @@ class Report:
         )
 
         step_start = time.perf_counter()
-        selected_sheets = resolve_sheet_names(self.sheet_list)
+        selected_sheets = resolve_sheet_keys(self.sheet_list)
         _log_stage(
             stage_timings,
-            "resolve_sheet_names",
+            "resolve_sheet_keys",
             time.perf_counter() - step_start,
-            extra=f"selected_sheets={selected_sheets}",
+            extra=f"selected_sheet_keys={selected_sheets}",
         )
 
         step_start = time.perf_counter()

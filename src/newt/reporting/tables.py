@@ -146,32 +146,129 @@ def _log_top_context_timings(
     LOGGER.debug("build_report_result slowest_steps | %s", top)
 
 
-SHEET_NAME_MAP = {
-    1: "总览",
-    2: "模型设计",
-    3: "变量分析",
-    4: "模型表现",
+MAIN_SHEET_KEY_ORDER = [
+    "overview",
+    "model_design",
+    "variable_analysis",
+    "model_performance",
+]
+APPENDIX_SHEET_KEY_ORDER = [
+    "dimensional_comparison",
+    "model_comparison",
+    "portrait",
+]
+SHEET_KEY_ORDER = [*MAIN_SHEET_KEY_ORDER, *APPENDIX_SHEET_KEY_ORDER]
+
+SHEET_INDEX_SELECTOR_MAP = {
+    1: "overview",
+    2: "model_design",
+    3: "variable_analysis",
+    4: "model_performance",
+}
+
+SHEET_NAME_SELECTOR_MAP = {
+    "总览": "overview",
+    "模型设计": "model_design",
+    "变量分析": "variable_analysis",
+    "模型表现": "model_performance",
+    "分维度对比": "dimensional_comparison",
+    "新老模型对比": "model_comparison",
+    "画像变量": "portrait",
+}
+
+MAIN_SHEET_OUTPUT_NAME_MAP = {
+    "overview": "总览",
+    "model_design": "1.模型设计",
+    "variable_analysis": "2.变量分析",
+    "model_performance": "3.模型表现",
+}
+
+APPENDIX_SHEET_LABEL_MAP = {
+    "dimensional_comparison": "分维度对比",
+    "model_comparison": "新老模型对比",
+    "portrait": "画像变量",
 }
 
 
-def resolve_sheet_names(sheet_list: Optional[Sequence[object]]) -> List[str]:
-    """Resolve sheet selection input into ordered names."""
+def resolve_sheet_keys(sheet_list: Optional[Sequence[object]]) -> List[str]:
+    """Resolve user sheet selectors into logical sheet keys."""
     if not sheet_list:
-        return [SHEET_NAME_MAP[index] for index in sorted(SHEET_NAME_MAP)]
+        return list(SHEET_KEY_ORDER)
 
     resolved: List[str] = []
     for item in sheet_list:
         if isinstance(item, int):
-            if item not in SHEET_NAME_MAP:
+            if item not in SHEET_INDEX_SELECTOR_MAP:
                 raise ValueError(f"Unknown sheet index: {item}")
-            sheet_name = SHEET_NAME_MAP[item]
+            sheet_key = SHEET_INDEX_SELECTOR_MAP[item]
         else:
             sheet_name = str(item)
-            if sheet_name not in SHEET_NAME_MAP.values():
+            if sheet_name not in SHEET_NAME_SELECTOR_MAP:
                 raise ValueError(f"Unknown sheet name: {sheet_name}")
-        if sheet_name not in resolved:
-            resolved.append(sheet_name)
+            sheet_key = SHEET_NAME_SELECTOR_MAP[sheet_name]
+        if sheet_key not in resolved:
+            resolved.append(sheet_key)
     return resolved
+
+
+def resolve_sheet_names(sheet_list: Optional[Sequence[object]]) -> List[str]:
+    """Backward-compatible alias for logical sheet key resolution."""
+    return resolve_sheet_keys(sheet_list)
+
+
+def _resolve_optional_sheet_availability(
+    data: pd.DataFrame,
+    tag_col: str,
+    dim_list: Sequence[str],
+    score_list: Sequence[str],
+    var_list: Sequence[str],
+) -> Dict[str, bool]:
+    has_oot = bool((data[tag_col] == "oot").any())
+    return {
+        "dimensional_comparison": bool(dim_list) and has_oot,
+        "model_comparison": bool(score_list),
+        "portrait": bool(var_list) and has_oot,
+    }
+
+
+def _filter_output_sheet_keys(
+    requested_keys: Sequence[str],
+    availability: Dict[str, bool],
+) -> List[str]:
+    output: List[str] = []
+    for key in requested_keys:
+        if key in availability and not availability[key]:
+            continue
+        if key not in output:
+            output.append(key)
+    return output
+
+
+def _resolve_build_keys(
+    output_keys: Sequence[str],
+    availability: Dict[str, bool],
+) -> List[str]:
+    build_keys = set(output_keys)
+    if "overview" in output_keys:
+        build_keys.add("model_performance")
+        for appendix_key in APPENDIX_SHEET_KEY_ORDER:
+            if availability.get(appendix_key, False):
+                build_keys.add(appendix_key)
+    return [key for key in SHEET_KEY_ORDER if key in build_keys]
+
+
+def _resolve_output_sheet_names(output_keys: Sequence[str]) -> Dict[str, str]:
+    names: Dict[str, str] = {}
+    for main_key in MAIN_SHEET_KEY_ORDER:
+        if main_key in output_keys:
+            names[main_key] = MAIN_SHEET_OUTPUT_NAME_MAP[main_key]
+
+    appendix_present = [
+        key for key in APPENDIX_SHEET_KEY_ORDER if key in set(output_keys)
+    ]
+    for index, appendix_key in enumerate(appendix_present, start=1):
+        names[appendix_key] = f"附{index} {APPENDIX_SHEET_LABEL_MAP[appendix_key]}"
+    return names
 
 
 def build_report_result(
@@ -201,7 +298,7 @@ def build_report_result(
         options=resolved_options,
     )
     LOGGER.debug(
-        "build_report_result started | rows=%d cols=%d selected_sheets=%s "
+        "build_report_result started | rows=%d cols=%d selected_sheet_keys=%s "
         "engine=%s workers=%d parallel_sheets=%s memory_mode=%s",
         len(data),
         len(data.columns),
@@ -212,14 +309,22 @@ def build_report_result(
         resolved_options.memory_mode,
     )
 
-    sheets: Dict[str, ReportSheet] = {}
-    step_start = time.perf_counter()
-    feature_dict = _load_feature_dictionary(feature_path)
-    _log_context_stage(
-        context,
-        "load_feature_dictionary",
-        time.perf_counter() - step_start,
-        extra=f"rows={len(feature_dict)}",
+    optional_sheet_availability = _resolve_optional_sheet_availability(
+        data=data,
+        tag_col=tag_col,
+        dim_list=dim_list,
+        score_list=score_list,
+        var_list=var_list,
+    )
+    output_sheet_keys = _filter_output_sheet_keys(
+        requested_keys=selected_sheets,
+        availability=optional_sheet_availability,
+    )
+    if not output_sheet_keys:
+        raise ValueError("No available sheets for the current report configuration.")
+    build_sheet_keys = _resolve_build_keys(
+        output_keys=output_sheet_keys,
+        availability=optional_sheet_availability,
     )
 
     step_start = time.perf_counter()
@@ -231,59 +336,70 @@ def build_report_result(
         extra=f"score_count={len(score_metric_options)}",
     )
 
-    step_start = time.perf_counter()
-    feature_cols = _determine_feature_columns(
-        data,
-        model_adapter,
-        excluded=[
-            tag_col,
-            month_col,
-            *label_list,
-            primary_score_name,
-            *score_list,
-            *report_score_columns.values(),
-            *dim_list,
-            *var_list,
-        ],
-    )
-    _log_context_stage(
-        context,
-        "determine_feature_columns",
-        time.perf_counter() - step_start,
-        extra=f"feature_count={len(feature_cols)}",
-    )
-
     primary_label = label_list[0]
     primary_report_score = report_score_columns[primary_score_name]
-    step_start = time.perf_counter()
-    score_edges = build_reference_quantile_bins(
-        data.loc[data[tag_col] == "train", primary_report_score],
-        bins=10,
-    )
-    _log_context_stage(
-        context,
-        "build_reference_quantile_bins",
-        time.perf_counter() - step_start,
-        extra=f"edge_count={len(score_edges)}",
-    )
 
-    builders = {
-        "总览": lambda: build_overview_sheet(
-            data=data,
-            tag_col=tag_col,
-            month_col=month_col,
-            raw_date_col=raw_date_col,
+    feature_dict = pd.DataFrame()
+    feature_cols: List[str] = []
+    if "variable_analysis" in build_sheet_keys:
+        step_start = time.perf_counter()
+        feature_dict = _load_feature_dictionary(feature_path)
+        _log_context_stage(
+            context,
+            "load_feature_dictionary",
+            time.perf_counter() - step_start,
+            extra=f"rows={len(feature_dict)}",
+        )
+
+        step_start = time.perf_counter()
+        feature_cols = _determine_feature_columns(
+            data,
+            model_adapter,
+            excluded=[
+                tag_col,
+                month_col,
+                *label_list,
+                primary_score_name,
+                *score_list,
+                *report_score_columns.values(),
+                *dim_list,
+                *var_list,
+            ],
+        )
+        _log_context_stage(
+            context,
+            "determine_feature_columns",
+            time.perf_counter() - step_start,
+            extra=f"feature_count={len(feature_cols)}",
+        )
+
+    score_edges: List[float] = []
+    if "model_performance" in build_sheet_keys:
+        step_start = time.perf_counter()
+        score_edges = build_reference_quantile_bins(
+            data.loc[data[tag_col] == "train", primary_report_score],
+            bins=10,
+        )
+        _log_context_stage(
+            context,
+            "build_reference_quantile_bins",
+            time.perf_counter() - step_start,
+            extra=f"edge_count={len(score_edges)}",
+        )
+
+    score_model_columns: List[Tuple[str, str]] = []
+    if any(
+        key in build_sheet_keys
+        for key in ["dimensional_comparison", "model_comparison", "portrait"]
+    ):
+        score_model_columns = _resolve_score_model_columns(
             primary_score_name=primary_score_name,
-            report_score_columns=report_score_columns,
-            score_direction_summary=score_direction_summary,
-            score_metric_options=score_metric_options,
-            label_list=label_list,
             score_list=score_list,
-            dim_list=dim_list,
-            var_list=var_list,
-            build_context=context,
-        ),
-        "模型设计": lambda: build_model_design_sheet(
+            report_score_columns=report_score_columns,
+        )
+
+    child_builders = {
+        "model_design": lambda: build_model_design_sheet(
             data=data,
             tag_col=tag_col,
             month_col=month_col,
@@ -297,7 +413,7 @@ def build_report_result(
             ),
             build_context=context,
         ),
-        "变量分析": lambda: build_variable_analysis_sheet(
+        "variable_analysis": lambda: build_variable_analysis_sheet(
             data=data,
             tag_col=tag_col,
             month_col=month_col,
@@ -307,7 +423,7 @@ def build_report_result(
             model_adapter=model_adapter,
             build_context=context,
         ),
-        "模型表现": lambda: build_model_performance_sheet(
+        "model_performance": lambda: build_model_performance_sheet(
             data=data,
             tag_col=tag_col,
             month_col=month_col,
@@ -323,38 +439,98 @@ def build_report_result(
             ),
             build_context=context,
         ),
+        "dimensional_comparison": lambda: build_dimensional_comparison_sheet(
+            data=data,
+            tag_col=tag_col,
+            dim_list=dim_list,
+            label_list=label_list,
+            score_model_columns=score_model_columns,
+            score_metric_options=score_metric_options,
+        ),
+        "model_comparison": lambda: build_model_comparison_sheet(
+            data=data,
+            tag_col=tag_col,
+            month_col=month_col,
+            raw_date_col=raw_date_col,
+            label_list=label_list,
+            model_columns=score_model_columns,
+            score_metric_options=score_metric_options,
+            build_context=context,
+        ),
+        "portrait": lambda: build_portrait_sheet(
+            data=data,
+            tag_col=tag_col,
+            var_list=var_list,
+            score_model_columns=score_model_columns,
+        ),
     }
 
+    child_sheet_keys = [
+        key for key in build_sheet_keys if key != "overview" and key in child_builders
+    ]
+    built_sheets_by_key: Dict[str, ReportSheet] = {}
     if (
         resolved_options.parallel_sheets
-        and len(selected_sheets) > 1
+        and len(child_sheet_keys) > 1
         and resolved_options.max_workers > 1
     ):
-        worker_count = min(resolved_options.max_workers, len(selected_sheets))
+        worker_count = min(resolved_options.max_workers, len(child_sheet_keys))
         with ThreadPoolExecutor(max_workers=worker_count) as executor:
             futures = {
-                sheet_name: executor.submit(_timed_sheet_build, builders[sheet_name])
-                for sheet_name in selected_sheets
+                sheet_key: executor.submit(
+                    _timed_sheet_build, child_builders[sheet_key]
+                )
+                for sheet_key in child_sheet_keys
             }
-            for sheet_name in selected_sheets:
-                sheet_obj, elapsed = futures[sheet_name].result()
-                sheets[sheet_name] = sheet_obj
+            for sheet_key in child_sheet_keys:
+                sheet_obj, elapsed = futures[sheet_key].result()
+                built_sheets_by_key[sheet_key] = sheet_obj
                 _log_context_stage(
                     context,
-                    f"sheet:{sheet_name}",
+                    f"sheet:{sheet_key}",
                     elapsed,
                     extra=f"blocks={len(sheet_obj.blocks)}",
                 )
     else:
-        for sheet_name in selected_sheets:
-            sheet_obj, elapsed = _timed_sheet_build(builders[sheet_name])
-            sheets[sheet_name] = sheet_obj
+        for sheet_key in child_sheet_keys:
+            sheet_obj, elapsed = _timed_sheet_build(child_builders[sheet_key])
+            built_sheets_by_key[sheet_key] = sheet_obj
             _log_context_stage(
                 context,
-                f"sheet:{sheet_name}",
+                f"sheet:{sheet_key}",
                 elapsed,
                 extra=f"blocks={len(sheet_obj.blocks)}",
             )
+
+    if "overview" in build_sheet_keys:
+        overview_sheet, elapsed = _timed_sheet_build(
+            lambda: build_overview_sheet(
+                score_direction_summary=score_direction_summary,
+                model_performance_sheet=built_sheets_by_key.get("model_performance"),
+                dimensional_sheet=built_sheets_by_key.get("dimensional_comparison"),
+                comparison_sheet=built_sheets_by_key.get("model_comparison"),
+                portrait_sheet=built_sheets_by_key.get("portrait"),
+            )
+        )
+        built_sheets_by_key["overview"] = overview_sheet
+        _log_context_stage(
+            context,
+            "sheet:overview",
+            elapsed,
+            extra=f"blocks={len(overview_sheet.blocks)}",
+        )
+
+    ordered_output_keys = [key for key in SHEET_KEY_ORDER if key in output_sheet_keys]
+    output_sheet_names = _resolve_output_sheet_names(ordered_output_keys)
+
+    sheets: Dict[str, ReportSheet] = {}
+    for sheet_key in ordered_output_keys:
+        if sheet_key not in built_sheets_by_key:
+            continue
+        display_name = output_sheet_names[sheet_key]
+        sheet_obj = built_sheets_by_key[sheet_key]
+        renamed = ReportSheet(name=display_name, blocks=sheet_obj.blocks)
+        sheets[display_name] = renamed
 
     total_elapsed = time.perf_counter() - build_start
     LOGGER.debug(
@@ -372,6 +548,7 @@ def build_report_result(
             "feature_columns": feature_cols,
             "score_directions": score_direction_summary.to_dict("records"),
             "report_score_columns": dict(report_score_columns),
+            "sheet_output_names": output_sheet_names,
             "report_compute_options": {
                 "engine": resolved_options.engine,
                 "max_workers": resolved_options.max_workers,
@@ -389,29 +566,13 @@ def build_report_result(
 
 
 def build_overview_sheet(
-    data: pd.DataFrame,
-    tag_col: str,
-    month_col: str,
-    raw_date_col: str,
-    primary_score_name: str,
-    report_score_columns: Dict[str, str],
     score_direction_summary: pd.DataFrame,
-    score_metric_options: Dict[str, Dict[str, bool]],
-    label_list: Sequence[str],
-    score_list: Sequence[str],
-    dim_list: Sequence[str],
-    var_list: Sequence[str],
-    build_context: Optional[ReportBuildContext] = None,
+    model_performance_sheet: Optional[ReportSheet] = None,
+    dimensional_sheet: Optional[ReportSheet] = None,
+    comparison_sheet: Optional[ReportSheet] = None,
+    portrait_sheet: Optional[ReportSheet] = None,
 ) -> ReportSheet:
-    """Build sheet 1."""
-    primary_score_col = report_score_columns[primary_score_name]
-    score_model_columns = _resolve_score_model_columns(
-        primary_score_name=primary_score_name,
-        score_list=score_list,
-        report_score_columns=report_score_columns,
-    )
-    display_by_column = {column: model for model, column in score_model_columns}
-
+    """Build overview sheet from prebuilt child sheets."""
     blocks = [ReportBlock(title="一、目标与设计方案", blank_rows_after=1)]
     blocks.append(
         ReportBlock(
@@ -440,40 +601,89 @@ def build_overview_sheet(
             )
         )
 
-    tag_metrics, monthly_metrics = _build_split_metrics_tables(
-        data=data,
-        tag_col=tag_col,
-        month_col=month_col,
-        raw_date_col=raw_date_col,
-        label_list=label_list,
-        score_col=primary_score_col,
-        model_name=primary_score_name,
-        reverse_auc_label=_lookup_reverse_auc(score_metric_options, primary_score_name),
-        build_context=build_context,
-    )
-    blocks.append(ReportBlock(title="按tag模型效果", data=tag_metrics))
-    blocks.append(ReportBlock(title="按月模型效果", data=monthly_metrics))
+    tag_metrics = _extract_block_data(model_performance_sheet, "二、按tag模型效果")
+    if not tag_metrics.empty:
+        blocks.append(ReportBlock(title="按tag模型效果", data=tag_metrics))
 
+    month_metrics = _extract_block_data(model_performance_sheet, "三、按月模型效果")
+    if not month_metrics.empty:
+        blocks.append(ReportBlock(title="按月模型效果", data=month_metrics))
+
+    dim_table = _extract_block_data(dimensional_sheet, "分维度对比模型效果")
+    if not dim_table.empty:
+        blocks.append(ReportBlock(title="分维度对比模型效果", data=dim_table))
+
+    if comparison_sheet is not None:
+        for block in comparison_sheet.blocks:
+            if (
+                block.title.startswith("按tag新老模型对比(")
+                or block.title.startswith("按月新老模型对比(")
+                or block.title == "OOT相关性矩阵"
+            ):
+                blocks.append(ReportBlock(title=block.title, data=block.data.copy()))
+
+    portrait = _extract_block_data(portrait_sheet, "OOT画像变量均值对比")
+    if not portrait.empty:
+        blocks.append(ReportBlock(title="OOT画像变量均值对比", data=portrait))
+
+    return ReportSheet(name="总览", blocks=blocks)
+
+
+def _extract_block_data(sheet: Optional[ReportSheet], title: str) -> pd.DataFrame:
+    if sheet is None:
+        return pd.DataFrame()
+    try:
+        block = sheet.get_block(title)
+    except KeyError:
+        return pd.DataFrame()
+    return block.data.copy()
+
+
+def build_dimensional_comparison_sheet(
+    data: pd.DataFrame,
+    tag_col: str,
+    dim_list: Sequence[str],
+    label_list: Sequence[str],
+    score_model_columns: Sequence[Tuple[str, str]],
+    score_metric_options: Dict[str, Dict[str, bool]],
+) -> ReportSheet:
+    """Build appendix sheet for dimensional model-effect comparison."""
     oot_frame = data.loc[data[tag_col] == "oot"].copy()
-    if dim_list and not oot_frame.empty:
-        dim_table = _build_dimensional_comparison(
+    dim_table = (
+        _build_dimensional_comparison(
             data=oot_frame,
             dim_list=dim_list,
             label_list=label_list,
             score_model_columns=score_model_columns,
             score_metric_options=score_metric_options,
         )
-        blocks.append(ReportBlock(title="分维度对比模型效果", data=dim_table))
+        if dim_list and not oot_frame.empty
+        else pd.DataFrame()
+    )
+    return ReportSheet(
+        name="分维度对比",
+        blocks=[
+            ReportBlock(title="一、分维度对比", blank_rows_after=1),
+            ReportBlock(title="分维度对比模型效果", data=dim_table),
+        ],
+    )
 
-    if score_list:
-        for old_score_name in score_list:
-            old_score_col = report_score_columns.get(old_score_name)
-            if not old_score_col:
-                continue
-            pair_models = [
-                (primary_score_name, primary_score_col),
-                (old_score_name, old_score_col),
-            ]
+
+def build_model_comparison_sheet(
+    data: pd.DataFrame,
+    tag_col: str,
+    month_col: str,
+    raw_date_col: str,
+    label_list: Sequence[str],
+    model_columns: Sequence[Tuple[str, str]],
+    score_metric_options: Dict[str, Dict[str, bool]],
+    build_context: Optional[ReportBuildContext] = None,
+) -> ReportSheet:
+    """Build appendix sheet for old/new model comparison."""
+    blocks = [ReportBlock(title="一、新老模型对比", blank_rows_after=1)]
+    if len(model_columns) >= 2:
+        for old_model_name, old_score_col in model_columns[1:]:
+            pair_models = [model_columns[0], (old_model_name, old_score_col)]
             tag_compare = _build_model_pair_comparison(
                 data=data,
                 group_mode="tag",
@@ -498,26 +708,42 @@ def build_overview_sheet(
             )
             blocks.append(
                 ReportBlock(
-                    title=f"按tag新老模型对比({old_score_name})",
+                    title=f"按tag新老模型对比({old_model_name})",
                     data=tag_compare,
                 )
             )
             blocks.append(
                 ReportBlock(
-                    title=f"按月新老模型对比({old_score_name})",
+                    title=f"按月新老模型对比({old_model_name})",
                     data=month_compare,
                 )
             )
+
+    oot_frame = data.loc[data[tag_col] == "oot"].copy()
+    if not oot_frame.empty and model_columns:
+        display_by_column = {column: model for model, column in model_columns}
         corr = calculate_score_correlation_matrix(
             oot_frame,
-            [column for _, column in score_model_columns],
+            [column for _, column in model_columns],
         )
         corr = corr.round(4)
         corr = corr.rename(index=display_by_column, columns=display_by_column)
         corr.index.name = "模型"
         blocks.append(ReportBlock(title="OOT相关性矩阵", data=corr.reset_index()))
+    return ReportSheet(name="新老模型对比", blocks=blocks)
 
-    if var_list and not oot_frame.empty:
+
+def build_portrait_sheet(
+    data: pd.DataFrame,
+    tag_col: str,
+    var_list: Sequence[str],
+    score_model_columns: Sequence[Tuple[str, str]],
+) -> ReportSheet:
+    """Build appendix sheet for OOT portrait variable means."""
+    oot_frame = data.loc[data[tag_col] == "oot"].copy()
+    portrait = pd.DataFrame()
+    if var_list and not oot_frame.empty and score_model_columns:
+        display_by_column = {column: model for model, column in score_model_columns}
         portrait = calculate_portrait_means_by_score_bin(
             data=oot_frame,
             score_cols=[column for _, column in score_model_columns],
@@ -525,9 +751,14 @@ def build_overview_sheet(
         )
         portrait["模型"] = portrait["模型"].map(display_by_column).fillna(portrait["模型"])
         portrait = _reshape_portrait_table(portrait)
-        blocks.append(ReportBlock(title="OOT画像变量均值对比", data=portrait))
 
-    return ReportSheet(name="总览", blocks=blocks)
+    return ReportSheet(
+        name="画像变量",
+        blocks=[
+            ReportBlock(title="一、画像变量均值对比", blank_rows_after=1),
+            ReportBlock(title="OOT画像变量均值对比", data=portrait),
+        ],
+    )
 
 
 def build_model_design_sheet(

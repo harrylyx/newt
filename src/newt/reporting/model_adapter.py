@@ -124,7 +124,13 @@ class ModelAdapter:
         return getattr(self.model, "booster_", self.model)
 
     def _get_xgboost_booster(self) -> Any:
-        return self.model.get_booster()
+        # xgboost models can be sklearn wrappers (with get_booster)
+        # or native Booster objects (with get_score).
+        if hasattr(self.model, "get_booster"):
+            return self.model.get_booster()
+        if hasattr(self.model, "get_score"):
+            return self.model
+        raise AttributeError("Unsupported xgboost model type: missing booster handle")
 
     def _collect_params(self) -> Dict[str, Any]:
         params: Dict[str, Any] = {}

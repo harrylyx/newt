@@ -760,7 +760,12 @@ print(f"Lift@10%: {lift_at_10pct}")
 ### PSI（群体稳定性指标）
 
 ```python
-from newt.metrics import calculate_psi
+from newt.metrics import (
+    calculate_feature_psi_against_base,
+    calculate_grouped_psi,
+    calculate_psi,
+    calculate_psi_batch,
+)
 
 # 计算训练集和测试集之间的 PSI
 psi_values = calculate_psi(X_train_woe, X_test_woe)
@@ -773,6 +778,38 @@ psi_single = calculate_psi(
     buckets=10
 )
 print(f"age 的 PSI：{psi_single}")
+
+# 一个基准分布，对多个对比分布批量计算 PSI
+psi_batch = calculate_psi_batch(
+    expected=X_train_woe["age"],
+    actual_groups=[X_test_woe["age"], X_oot_woe["age"]],
+    engine="rust",
+)
+print(f"批量 PSI：{psi_batch}")
+
+# 按月分组 PSI：每个 tag 内用最新月做基准
+monthly_psi = calculate_grouped_psi(
+    data=score_frame,
+    group_cols=["month"],
+    score_col="score",
+    partition_cols=["tag"],
+    reference_mode="latest",
+    reference_col="month",
+    engine="rust",
+)
+print(monthly_psi.head())
+
+# 业务函数：指定 base 切片后，批量计算特征 PSI
+feature_psi = calculate_feature_psi_against_base(
+    data=score_frame,
+    feature_cols=["f1", "f2", "f3"],
+    base_col="month",
+    base_value="202403",
+    compare_col="month",
+    compare_values=["202401", "202402", "202403"],
+    engine="rust",
+)
+print(feature_psi.head())
 ```
 
 ### VIF（方差膨胀因子）
@@ -888,6 +925,10 @@ report = Report(
     var_list=["age", "income"],
     feature_path="./feature_dict.csv",
     report_out_path="./out/model_report.xlsx",
+    engine="rust",           # 默认
+    max_workers=8,           # 默认: min(8, cpu_count)
+    parallel_sheets=True,    # 默认
+    memory_mode="compact",   # 默认: "compact" | "standard"
 )
 
 report.generate()
@@ -895,9 +936,22 @@ report.generate()
 
 常用说明：
 
-- `data` 需要已经包含新模型分数列 `score_col`
-- `model` 用于提取参数和变量重要性，不负责重新打分
-- `sheet_list` 可选传入序号 `1-4` 或名称来控制输出页面
+- `data` 需要已经包含 `tag`、`score_col`、`date_col`、`label_list` 以及你额外传入的 `score_list`、`dim_list`、`var_list`、`feature_path` 对应列
+- `model` 只用于提取模型参数和变量重要性，不负责重新打分
+- `tag` 是样本分组列，通常取 `train` / `test` / `oot` / `oos`
+- `score_col` 是新模型的主分数字段，报表里的“主模型”都围绕它展开
+- `date_col` 会被转成 `_report_month`，格式统一成 `YYYYMM`，用于按月统计
+- `label_list` 是标签列列表，支持多个标签；第一个标签会作为主标签
+- `score_list` 是老模型或对照分数字段，用于和主模型做对比
+- `dim_list` 是分维度对比字段，只会出现在总览页的 OOT 维度效果对比里
+- `var_list` 是总览页的画像变量列表，只用于 OOT 的“画像变量均值对比”；它不是变量分析页的开关
+- `feature_path` 是特征字典文件，常见列名有 `英文名`、`中文名`、`表名`、`来源`
+- `sheet_list` 可选传入序号 `1-4` 或名称来控制输出页面；不传时默认输出四个 sheet
+- `engine` 控制报表计算引擎：`rust`（默认）或 `python`
+- `max_workers` 控制并行计算线程数；默认是 `min(8, cpu_count)`
+- `parallel_sheets` 控制是否并行计算各个 sheet（Excel 写入仍是串行）
+- `memory_mode` 控制内存策略：`compact`（默认）或 `standard`
+- 如果你只想看某一部分报表，可以只传对应的 sheet 名称或编号
 - 跑报表开发和验收时，建议使用 `uv sync --group dev`
 
 ---

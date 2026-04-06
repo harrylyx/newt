@@ -2,16 +2,26 @@
 
 from __future__ import annotations
 
+import logging
+import os
+import time
 from dataclasses import dataclass, field
-from typing import List, Optional, Sequence
+from typing import List, Optional, Sequence, Tuple
 
 import pandas as pd
 
+from newt.config import LOGGING
 from newt.reporting.excel_writer import ExcelReportWriter
 from newt.reporting.model_adapter import ModelAdapter
 from newt.reporting.score_prep import prepare_report_scores
-from newt.reporting.tables import build_report_result, resolve_sheet_names
+from newt.reporting.tables import (
+    ReportBuildOptions,
+    build_report_result,
+    resolve_sheet_names,
+)
 from newt.results import ModelReportResult
+
+LOGGER = logging.getLogger("newt.reporting.report")
 
 
 @dataclass
@@ -30,20 +40,90 @@ class Report:
     sheet_list: Sequence[object] = field(default_factory=list)
     feature_path: Optional[str] = None
     report_out_path: str = "./out/model_report.xlsx"
+    engine: str = "rust"
+    max_workers: Optional[int] = None
+    parallel_sheets: bool = True
+    memory_mode: str = "compact"
 
     result_: Optional[ModelReportResult] = field(default=None, init=False)
 
     def generate(self) -> str:
         """Generate the report and return the output path."""
+        _configure_report_logger()
+        self._validate_runtime_options()
+        resolved_workers = self._resolve_max_workers()
+        build_options = ReportBuildOptions(
+            engine=self.engine,
+            max_workers=resolved_workers,
+            parallel_sheets=bool(self.parallel_sheets),
+            memory_mode=self.memory_mode,
+        )
+        stage_timings: List[Tuple[str, float]] = []
+        total_start = time.perf_counter()
+        LOGGER.debug(
+            "Report generation started | rows=%d cols=%d primary_score=%s labels=%s "
+            "output=%s engine=%s workers=%d parallel_sheets=%s memory_mode=%s "
+            "peak_rss_mb=%s",
+            len(self.data),
+            len(self.data.columns),
+            self.score_col,
+            list(self.label_list),
+            self.report_out_path,
+            build_options.engine,
+            build_options.max_workers,
+            build_options.parallel_sheets,
+            build_options.memory_mode,
+            _format_peak_rss(),
+        )
+
+        step_start = time.perf_counter()
         prepared = self._prepare_data()
+        _log_stage(
+            stage_timings,
+            "prepare_data",
+            time.perf_counter() - step_start,
+            extra=f"rows={len(prepared)} peak_rss_mb={_format_peak_rss()}",
+        )
+
+        step_start = time.perf_counter()
         prepared, report_score_columns, score_direction_summary = prepare_report_scores(
             data=prepared,
             tag_col=self.tag,
             label_col=self.label_list[0],
             score_names=[self.score_col, *self.score_list],
         )
+        if build_options.memory_mode == "compact":
+            _downcast_float_columns(prepared, report_score_columns.values())
+        _log_stage(
+            stage_timings,
+            "prepare_report_scores",
+            time.perf_counter() - step_start,
+            extra=(
+                "report_scores="
+                f"{sorted(report_score_columns.keys())} "
+                f"peak_rss_mb={_format_peak_rss()}"
+            ),
+        )
+
+        step_start = time.perf_counter()
         selected_sheets = resolve_sheet_names(self.sheet_list)
+        _log_stage(
+            stage_timings,
+            "resolve_sheet_names",
+            time.perf_counter() - step_start,
+            extra=f"selected_sheets={selected_sheets}",
+        )
+
+        step_start = time.perf_counter()
         adapter = ModelAdapter(self.model)
+        _log_stage(
+            stage_timings,
+            "model_adapter_init",
+            time.perf_counter() - step_start,
+            extra=f"model_family={adapter.model_family}",
+        )
+
+        step_start = time.perf_counter()
         result = build_report_result(
             data=prepared,
             model_adapter=adapter,
@@ -58,17 +138,50 @@ class Report:
             var_list=self.var_list,
             feature_path=self.feature_path,
             selected_sheets=selected_sheets,
+            options=build_options,
         )
+        _log_stage(
+            stage_timings,
+            "build_report_result",
+            time.perf_counter() - step_start,
+            extra=(
+                f"sheet_count={len(result.sheet_names)} "
+                f"peak_rss_mb={_format_peak_rss()}"
+            ),
+        )
+
+        step_start = time.perf_counter()
         writer = ExcelReportWriter()
         output_path = writer.write(result, self.report_out_path)
+        _log_stage(
+            stage_timings,
+            "write_excel",
+            time.perf_counter() - step_start,
+            extra=f"output={output_path} peak_rss_mb={_format_peak_rss()}",
+        )
+
         self.result_ = result
+        total_elapsed = time.perf_counter() - total_start
+        _log_stage(stage_timings, "total", total_elapsed)
+        _log_top_slowest_steps(stage_timings)
+        LOGGER.debug(
+            "Report generation completed | total_elapsed=%.3fs output=%s "
+            "peak_rss_mb=%s",
+            total_elapsed,
+            output_path,
+            _format_peak_rss(),
+        )
         return output_path
 
     def _prepare_data(self) -> pd.DataFrame:
         self._validate_columns()
-        prepared = self.data.copy()
-        prepared[self.tag] = prepared[self.tag].astype("object")
-        prepared["_report_month"] = prepared[self.date_col].apply(_normalize_month)
+        prepared = self.data.copy(deep=False)
+        prepared = prepared.assign(
+            **{
+                self.tag: self.data[self.tag].astype("object"),
+                "_report_month": self.data[self.date_col].apply(_normalize_month),
+            }
+        )
         return prepared
 
     def _validate_columns(self) -> None:
@@ -81,6 +194,20 @@ class Report:
         ]
         if missing:
             raise ValueError(f"Missing required columns: {sorted(set(missing))}")
+
+    def _validate_runtime_options(self) -> None:
+        if self.engine not in {"rust", "python"}:
+            raise ValueError("engine must be 'rust' or 'python'")
+        if self.memory_mode not in {"compact", "standard"}:
+            raise ValueError("memory_mode must be 'compact' or 'standard'")
+        if self.max_workers is not None and int(self.max_workers) < 1:
+            raise ValueError("max_workers must be >= 1")
+
+    def _resolve_max_workers(self) -> int:
+        if self.max_workers is not None:
+            return max(1, int(self.max_workers))
+        cpu_total = os.cpu_count() or 1
+        return max(1, min(8, cpu_total))
 
 
 def _normalize_month(value: object) -> str:
@@ -99,3 +226,66 @@ def _normalize_month(value: object) -> str:
     if pd.notna(parsed):
         return parsed.strftime("%Y%m")
     return text
+
+
+def _configure_report_logger() -> None:
+    level_name = str(LOGGING.DEFAULT_LOG_LEVEL).upper()
+    level_value = getattr(logging, level_name, logging.DEBUG)
+    if not logging.getLogger().handlers:
+        logging.basicConfig(
+            level=level_value,
+            format=LOGGING.DEFAULT_LOG_FORMAT,
+        )
+    LOGGER.setLevel(level_value)
+
+
+def _downcast_float_columns(frame: pd.DataFrame, columns: Sequence[str]) -> None:
+    for column in columns:
+        if column not in frame.columns:
+            continue
+        numeric = pd.to_numeric(frame[column], errors="coerce")
+        frame[column] = pd.to_numeric(numeric, downcast="float")
+
+
+def _peak_rss_mb() -> Optional[float]:
+    try:
+        import resource
+    except Exception:
+        return None
+    try:
+        usage = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
+    except Exception:
+        return None
+    if usage <= 0:
+        return None
+    if os.name == "posix" and "darwin" in os.sys.platform:
+        return float(usage) / (1024.0 * 1024.0)
+    return float(usage) / 1024.0
+
+
+def _format_peak_rss() -> str:
+    peak = _peak_rss_mb()
+    if peak is None or pd.isna(peak):
+        return "n/a"
+    return f"{peak:.1f}"
+
+
+def _log_stage(
+    timings: List[Tuple[str, float]],
+    stage_name: str,
+    elapsed: float,
+    extra: str = "",
+) -> None:
+    timings.append((stage_name, float(elapsed)))
+    suffix = f" | {extra}" if extra else ""
+    LOGGER.debug("Step %s finished | elapsed=%.3fs%s", stage_name, elapsed, suffix)
+
+
+def _log_top_slowest_steps(
+    timings: Sequence[Tuple[str, float]], limit: int = 5
+) -> None:
+    ranked = sorted(timings, key=lambda item: item[1], reverse=True)
+    if not ranked:
+        return
+    top = ", ".join(f"{name}:{elapsed:.3f}s" for name, elapsed in ranked[:limit])
+    LOGGER.debug("Top slow stages | %s", top)

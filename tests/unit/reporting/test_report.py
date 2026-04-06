@@ -431,4 +431,58 @@ def test_report_model_binning_tables_sort_by_bin_order(
     month_block = performance_sheet.get_block("202401")
     for block in [train_block, month_block]:
         min_values = block.data["min"].dropna().tolist()
-        assert min_values == sorted(min_values)
+    assert min_values == sorted(min_values)
+
+
+def test_report_parallel_sheets_preserve_order_and_record_runtime_options(
+    tmp_path,
+    report_frame,
+    fake_lightgbm_model,
+):
+    output_path = tmp_path / "parallel_report.xlsx"
+    report = Report(
+        data=report_frame,
+        model=fake_lightgbm_model,
+        tag="tag",
+        score_col="score_new",
+        date_col="obs_date",
+        label_list=["label_main"],
+        score_list=["score_old_a"],
+        dim_list=["channel_dim"],
+        var_list=["profile_income"],
+        parallel_sheets=True,
+        max_workers=2,
+        engine="python",
+        memory_mode="compact",
+        report_out_path=str(output_path),
+    )
+
+    report.generate()
+
+    assert report.result_.sheet_names == ["总览", "模型设计", "变量分析", "模型表现"]
+    options = report.result_.metadata["report_compute_options"]
+    assert options == {
+        "engine": "python",
+        "max_workers": 2,
+        "parallel_sheets": True,
+        "memory_mode": "compact",
+    }
+    assert report.result_.metadata["report_compute_top_timings"]
+
+
+def test_report_runtime_option_validation_rejects_invalid_engine(
+    report_frame,
+    fake_lightgbm_model,
+):
+    report = Report(
+        data=report_frame,
+        model=fake_lightgbm_model,
+        tag="tag",
+        score_col="score_new",
+        date_col="obs_date",
+        label_list=["label_main"],
+        engine="invalid-engine",
+    )
+
+    with pytest.raises(ValueError, match="engine must be 'rust' or 'python'"):
+        report.generate()

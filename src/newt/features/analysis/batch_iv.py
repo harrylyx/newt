@@ -127,12 +127,15 @@ def _load_rust_extension():
     installed from a pure-Python sdist without a Rust toolchain), a clear
     ``ImportError`` is raised.  No hidden local compilation is attempted.
     """
-    try:
-        return importlib.import_module("newt._newt_iv_rust")
-    except ImportError:
-        raise ImportError(
-            "The compiled Rust IV extension (newt._newt_iv_rust) is not "
-            "available. Install Newt from an official wheel that includes "
-            "the prebuilt Rust extension, or build from source with "
-            "'maturin develop --manifest-path rust/newt_iv_rust/Cargo.toml'."
-        )
+    candidates = ("newt._newt_iv_rust", "_newt_iv_rust")
+    for module_name in candidates:
+        try:
+            return importlib.import_module(module_name)
+        except ImportError:
+            continue
+    raise ImportError(
+        "The compiled Rust IV extension (newt._newt_iv_rust or _newt_iv_rust) "
+        "is not available. Install Newt from an official wheel that includes "
+        "the prebuilt Rust extension, or build from source with "
+        "'maturin develop --manifest-path rust/newt_iv_rust/Cargo.toml'."
+    )

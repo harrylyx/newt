@@ -11,7 +11,7 @@ from newt.config import BINNING
 from newt.metrics.auc import calculate_auc
 from newt.metrics.ks import calculate_ks
 from newt.metrics.lift import calculate_lift_at_k
-from newt.metrics.psi import calculate_psi
+from newt.metrics.psi import calculate_grouped_psi, calculate_psi
 
 PERCENT_LEVELS = (0.10, 0.05, 0.02, 0.01)
 TAG_ORDER = {"train": 0, "test": 1, "oot": 2, "oos": 3}
@@ -113,26 +113,22 @@ def calculate_latest_month_psi(
     score_col: str,
 ) -> pd.DataFrame:
     """Calculate PSI for each month against the latest month within each tag."""
-    records: List[Dict[str, object]] = []
-    for tag_value, tag_frame in data.groupby(tag_col, dropna=False, sort=False):
-        months = _ordered_month_values(tag_frame[month_col])
-        latest_month = months[-1] if months else ""
-        expected = tag_frame.loc[tag_frame[month_col] == latest_month, score_col]
-        for month_value in months:
-            month_frame = tag_frame.loc[tag_frame[month_col] == month_value]
-            psi_value = 0.0
-            if month_value != latest_month:
-                psi_value = calculate_psi(expected, month_frame[score_col])
-            records.append(
-                {
-                    tag_col: tag_value,
-                    month_col: month_value,
-                    "latest_month_psi": float(psi_value),
-                }
-            )
-    return _sort_report_frame(
-        pd.DataFrame(records), tag_column=tag_col, month_column=month_col
+    grouped = calculate_grouped_psi(
+        data=data,
+        group_cols=[month_col],
+        score_col=score_col,
+        reference_mode="latest",
+        reference_col=month_col,
+        partition_cols=[tag_col],
+        engine="rust",
+        include_stats=False,
     )
+    if grouped.empty:
+        return pd.DataFrame(columns=[tag_col, month_col, "latest_month_psi"])
+    result = grouped.rename(columns={"psi": "latest_month_psi"})[
+        [tag_col, month_col, "latest_month_psi"]
+    ]
+    return _sort_report_frame(result, tag_column=tag_col, month_column=month_col)
 
 
 def calculate_grouped_binary_metrics(

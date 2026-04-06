@@ -21,12 +21,12 @@ def test_load_rust_extension_does_not_trigger_local_build_when_missing():
     original_import = importlib.import_module
 
     def selective_import(name, *args, **kwargs):
-        if name in ("newt_iv_rust", "newt._newt_iv_rust"):
+        if name in ("newt_iv_rust", "newt._newt_iv_rust", "_newt_iv_rust"):
             raise ImportError(f"mocked missing: {name}")
         return original_import(name, *args, **kwargs)
 
     with patch.object(importlib, "import_module", side_effect=selective_import):
-        with pytest.raises(ImportError, match="newt._newt_iv_rust"):
+        with pytest.raises(ImportError, match="_newt_iv_rust"):
             biv._load_rust_extension()
 
     # Verify no subprocess/build functions exist in the module

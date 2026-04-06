@@ -18,6 +18,7 @@ dependencies = [
 
 [project.scripts]
 newt-benchmark = "newt.benchmarking.metric_vs_toad:main"
+newt-benchmark-psi = "newt.benchmarking.psi_performance:main"
 
 [project.optional-dependencies]
 optbinning = [

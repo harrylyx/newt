@@ -317,6 +317,7 @@ fig = plot_psi_comparison(psi_dict, threshold=0.25)
 - [Recent Release Notes (English)](docs/release_notes.md) - Summary of `v0.1.1` to `v0.1.4`
 - [最近版本更新说明 (中文)](docs/release_notes_zh.md) - `v0.1.1` 到 `v0.1.4` 版本汇总
 - [Benchmark Guide](docs/benchmarks/metric_vs_toad.md) - Compare Newt metrics against toad on the bundled sample dataset
+- [PSI Engine Benchmark](docs/benchmarks/psi_performance.md) - Compare scalar PSI with Python/Rust batch engines
 - [Examples](examples/) - Jupyter notebook examples
 
 ## Benchmark
@@ -333,6 +334,17 @@ This writes:
 - `out/benchmarks/metric_vs_toad.md`
 
 The benchmark runs Newt and toad in the same benchmark environment. It does not create a separate worker virtual environment. In this repository, the default host environment for that command is `.venv-benchmark-3.10`.
+
+Run PSI engine performance benchmark:
+
+```bash
+./.venv-benchmark-3.10/bin/newt-benchmark-psi
+```
+
+This writes:
+
+- `out/benchmarks/psi_performance.json`
+- `out/benchmarks/psi_performance.md`
 
 ## Dependencies
 

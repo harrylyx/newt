@@ -766,7 +766,12 @@ print(f"Lift@10%: {lift_at_10pct}")
 ### PSI (Population Stability Index)
 
 ```python
-from newt.metrics import calculate_psi
+from newt.metrics import (
+    calculate_feature_psi_against_base,
+    calculate_grouped_psi,
+    calculate_psi,
+    calculate_psi_batch,
+)
 
 # Calculate PSI between training and test distributions
 psi_values = calculate_psi(X_train_woe, X_test_woe)
@@ -779,6 +784,38 @@ psi_single = calculate_psi(
     buckets=10
 )
 print(f"PSI for age: {psi_single}")
+
+# Batch PSI for multiple groups against one base
+psi_batch = calculate_psi_batch(
+    expected=X_train_woe["age"],
+    actual_groups=[X_test_woe["age"], X_oot_woe["age"]],
+    engine="rust",
+)
+print(f"Batch PSI: {psi_batch}")
+
+# Grouped PSI by month, latest month as reference within each tag
+monthly_psi = calculate_grouped_psi(
+    data=score_frame,
+    group_cols=["month"],
+    score_col="score",
+    partition_cols=["tag"],
+    reference_mode="latest",
+    reference_col="month",
+    engine="rust",
+)
+print(monthly_psi.head())
+
+# Business helper: compare many features against a base slice
+feature_psi = calculate_feature_psi_against_base(
+    data=score_frame,
+    feature_cols=["f1", "f2", "f3"],
+    base_col="month",
+    base_value="202403",
+    compare_col="month",
+    compare_values=["202401", "202402", "202403"],
+    engine="rust",
+)
+print(feature_psi.head())
 ```
 
 ### VIF (Variance Inflation Factor)
@@ -894,6 +931,10 @@ report = Report(
     var_list=["age", "income"],
     feature_path="./feature_dict.csv",
     report_out_path="./out/model_report.xlsx",
+    engine="rust",           # default
+    max_workers=8,           # default: min(8, cpu_count)
+    parallel_sheets=True,    # default
+    memory_mode="compact",   # default: "compact" | "standard"
 )
 
 report.generate()
@@ -901,9 +942,22 @@ report.generate()
 
 Notes:
 
-- `data` must already include the new-model score column referenced by `score_col`
+- `data` must already include `tag`, `score_col`, `date_col`, `label_list`, and any extra columns referenced by `score_list`, `dim_list`, `var_list`, or `feature_path`
 - `model` is used for parameter extraction and feature importance, not for re-scoring
-- `sheet_list` can optionally select sheets by index `1-4` or by name
+- `tag` is the sample-split column, typically `train`, `test`, `oot`, or `oos`
+- `score_col` is the primary score column for the new model
+- `date_col` is normalized into `_report_month` in `YYYYMM` format for monthly tables
+- `label_list` is the list of target columns; the first label acts as the primary label
+- `score_list` is the list of comparison score columns for older or alternative models
+- `dim_list` is used only for the OOT dimensional comparison block on the overview sheet
+- `var_list` is used only for the OOT profile mean comparison block on the overview sheet; it does not drive the variable-analysis sheet
+- `feature_path` is an optional feature dictionary CSV, with common columns such as `英文名`, `中文名`, `表名`, and `来源`
+- `sheet_list` can optionally select sheets by index `1-4` or by name; if omitted, all four sheets are generated
+- `engine` controls report compute engine: `rust` (default) or `python`
+- `max_workers` controls compute parallelism; default is `min(8, cpu_count)`
+- `parallel_sheets` enables concurrent sheet computation (Excel write remains sequential)
+- `memory_mode` controls runtime memory strategy: `compact` (default) or `standard`
+- If you only need part of the report, pass just the sheet names or indexes you want
 - For report development and validation, use `uv sync --group dev`
 
 ---

@@ -106,6 +106,60 @@ fn calculate_single_iv(feature: &[Option<f64>], target: &[i64], bins: usize, _ep
     iv_from_counts(&good_counts, &bad_counts)
 }
 
+fn count_with_edges(
+    values: &[Option<f64>],
+    edges: &[f64],
+    include_missing_bucket: bool,
+) -> Vec<f64> {
+    let non_missing_bins = edges.len() - 1;
+    let missing_index = non_missing_bins;
+    let mut counts = if include_missing_bucket {
+        vec![0.0_f64; non_missing_bins + 1]
+    } else {
+        vec![0.0_f64; non_missing_bins]
+    };
+
+    for value in values {
+        match value {
+            None => {
+                if include_missing_bucket {
+                    counts[missing_index] += 1.0;
+                }
+            }
+            Some(actual) => {
+                let mut index = non_missing_bins - 1;
+                for (offset, edge) in edges[1..non_missing_bins].iter().enumerate() {
+                    if *actual < *edge {
+                        index = offset;
+                        break;
+                    }
+                }
+                counts[index] += 1.0;
+            }
+        }
+    }
+
+    counts
+}
+
+fn psi_from_counts(expected_counts: &[f64], actual_counts: &[f64], epsilon: f64) -> f64 {
+    let expected_total: f64 = expected_counts.iter().sum();
+    let actual_total: f64 = actual_counts.iter().sum();
+    if expected_total == 0.0 || actual_total == 0.0 {
+        return f64::NAN;
+    }
+
+    expected_counts
+        .iter()
+        .zip(actual_counts.iter())
+        .map(|(expected, actual)| {
+            let expected_pct = (expected / expected_total).max(epsilon);
+            let actual_pct = (actual / actual_total).max(epsilon);
+            (actual_pct - expected_pct) * (actual_pct / expected_pct).ln()
+        })
+        .sum()
+}
+
 #[pyfunction]
 fn calculate_batch_iv(
     features: Vec<Vec<Option<f64>>>,
@@ -124,6 +178,39 @@ fn calculate_batch_iv(
     Ok(features
         .par_iter()
         .map(|feature| calculate_single_iv(feature, &target, bins, epsilon))
+        .collect())
+}
+
+#[pyfunction]
+fn calculate_psi_batch_from_edges(
+    edges: Vec<f64>,
+    expected_counts: Vec<f64>,
+    groups: Vec<Vec<Option<f64>>>,
+    include_missing_bucket: bool,
+    epsilon: f64,
+) -> PyResult<Vec<f64>> {
+    if edges.len() < 2 {
+        return Err(pyo3::exceptions::PyValueError::new_err(
+            "Edges must contain at least 2 values.",
+        ));
+    }
+    let expected_len = if include_missing_bucket {
+        edges.len()
+    } else {
+        edges.len() - 1
+    };
+    if expected_counts.len() != expected_len {
+        return Err(pyo3::exceptions::PyValueError::new_err(
+            "Expected counts length is incompatible with edges and missing-bucket setting.",
+        ));
+    }
+
+    Ok(groups
+        .par_iter()
+        .map(|group| {
+            let actual_counts = count_with_edges(group, &edges, include_missing_bucket);
+            psi_from_counts(&expected_counts, &actual_counts, epsilon)
+        })
         .collect())
 }
 
@@ -167,5 +254,6 @@ fn calculate_categorical_iv(feature: Vec<Option<String>>, target: Vec<i64>) -> P
 fn _newt_iv_rust(_py: Python<'_>, module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_function(wrap_pyfunction!(calculate_batch_iv, module)?)?;
     module.add_function(wrap_pyfunction!(calculate_categorical_iv, module)?)?;
+    module.add_function(wrap_pyfunction!(calculate_psi_batch_from_edges, module)?)?;
     Ok(())
 }

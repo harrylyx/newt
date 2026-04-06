@@ -2,7 +2,12 @@ from .auc import calculate_auc
 from .gini import calculate_gini
 from .ks import calculate_ks
 from .lift import calculate_lift, calculate_lift_at_k
-from .psi import calculate_psi
+from .psi import (
+    calculate_feature_psi_against_base,
+    calculate_grouped_psi,
+    calculate_psi,
+    calculate_psi_batch,
+)
 from .reporting import (
     build_reference_quantile_bins,
     calculate_bin_performance_table,
@@ -21,6 +26,9 @@ __all__ = [
     "calculate_lift",
     "calculate_lift_at_k",
     "calculate_psi",
+    "calculate_psi_batch",
+    "calculate_grouped_psi",
+    "calculate_feature_psi_against_base",
     "calculate_gini",
     "calculate_vif",
     "build_reference_quantile_bins",

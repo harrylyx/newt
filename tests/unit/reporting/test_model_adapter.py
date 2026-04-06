@@ -23,6 +23,30 @@ def test_model_adapter_extracts_xgboost_importance(fake_xgboost_model):
     assert importance["weight_per"].sum() == 1.0
 
 
+class DirectXGBoostBooster:
+    def __init__(self):
+        self.feature_names = ["feature_a", "feature_b"]
+
+    def get_score(self, importance_type="gain"):
+        if importance_type == "gain":
+            return {"feature_a": 20.0, "feature_b": 10.0}
+        if importance_type == "weight":
+            return {"feature_a": 4.0, "feature_b": 2.0}
+        raise ValueError(f"Unsupported importance type: {importance_type}")
+
+
+def test_model_adapter_supports_direct_xgboost_booster():
+    adapter = ModelAdapter(DirectXGBoostBooster())
+
+    importance = adapter.get_importance_table()
+
+    assert adapter.model_family == "xgboost"
+    assert adapter.get_feature_names() == ["feature_a", "feature_b"]
+    assert list(importance["feature"]) == ["feature_a", "feature_b"]
+    assert importance["gain"].tolist() == [20.0, 10.0]
+    assert importance["weight"].tolist() == [4.0, 2.0]
+
+
 class AliasOnlyBooster:
     def __init__(self):
         self.params = {

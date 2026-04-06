@@ -2,28 +2,149 @@
 
 from __future__ import annotations
 
+import logging
+import time
+from concurrent.futures import ThreadPoolExecutor
+from dataclasses import dataclass, field
 from pathlib import Path
+from threading import Lock
 from typing import Dict, List, Optional, Sequence, Tuple
 
 import numpy as np
 import pandas as pd
 
+from newt.config import BINNING
 from newt.features.analysis.batch_iv import calculate_batch_iv
 from newt.metrics.auc import calculate_auc
-from newt.metrics.psi import calculate_psi
+from newt.metrics.psi import calculate_psi_batch
 from newt.metrics.reporting import (
-    assign_reference_bins,
     build_reference_quantile_bins,
     calculate_bin_performance_table,
     calculate_binary_metrics,
-    calculate_feature_psi,
-    calculate_latest_month_psi,
     calculate_portrait_means_by_score_bin,
     calculate_score_correlation_matrix,
     summarize_label_distribution,
 )
 from newt.reporting.model_adapter import ModelAdapter
 from newt.results import ModelReportResult, ReportBlock, ReportChart, ReportSheet
+
+LOGGER = logging.getLogger("newt.reporting.tables")
+
+
+@dataclass(frozen=True)
+class ReportBuildOptions:
+    """Runtime knobs for report compute path."""
+
+    engine: str = "rust"
+    max_workers: int = 4
+    parallel_sheets: bool = True
+    memory_mode: str = "compact"
+
+
+@dataclass
+class ReportBuildContext:
+    """Shared immutable-ish context and caches across sheet builders."""
+
+    data: pd.DataFrame
+    tag_col: str
+    month_col: str
+    options: ReportBuildOptions
+    timings: List[Tuple[str, float]] = field(default_factory=list)
+    latest_month_psi_cache: Dict[Tuple[str], Dict[object, float]] = field(
+        default_factory=dict
+    )
+    split_metrics_cache: Dict[
+        Tuple[object, ...], Tuple[pd.DataFrame, pd.DataFrame]
+    ] = field(default_factory=dict)
+    group_metrics_cache: Dict[Tuple[object, ...], pd.DataFrame] = field(
+        default_factory=dict
+    )
+    lock: Lock = field(default_factory=Lock, repr=False)
+
+    def record_timing(self, name: str, elapsed: float) -> None:
+        self.timings.append((name, float(elapsed)))
+
+    def cache_get_latest_month_psi(
+        self, key: Tuple[str]
+    ) -> Optional[Dict[object, float]]:
+        with self.lock:
+            value = self.latest_month_psi_cache.get(key)
+        if value is None:
+            return None
+        return dict(value)
+
+    def cache_set_latest_month_psi(
+        self, key: Tuple[str], value: Dict[object, float]
+    ) -> None:
+        with self.lock:
+            self.latest_month_psi_cache[key] = dict(value)
+
+    def cache_get_split_metrics(
+        self,
+        key: Tuple[object, ...],
+    ) -> Optional[Tuple[pd.DataFrame, pd.DataFrame]]:
+        with self.lock:
+            value = self.split_metrics_cache.get(key)
+        if value is None:
+            return None
+        return value[0].copy(), value[1].copy()
+
+    def cache_set_split_metrics(
+        self,
+        key: Tuple[object, ...],
+        value: Tuple[pd.DataFrame, pd.DataFrame],
+    ) -> None:
+        with self.lock:
+            self.split_metrics_cache[key] = (value[0].copy(), value[1].copy())
+
+    def cache_get_group_metrics(
+        self, key: Tuple[object, ...]
+    ) -> Optional[pd.DataFrame]:
+        with self.lock:
+            value = self.group_metrics_cache.get(key)
+        if value is None:
+            return None
+        return value.copy()
+
+    def cache_set_group_metrics(
+        self, key: Tuple[object, ...], value: pd.DataFrame
+    ) -> None:
+        with self.lock:
+            self.group_metrics_cache[key] = value.copy()
+
+
+def _timed_sheet_build(builder) -> Tuple[ReportSheet, float]:
+    start = time.perf_counter()
+    sheet = builder()
+    return sheet, time.perf_counter() - start
+
+
+def _log_context_stage(
+    context: ReportBuildContext,
+    stage_name: str,
+    elapsed: float,
+    extra: str = "",
+) -> None:
+    context.record_timing(stage_name, elapsed)
+    suffix = f" | {extra}" if extra else ""
+    LOGGER.debug(
+        "build_report_result step finished | step=%s elapsed=%.3fs%s",
+        stage_name,
+        elapsed,
+        suffix,
+    )
+
+
+def _log_top_context_timings(
+    context: ReportBuildContext,
+    limit: int = 5,
+) -> None:
+    ranked = sorted(context.timings, key=lambda item: item[1], reverse=True)
+    if not ranked:
+        return
+    top = ", ".join(f"{name}:{elapsed:.3f}s" for name, elapsed in ranked[:limit])
+    LOGGER.debug("build_report_result slowest_steps | %s", top)
+
 
 SHEET_NAME_MAP = {
     1: "总览",
@@ -67,11 +188,49 @@ def build_report_result(
     var_list: Sequence[str],
     feature_path: Optional[str],
     selected_sheets: Sequence[str],
+    options: Optional[ReportBuildOptions] = None,
 ) -> ModelReportResult:
     """Build the full report result object."""
+    build_start = time.perf_counter()
+    resolved_options = options or ReportBuildOptions()
+    context = ReportBuildContext(
+        data=data,
+        tag_col=tag_col,
+        month_col=month_col,
+        options=resolved_options,
+    )
+    LOGGER.debug(
+        "build_report_result started | rows=%d cols=%d selected_sheets=%s "
+        "engine=%s workers=%d parallel_sheets=%s memory_mode=%s",
+        len(data),
+        len(data.columns),
+        list(selected_sheets),
+        resolved_options.engine,
+        resolved_options.max_workers,
+        resolved_options.parallel_sheets,
+        resolved_options.memory_mode,
+    )
+
     sheets: Dict[str, ReportSheet] = {}
+    step_start = time.perf_counter()
     feature_dict = _load_feature_dictionary(feature_path)
+    _log_context_stage(
+        context,
+        "load_feature_dictionary",
+        time.perf_counter() - step_start,
+        extra=f"rows={len(feature_dict)}",
+    )
+
+    step_start = time.perf_counter()
     score_metric_options = _build_score_metric_options(score_direction_summary)
+    _log_context_stage(
+        context,
+        "build_score_metric_options",
+        time.perf_counter() - step_start,
+        extra=f"score_count={len(score_metric_options)}",
+    )
+
+    step_start = time.perf_counter()
     feature_cols = _determine_feature_columns(
         data,
         model_adapter,
@@ -86,11 +245,25 @@ def build_report_result(
             *var_list,
         ],
     )
+    _log_context_stage(
+        context,
+        "determine_feature_columns",
+        time.perf_counter() - step_start,
+        extra=f"feature_count={len(feature_cols)}",
+    )
+
     primary_label = label_list[0]
     primary_report_score = report_score_columns[primary_score_name]
+    step_start = time.perf_counter()
     score_edges = build_reference_quantile_bins(
         data.loc[data[tag_col] == "train", primary_report_score],
         bins=10,
+    )
+    _log_context_stage(
+        context,
+        "build_reference_quantile_bins",
+        time.perf_counter() - step_start,
+        extra=f"edge_count={len(score_edges)}",
     )
 
     builders = {
@@ -106,6 +279,7 @@ def build_report_result(
             score_list=score_list,
             dim_list=dim_list,
             var_list=var_list,
+            build_context=context,
         ),
         "模型设计": lambda: build_model_design_sheet(
             data=data,
@@ -118,6 +292,7 @@ def build_report_result(
             reverse_auc_label=_lookup_reverse_auc(
                 score_metric_options, primary_score_name
             ),
+            build_context=context,
         ),
         "变量分析": lambda: build_variable_analysis_sheet(
             data=data,
@@ -127,6 +302,7 @@ def build_report_result(
             feature_cols=feature_cols,
             feature_dict=feature_dict,
             model_adapter=model_adapter,
+            build_context=context,
         ),
         "模型表现": lambda: build_model_performance_sheet(
             data=data,
@@ -141,11 +317,48 @@ def build_report_result(
             reverse_auc_label=_lookup_reverse_auc(
                 score_metric_options, primary_score_name
             ),
+            build_context=context,
         ),
     }
 
-    for sheet_name in selected_sheets:
-        sheets[sheet_name] = builders[sheet_name]()
+    if (
+        resolved_options.parallel_sheets
+        and len(selected_sheets) > 1
+        and resolved_options.max_workers > 1
+    ):
+        worker_count = min(resolved_options.max_workers, len(selected_sheets))
+        with ThreadPoolExecutor(max_workers=worker_count) as executor:
+            futures = {
+                sheet_name: executor.submit(_timed_sheet_build, builders[sheet_name])
+                for sheet_name in selected_sheets
+            }
+            for sheet_name in selected_sheets:
+                sheet_obj, elapsed = futures[sheet_name].result()
+                sheets[sheet_name] = sheet_obj
+                _log_context_stage(
+                    context,
+                    f"sheet:{sheet_name}",
+                    elapsed,
+                    extra=f"blocks={len(sheet_obj.blocks)}",
+                )
+    else:
+        for sheet_name in selected_sheets:
+            sheet_obj, elapsed = _timed_sheet_build(builders[sheet_name])
+            sheets[sheet_name] = sheet_obj
+            _log_context_stage(
+                context,
+                f"sheet:{sheet_name}",
+                elapsed,
+                extra=f"blocks={len(sheet_obj.blocks)}",
+            )
+
+    total_elapsed = time.perf_counter() - build_start
+    LOGGER.debug(
+        "build_report_result completed | elapsed=%.3fs sheet_count=%d",
+        total_elapsed,
+        len(sheets),
+    )
+    _log_top_context_timings(context)
 
     return ModelReportResult(
         sheets=sheets,
@@ -155,6 +368,18 @@ def build_report_result(
             "feature_columns": feature_cols,
             "score_directions": score_direction_summary.to_dict("records"),
             "report_score_columns": dict(report_score_columns),
+            "report_compute_options": {
+                "engine": resolved_options.engine,
+                "max_workers": resolved_options.max_workers,
+                "parallel_sheets": resolved_options.parallel_sheets,
+                "memory_mode": resolved_options.memory_mode,
+            },
+            "report_compute_top_timings": [
+                {"step": name, "elapsed": elapsed}
+                for name, elapsed in sorted(
+                    context.timings, key=lambda item: item[1], reverse=True
+                )[:5]
+            ],
         },
     )
 
@@ -171,6 +396,7 @@ def build_overview_sheet(
     score_list: Sequence[str],
     dim_list: Sequence[str],
     var_list: Sequence[str],
+    build_context: Optional[ReportBuildContext] = None,
 ) -> ReportSheet:
     """Build sheet 1."""
     primary_score_col = report_score_columns[primary_score_name]
@@ -217,6 +443,7 @@ def build_overview_sheet(
         score_col=primary_score_col,
         model_name=primary_score_name,
         reverse_auc_label=_lookup_reverse_auc(score_metric_options, primary_score_name),
+        build_context=build_context,
     )
     blocks.append(ReportBlock(title="按tag模型效果", data=tag_metrics))
     blocks.append(ReportBlock(title="按月模型效果", data=monthly_metrics))
@@ -249,6 +476,7 @@ def build_overview_sheet(
                 tag_col=tag_col,
                 month_col=month_col,
                 score_metric_options=score_metric_options,
+                build_context=build_context,
             )
             month_compare = _build_model_pair_comparison(
                 data=data,
@@ -258,6 +486,7 @@ def build_overview_sheet(
                 tag_col=tag_col,
                 month_col=month_col,
                 score_metric_options=score_metric_options,
+                build_context=build_context,
             )
             blocks.append(
                 ReportBlock(
@@ -300,6 +529,7 @@ def build_model_design_sheet(
     score_col: str,
     model_name: str,
     reverse_auc_label: bool = False,
+    build_context: Optional[ReportBuildContext] = None,
 ) -> ReportSheet:
     """Build sheet 2."""
     blocks = [
@@ -363,6 +593,7 @@ def build_model_design_sheet(
             month_col=month_col,
             model_name=model_name,
             reverse_auc_label=reverse_auc_label,
+            build_context=build_context,
         )
         for _, row in effect_table.iterrows():
             effect_rows.append(
@@ -385,13 +616,34 @@ def build_variable_analysis_sheet(
     feature_cols: Sequence[str],
     feature_dict: pd.DataFrame,
     model_adapter: ModelAdapter,
+    build_context: Optional[ReportBuildContext] = None,
 ) -> ReportSheet:
     """Build sheet 3."""
+    sheet_start = time.perf_counter()
+
+    step_start = time.perf_counter()
     importance = model_adapter.get_importance_table()
+    LOGGER.debug(
+        "build_variable_analysis_sheet step finished | step=get_importance_table "
+        "elapsed=%.3fs rows=%d",
+        time.perf_counter() - step_start,
+        len(importance),
+    )
+
+    step_start = time.perf_counter()
     train_frame = data.loc[
         (data[tag_col] == "train") & data[primary_label].isin([0, 1])
     ]
     oot_frame = data.loc[(data[tag_col] == "oot") & data[primary_label].isin([0, 1])]
+    LOGGER.debug(
+        "build_variable_analysis_sheet step finished | step=prepare_train_oot "
+        "elapsed=%.3fs train_rows=%d oot_rows=%d",
+        time.perf_counter() - step_start,
+        len(train_frame),
+        len(oot_frame),
+    )
+
+    step_start = time.perf_counter()
     feature_table = _build_feature_analysis_table(
         train_frame=train_frame,
         oot_frame=oot_frame,
@@ -402,6 +654,13 @@ def build_variable_analysis_sheet(
         feature_cols=feature_cols,
         feature_dict=feature_dict,
         importance=importance,
+        build_context=build_context,
+    )
+    LOGGER.debug(
+        "build_variable_analysis_sheet step finished | "
+        "step=build_feature_analysis_table elapsed=%.3fs feature_rows=%d",
+        time.perf_counter() - step_start,
+        len(feature_table),
     )
     top_features = (
         feature_table["vars"].head(30).tolist() if not feature_table.empty else []
@@ -415,8 +674,20 @@ def build_variable_analysis_sheet(
         ReportBlock(title="二、变量分析", data=feature_table),
     ]
 
-    for rank, feature in enumerate(top_features, start=1):
-        feature_name = str(feature)
+    feature_jobs = [
+        (rank, str(feature)) for rank, feature in enumerate(top_features, start=1)
+    ]
+    use_parallel_features = (
+        build_context is not None
+        and build_context.options.max_workers > 1
+        and len(feature_jobs) > 1
+    )
+
+    def _run_feature_job(
+        job: Tuple[int, str]
+    ) -> Tuple[int, str, str, pd.DataFrame, pd.DataFrame, float]:
+        rank, feature_name = job
+        feature_start = time.perf_counter()
         edges = build_reference_quantile_bins(train_frame[feature_name], bins=10)
         oot_bins = _build_feature_bin_stats(
             frame=oot_frame,
@@ -431,24 +702,45 @@ def build_variable_analysis_sheet(
             label_col=primary_label,
             month_col=month_col,
             edges=edges,
+            engine=build_context.options.engine if build_context else "python",
         )
         display_name = _lookup_feature_meta(feature_dict, feature_name).get("中文名", "")
         title_prefix = f"{rank}.{feature_name}"
         if display_name:
             title_prefix = f"{title_prefix} {display_name}"
+        return (
+            rank,
+            feature_name,
+            title_prefix,
+            oot_bins,
+            monthly_table,
+            time.perf_counter() - feature_start,
+        )
+
+    feature_results: List[Tuple[int, str, str, pd.DataFrame, pd.DataFrame, float]] = []
+    if use_parallel_features:
+        worker_cap = min(build_context.options.max_workers, len(feature_jobs))
+        if build_context.options.memory_mode == "compact":
+            worker_cap = min(worker_cap, 4)
+        with ThreadPoolExecutor(max_workers=max(1, worker_cap)) as executor:
+            for result in executor.map(_run_feature_job, feature_jobs):
+                feature_results.append(result)
+    else:
+        for job in feature_jobs:
+            feature_results.append(_run_feature_job(job))
+
+    feature_timings: List[Tuple[str, float]] = []
+    for (
+        _,
+        feature_name,
+        title_prefix,
+        oot_bins,
+        monthly_table,
+        elapsed,
+    ) in feature_results:
         blocks.append(ReportBlock(title=title_prefix, blank_rows_after=0))
-        blocks.append(
-            ReportBlock(
-                title=f"{title_prefix} 分箱表",
-                data=oot_bins,
-            )
-        )
-        blocks.append(
-            ReportBlock(
-                title=f"{title_prefix} 按月效果",
-                data=monthly_table,
-            )
-        )
+        blocks.append(ReportBlock(title=f"{title_prefix} 分箱表", data=oot_bins))
+        blocks.append(ReportBlock(title=f"{title_prefix} 按月效果", data=monthly_table))
         if not oot_bins.empty:
             blocks.append(
                 ReportBlock(
@@ -464,6 +756,35 @@ def build_variable_analysis_sheet(
                     blank_rows_after=2,
                 )
             )
+        feature_timings.append((feature_name, elapsed))
+        LOGGER.debug(
+            "build_variable_analysis_sheet feature finished | feature=%s "
+            "elapsed=%.3fs oot_bins=%d monthly_rows=%d",
+            feature_name,
+            elapsed,
+            len(oot_bins),
+            len(monthly_table),
+        )
+
+    if feature_timings:
+        top_feature_cost = ", ".join(
+            f"{name}:{elapsed:.3f}s"
+            for name, elapsed in sorted(
+                feature_timings, key=lambda item: item[1], reverse=True
+            )[:5]
+        )
+        LOGGER.debug(
+            "build_variable_analysis_sheet slowest_features | %s",
+            top_feature_cost,
+        )
+
+    LOGGER.debug(
+        "build_variable_analysis_sheet completed | elapsed=%.3fs "
+        "top_features=%d blocks=%d",
+        time.perf_counter() - sheet_start,
+        len(top_features),
+        len(blocks),
+    )
 
     return ReportSheet(name="变量分析", blocks=blocks)
 
@@ -479,6 +800,7 @@ def build_model_performance_sheet(
     model_adapter: ModelAdapter,
     score_edges: Sequence[float],
     reverse_auc_label: bool = False,
+    build_context: Optional[ReportBuildContext] = None,
 ) -> ReportSheet:
     """Build sheet 4."""
     blocks = [ReportBlock(title="一、建模方法选择", data=model_adapter.get_param_table())]
@@ -490,6 +812,7 @@ def build_model_performance_sheet(
         score_col=score_col,
         model_name=model_name,
         reverse_auc_label=reverse_auc_label,
+        build_context=build_context,
     )
     blocks.append(ReportBlock(title="二、按tag模型效果", data=tag_metrics))
     blocks.append(ReportBlock(title="三、按月模型效果", data=month_metrics))
@@ -532,11 +855,28 @@ def _build_split_metrics_tables(
     score_col: str,
     model_name: str,
     reverse_auc_label: bool = False,
+    build_context: Optional[ReportBuildContext] = None,
 ) -> Tuple[pd.DataFrame, pd.DataFrame]:
+    cache_key = (
+        tuple(label_list),
+        score_col,
+        model_name,
+        bool(reverse_auc_label),
+        tag_col,
+        month_col,
+    )
+    if build_context is not None:
+        cached = build_context.cache_get_split_metrics(cache_key)
+        if cached is not None:
+            return cached
+
     tag_rows: List[pd.DataFrame] = []
     month_rows: List[pd.DataFrame] = []
     month_latest_psi = _build_latest_month_psi_map(
-        data, month_col=month_col, score_col=score_col
+        data,
+        month_col=month_col,
+        score_col=score_col,
+        build_context=build_context,
     )
 
     for label_col in label_list:
@@ -554,6 +894,7 @@ def _build_split_metrics_tables(
             train_reference=train_reference,
             model_name=model_name,
             reverse_auc_label=reverse_auc_label,
+            build_context=build_context,
         )
         tag_rows.append(tag_table)
 
@@ -567,6 +908,7 @@ def _build_split_metrics_tables(
             train_reference=train_reference,
             model_name=model_name,
             reverse_auc_label=reverse_auc_label,
+            build_context=build_context,
         )
         if not month_table.empty:
             month_table["近期月对比各集合PSI"] = month_table["观察点月"].map(month_latest_psi)
@@ -582,6 +924,8 @@ def _build_split_metrics_tables(
         month_column="观察点月",
         leading_columns=["样本标签", "模型"],
     )
+    if build_context is not None:
+        build_context.cache_set_split_metrics(cache_key, (tag_result, month_result))
     return tag_result, month_result
 
 
@@ -593,6 +937,7 @@ def _build_model_pair_comparison(
     tag_col: str,
     month_col: str,
     score_metric_options: Dict[str, Dict[str, bool]],
+    build_context: Optional[ReportBuildContext] = None,
 ) -> pd.DataFrame:
     if group_mode not in {"tag", "month"}:
         raise ValueError(f"Unknown comparison mode: {group_mode}")
@@ -601,7 +946,10 @@ def _build_model_pair_comparison(
     frames: List[pd.DataFrame] = []
     latest_map_by_model = {
         model_name: _build_latest_month_psi_map(
-            data, month_col=month_col, score_col=score_col
+            data,
+            month_col=month_col,
+            score_col=score_col,
+            build_context=build_context,
         )
         for model_name, score_col in model_columns
     }
@@ -622,6 +970,7 @@ def _build_model_pair_comparison(
                 train_reference=train_reference,
                 model_name=model_name,
                 reverse_auc_label=_lookup_reverse_auc(score_metric_options, model_name),
+                build_context=build_context,
             )
             if group_mode == "month":
                 table["近期月对比各集合PSI"] = table["观察点月"].map(
@@ -651,11 +1000,51 @@ def _build_group_metrics(
     latest_month_psi: Optional[pd.DataFrame] = None,
     model_name: str = "",
     reverse_auc_label: bool = False,
+    build_context: Optional[ReportBuildContext] = None,
 ) -> pd.DataFrame:
-    records: List[Dict[str, object]] = []
-    ordered = data.sort_values(list(group_cols))
+    group_key = (
+        tuple(group_cols),
+        label_col,
+        score_col,
+        tag_col,
+        month_col,
+        model_name,
+        bool(reverse_auc_label),
+        bool(train_reference is not None),
+    )
+    if build_context is not None:
+        cached = build_context.cache_get_group_metrics(group_key)
+        if cached is not None:
+            return cached
 
-    for group_values, group_frame in ordered.groupby(list(group_cols), dropna=False):
+    records: List[Dict[str, object]] = []
+    required_columns = list(dict.fromkeys([*group_cols, label_col, score_col]))
+    ordered = data.loc[:, required_columns].copy()
+    for group_col in group_cols:
+        ordered[group_col] = (
+            ordered[group_col]
+            .astype("object")
+            .where(
+                pd.notna(ordered[group_col]),
+                "",
+            )
+        )
+    ordered = ordered.sort_values(list(group_cols))
+    psi_values: List[float] = []
+    grouped_frames = list(ordered.groupby(list(group_cols), dropna=False))
+    if train_reference is not None:
+        group_binary_scores = [
+            group_frame.loc[group_frame[label_col].isin([0, 1]), score_col]
+            for _, group_frame in grouped_frames
+        ]
+        psi_values = calculate_psi_batch(
+            expected=train_reference,
+            actual_groups=group_binary_scores,
+            buckets=BINNING.DEFAULT_BUCKETS,
+            engine=build_context.options.engine if build_context else "python",
+        )
+
+    for group_index, (group_values, group_frame) in enumerate(grouped_frames):
         if not isinstance(group_values, tuple):
             group_values = (group_values,)
         group_dict = dict(zip(group_cols, group_values))
@@ -672,13 +1061,10 @@ def _build_group_metrics(
             **metrics,
         }
 
-        binary_scores = group_frame.loc[group_frame[label_col].isin([0, 1]), score_col]
         if train_reference is None:
             record["train和各集合的PSI"] = np.nan
         else:
-            record["train和各集合的PSI"] = float(
-                calculate_psi(train_reference, binary_scores)
-            )
+            record["train和各集合的PSI"] = float(psi_values[group_index])
 
         latest_value = np.nan
         if latest_month_psi is not None and tag_col and month_col:
@@ -691,9 +1077,12 @@ def _build_group_metrics(
         record["近期月对比各集合PSI"] = latest_value
         records.append(record)
 
-    return _sort_report_table(
+    result = _sort_report_table(
         pd.DataFrame(records), tag_column="样本集", month_column="观察点月"
     )
+    if build_context is not None:
+        build_context.cache_set_group_metrics(group_key, result)
+    return result
 
 
 def _calculate_report_metrics(
@@ -732,20 +1121,37 @@ def _build_latest_month_psi_map(
     data: pd.DataFrame,
     month_col: str,
     score_col: str,
+    build_context: Optional[ReportBuildContext] = None,
 ) -> Dict[object, float]:
+    cache_key = (score_col,)
+    if build_context is not None:
+        cached = build_context.cache_get_latest_month_psi(cache_key)
+        if cached is not None:
+            return cached
     if data.empty:
         return {}
-    marker = "__report_all_tag"
-    psi_data = data.assign(**{marker: "all"})
-    psi_table = calculate_latest_month_psi(
-        psi_data,
-        tag_col=marker,
-        month_col=month_col,
-        score_col=score_col,
-    )
-    if psi_table.empty:
+    month_values = _ordered_month_values(data[month_col])
+    if not month_values:
         return {}
-    return psi_table.set_index(month_col)["latest_month_psi"].to_dict()
+    latest_month = month_values[-1]
+    reference = data.loc[data[month_col] == latest_month, score_col]
+    result: Dict[object, float] = {latest_month: 0.0}
+    compare_months = month_values[:-1]
+    compare_groups = [
+        data.loc[data[month_col] == month_value, score_col]
+        for month_value in compare_months
+    ]
+    compare_values = calculate_psi_batch(
+        expected=reference,
+        actual_groups=compare_groups,
+        buckets=BINNING.DEFAULT_BUCKETS,
+        engine=build_context.options.engine if build_context else "python",
+    )
+    for month_value, psi_value in zip(compare_months, compare_values):
+        result[month_value] = float(psi_value)
+    if build_context is not None:
+        build_context.cache_set_latest_month_psi(cache_key, result)
+    return result
 
 
 def _sort_pair_comparison_table(
@@ -830,28 +1236,72 @@ def _build_feature_analysis_table(
     feature_cols: Sequence[str],
     feature_dict: pd.DataFrame,
     importance: pd.DataFrame,
+    build_context: Optional[ReportBuildContext] = None,
 ) -> pd.DataFrame:
     if not feature_cols:
         return pd.DataFrame()
 
+    table_start = time.perf_counter()
+    step_start = time.perf_counter()
     train_iv = _calculate_batch_iv_with_fallback(
         train_frame.loc[:, feature_cols],
         train_frame[label_col],
+        engine=build_context.options.engine if build_context else "rust",
     )
+    LOGGER.debug(
+        "build_feature_analysis_table step finished | step=calculate_train_iv "
+        "elapsed=%.3fs rows=%d",
+        time.perf_counter() - step_start,
+        len(train_iv),
+    )
+
+    step_start = time.perf_counter()
     oot_iv = (
         _calculate_batch_iv_with_fallback(
             oot_frame.loc[:, feature_cols],
             oot_frame[label_col],
+            engine=build_context.options.engine if build_context else "rust",
         )
         if not oot_frame.empty
         else pd.DataFrame({"feature": feature_cols, "iv": np.nan})
     )
+    LOGGER.debug(
+        "build_feature_analysis_table step finished | step=calculate_oot_iv "
+        "elapsed=%.3fs rows=%d",
+        time.perf_counter() - step_start,
+        len(oot_iv),
+    )
+
+    train_iv_lookup = (
+        train_iv.set_index("feature")["iv"].to_dict() if not train_iv.empty else {}
+    )
+    oot_iv_lookup = (
+        oot_iv.set_index("feature")["iv"].to_dict() if not oot_iv.empty else {}
+    )
     importance_lookup = (
         importance.set_index("feature") if not importance.empty else pd.DataFrame()
     )
-    rows: List[Dict[str, object]] = []
+    train_missing_rate = train_frame.loc[:, feature_cols].isna().mean().to_dict()
+    oot_missing_rate = (
+        oot_frame.loc[:, feature_cols].isna().mean().to_dict()
+        if not oot_frame.empty
+        else {}
+    )
+    total_features = len(feature_cols)
+    worker_count = 1
+    if (
+        build_context is not None
+        and total_features > 1
+        and build_context.options.max_workers > 1
+    ):
+        worker_count = min(build_context.options.max_workers, total_features)
+        if build_context.options.memory_mode == "compact":
+            worker_count = min(worker_count, 4)
 
-    for index, feature in enumerate(feature_cols, start=1):
+    loop_start = time.perf_counter()
+
+    def _build_feature_row(index_feature: Tuple[int, str]) -> Dict[str, object]:
+        index, feature = index_feature
         meta = _lookup_feature_meta(feature_dict, feature)
         train_edges = build_reference_quantile_bins(train_frame[feature], bins=10)
         ks_train = _calculate_feature_metric_score(
@@ -868,23 +1318,27 @@ def _build_feature_analysis_table(
             edges=train_edges,
             metric_name="ks",
         )
-        psi_value = calculate_feature_psi(
-            train_frame[feature],
-            oot_frame[feature] if not oot_frame.empty else pd.Series(dtype=float),
-            edges=train_edges,
+        psi_values = calculate_psi_batch(
+            expected=train_frame[feature],
+            actual_groups=[
+                oot_frame[feature] if not oot_frame.empty else pd.Series(dtype=float)
+            ],
+            buckets=10,
+            engine=build_context.options.engine if build_context else "python",
         )
+        psi_value = float(psi_values[0]) if psi_values else float("nan")
         row = {
             "序号": index,
             "vars": feature,
             "变量解释含义": meta.get("中文名", ""),
             "来源": meta.get("来源", ""),
             "数据类型": str(train_frame[feature].dtype),
-            "缺失率_train": train_frame[feature].isna().mean(),
-            "缺失率_oot": (
-                oot_frame[feature].isna().mean() if not oot_frame.empty else np.nan
+            "缺失率_train": float(train_missing_rate.get(feature, np.nan)),
+            "缺失率_oot": float(
+                oot_missing_rate.get(feature, np.nan) if not oot_frame.empty else np.nan
             ),
-            "iv_train": _lookup_iv_value(train_iv, feature),
-            "iv_oot": _lookup_iv_value(oot_iv, feature),
+            "iv_train": float(train_iv_lookup.get(feature, np.nan)),
+            "iv_oot": float(oot_iv_lookup.get(feature, np.nan)),
             "ks_train": ks_train,
             "ks_oot": ks_oot,
             "gain": _lookup_importance(importance_lookup, feature, "gain"),
@@ -894,7 +1348,23 @@ def _build_feature_analysis_table(
             "psi": psi_value,
             "指标表英文名": feature,
         }
-        rows.append(row)
+        if index == 1 or index % 25 == 0 or index == total_features:
+            LOGGER.debug(
+                "build_feature_analysis_table progress | processed=%d/%d "
+                "elapsed=%.3fs feature=%s",
+                index,
+                total_features,
+                time.perf_counter() - loop_start,
+                feature,
+            )
+        return row
+
+    indexed_features = list(enumerate(feature_cols, start=1))
+    if worker_count > 1:
+        with ThreadPoolExecutor(max_workers=worker_count) as executor:
+            rows = list(executor.map(_build_feature_row, indexed_features))
+    else:
+        rows = [_build_feature_row(index_feature) for index_feature in indexed_features]
 
     result = pd.DataFrame(rows)
     if result.empty:
@@ -903,10 +1373,21 @@ def _build_feature_analysis_table(
         ["gain", "weight"], ascending=False, kind="mergesort"
     ).reset_index(drop=True)
     result["序号"] = np.arange(1, len(result) + 1)
+    LOGGER.debug(
+        "build_feature_analysis_table completed | elapsed=%.3fs rows=%d",
+        time.perf_counter() - table_start,
+        len(result),
+    )
     return result
 
 
-def _calculate_batch_iv_with_fallback(X: pd.DataFrame, y: pd.Series) -> pd.DataFrame:
+def _calculate_batch_iv_with_fallback(
+    X: pd.DataFrame,
+    y: pd.Series,
+    engine: str = "rust",
+) -> pd.DataFrame:
+    if engine == "python":
+        return calculate_batch_iv(X, y, engine="python")
     try:
         return calculate_batch_iv(X, y, engine="rust")
     except Exception:
@@ -961,14 +1442,51 @@ def _build_feature_bin_stats(
 ) -> pd.DataFrame:
     if frame.empty:
         return pd.DataFrame()
-    working = frame.loc[frame[label_col].isin([0, 1]), [feature, label_col]].copy()
-    working["bin"] = assign_reference_bins(working[feature], edges)
-    grouped = (
-        working.groupby("bin", dropna=False)[label_col]
-        .agg(total="count", bads="sum")
-        .reset_index()
+    values, labels = _extract_feature_arrays(frame, feature, label_col)
+    if values.size == 0:
+        return pd.DataFrame()
+
+    edges_array = np.asarray(edges, dtype=float)
+    if len(edges_array) < 2:
+        return pd.DataFrame()
+
+    bin_indices = _assign_bin_indices(values, edges_array)
+    non_missing_bins = len(edges_array) - 1
+    all_bins = non_missing_bins + 1  # plus Missing bucket
+    total_counts = np.bincount(bin_indices, minlength=all_bins).astype(float)
+    bad_counts = np.bincount(
+        bin_indices, weights=labels.astype(float), minlength=all_bins
     )
-    grouped["goods"] = grouped["total"] - grouped["bads"]
+    good_counts = total_counts - bad_counts
+
+    rows: List[Dict[str, object]] = []
+    for bin_index in range(all_bins):
+        total = total_counts[bin_index]
+        if total <= 0:
+            continue
+        if bin_index == non_missing_bins:
+            bin_label: object = "Missing"
+            min_value = np.nan
+            max_value = np.nan
+        else:
+            min_value = float(edges_array[bin_index])
+            max_value = float(edges_array[bin_index + 1])
+            bin_label = pd.Interval(left=min_value, right=max_value, closed="right")
+        rows.append(
+            {
+                "bin": bin_label,
+                "min": min_value,
+                "max": max_value,
+                "goods": float(good_counts[bin_index]),
+                "bads": float(bad_counts[bin_index]),
+                "total": float(total),
+            }
+        )
+
+    grouped = pd.DataFrame(rows)
+    if grouped.empty:
+        return grouped
+
     grouped["total_prop"] = grouped["total"] / max(grouped["total"].sum(), 1)
     grouped["good_prop"] = grouped["goods"] / max(grouped["goods"].sum(), 1)
     grouped["bad_prop"] = grouped["bads"] / max(grouped["bads"].sum(), 1)
@@ -977,8 +1495,6 @@ def _build_feature_bin_stats(
         grouped["good_prop"].clip(lower=1e-8) / grouped["bad_prop"].clip(lower=1e-8)
     )
     grouped["iv"] = (grouped["good_prop"] - grouped["bad_prop"]) * grouped["woe"]
-    grouped["min"] = grouped["bin"].apply(_interval_left)
-    grouped["max"] = grouped["bin"].apply(_interval_right)
     grouped = grouped.assign(
         _missing_order=grouped["bin"].astype(str).eq("Missing").astype(int),
         _bin_order=grouped["min"].map(_interval_sort_key),
@@ -1021,40 +1537,100 @@ def _build_feature_monthly_metrics(
     label_col: str,
     month_col: str,
     edges: Sequence[float],
+    engine: str = "python",
 ) -> pd.DataFrame:
     if all_data.empty:
         return pd.DataFrame()
-    train_stats = _build_feature_bin_stats(train_frame, feature, label_col, edges)
-    train_bin_scores = (
-        train_stats.set_index("bin")["bad_rate"].to_dict()
-        if not train_stats.empty
-        else {}
+    edges_array = np.asarray(edges, dtype=float)
+    train_values, train_labels = _extract_feature_arrays(
+        train_frame, feature, label_col
     )
+    if train_values.size == 0 or len(edges_array) < 2:
+        return pd.DataFrame()
+    train_indices = _assign_bin_indices(train_values, edges_array)
+    non_missing_bins = len(edges_array) - 1
+    all_bins = non_missing_bins + 1
+    train_total_counts = np.bincount(train_indices, minlength=all_bins).astype(float)
+    train_bad_counts = np.bincount(
+        train_indices,
+        weights=train_labels.astype(float),
+        minlength=all_bins,
+    )
+    train_bin_scores = np.full(all_bins, np.nan, dtype=float)
+    observed = train_total_counts > 0
+    train_bin_scores[observed] = train_bad_counts[observed] / train_total_counts[
+        observed
+    ].clip(min=1.0)
+
     rows: List[Dict[str, object]] = []
     for month_value in _ordered_month_values(all_data[month_col]):
         month_frame = all_data.loc[all_data[month_col] == month_value]
-        clean = month_frame.loc[
-            month_frame[label_col].isin([0, 1]), [feature, label_col]
-        ].copy()
-        if clean.empty:
-            continue
-        clean["bin"] = assign_reference_bins(clean[feature], edges)
-        clean["bin_score"] = (
-            clean["bin"]
-            .map(train_bin_scores)
-            .fillna(clean["bin"].astype(str).eq("Missing").astype(float))
+        month_values, month_labels = _extract_feature_arrays(
+            month_frame,
+            feature=feature,
+            label_col=label_col,
         )
-        metrics = calculate_binary_metrics(clean[label_col], clean["bin_score"])
+        if month_values.size == 0:
+            continue
+        month_indices = _assign_bin_indices(month_values, edges_array)
+        month_bin_scores = train_bin_scores[month_indices]
+        fallback = (month_indices == non_missing_bins).astype(float)
+        month_bin_scores = np.where(
+            np.isnan(month_bin_scores), fallback, month_bin_scores
+        )
+        metrics = calculate_binary_metrics(
+            pd.Series(month_labels),
+            pd.Series(month_bin_scores),
+        )
         rows.append(
             {
                 "month": month_value,
                 **metrics,
-                "PSI": calculate_feature_psi(
-                    train_frame[feature], clean[feature], edges
-                ),
+                "PSI": calculate_psi_batch(
+                    expected=pd.Series(train_values),
+                    actual_groups=[pd.Series(month_values)],
+                    buckets=10,
+                    engine=engine,
+                )[0],
             }
         )
     return _sort_report_table(pd.DataFrame(rows), month_column="month")
+
+
+def _extract_feature_arrays(
+    frame: pd.DataFrame,
+    feature: str,
+    label_col: str,
+) -> Tuple[np.ndarray, np.ndarray]:
+    if frame.empty:
+        return np.array([], dtype=float), np.array([], dtype=np.int8)
+    labels = frame[label_col]
+    binary_mask = labels.isin([0, 1])
+    if not bool(binary_mask.any()):
+        return np.array([], dtype=float), np.array([], dtype=np.int8)
+    numeric_values = pd.to_numeric(
+        frame.loc[binary_mask, feature],
+        errors="coerce",
+    ).to_numpy(dtype=float)
+    label_values = pd.to_numeric(
+        labels.loc[binary_mask],
+        errors="coerce",
+    ).to_numpy(dtype=np.int8)
+    return numeric_values, label_values
+
+
+def _assign_bin_indices(values: np.ndarray, edges: np.ndarray) -> np.ndarray:
+    non_missing_bins = len(edges) - 1
+    indices = np.empty(values.shape[0], dtype=np.int32)
+    nan_mask = np.isnan(values)
+    indices[nan_mask] = non_missing_bins
+    if (~nan_mask).any():
+        indices[~nan_mask] = np.searchsorted(
+            edges[1:-1],
+            values[~nan_mask],
+            side="right",
+        ).astype(np.int32)
+    return indices
 
 
 def _calculate_feature_metric_score(

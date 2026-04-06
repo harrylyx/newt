@@ -1321,20 +1321,29 @@ def _reshape_portrait_table(portrait: pd.DataFrame) -> pd.DataFrame:
         return pd.DataFrame(columns=target_columns)
 
     working = portrait.copy()
-    non_missing_bins = sorted(
-        {
-            str(value)
-            for value in working["分组"].astype(str).tolist()
-            if str(value) != "Missing"
-        },
-        key=_interval_left,
-    )
-    bin_label_map = {
-        label: str(index + 1) for index, label in enumerate(non_missing_bins[:10])
-    }
-    working["_bin_label"] = working["分组"].astype(str).map(bin_label_map)
-    working.loc[working["分组"].astype(str) == "Missing", "_bin_label"] = "Missing"
-    working = working.loc[working["_bin_label"].notna()]
+    working["分组"] = working["分组"].astype(str)
+    mapped_frames: List[pd.DataFrame] = []
+
+    for _, model_frame in working.groupby("模型", dropna=False, sort=False):
+        non_missing_bins = sorted(
+            [
+                str(value)
+                for value in model_frame["分组"].drop_duplicates().tolist()
+                if str(value) != "Missing"
+            ],
+            key=_interval_left,
+        )
+        bin_label_map = {
+            label: str(index + 1) for index, label in enumerate(non_missing_bins[:10])
+        }
+        mapped = model_frame.copy()
+        mapped["_bin_label"] = mapped["分组"].map(bin_label_map)
+        mapped.loc[mapped["分组"] == "Missing", "_bin_label"] = "Missing"
+        mapped_frames.append(mapped.loc[mapped["_bin_label"].notna()])
+
+    if not mapped_frames:
+        return pd.DataFrame(columns=target_columns)
+    working = pd.concat(mapped_frames, ignore_index=True)
 
     pivoted = (
         working.pivot_table(

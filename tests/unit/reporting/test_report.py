@@ -388,9 +388,12 @@ def test_report_overview_corr_precision_and_portrait_wide_layout(
     fake_lightgbm_model,
 ):
     output_path = tmp_path / "overview_corr_portrait.xlsx"
+    shifted = report_frame.copy()
+    # Force clearly different bin boundaries between models.
+    shifted["score_old_a"] = shifted["score_old_a"] * 100 + 100
 
     report = Report(
-        data=report_frame,
+        data=shifted,
         model=fake_lightgbm_model,
         tag="tag",
         score_col="score_new",
@@ -418,6 +421,9 @@ def test_report_overview_corr_precision_and_portrait_wide_layout(
     assert list(portrait.columns) == expected_columns
     assert set(portrait["画像变量"]) == {"profile_income", "profile_age"}
     assert len(portrait) == 4
+    for variable_name in ["profile_income", "profile_age"]:
+        models = set(portrait.loc[portrait["画像变量"] == variable_name, "模型"])
+        assert models == {"score_new", "score_old_a"}
 
 
 def test_report_model_design_distribution_layout_and_tag_order(

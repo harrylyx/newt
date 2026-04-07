@@ -935,6 +935,7 @@ report = Report(
     max_workers=8,           # default: min(8, cpu_count)
     parallel_sheets=True,    # default
     memory_mode="compact",   # default: "compact" | "standard"
+    metrics_mode="exact",    # default: "exact" | "binned"
 )
 
 report.generate()
@@ -957,6 +958,7 @@ Notes:
 - `max_workers` controls compute parallelism; default is `min(8, cpu_count)`
 - `parallel_sheets` enables concurrent sheet computation (Excel write remains sequential)
 - `memory_mode` controls runtime memory strategy: `compact` (default) or `standard`
+- `metrics_mode` controls metric computation mode: `exact` (default) or `binned` (faster, approximate)
 - If you only need part of the report, pass just the sheet names or indexes you want
 - For report development and validation, use `uv sync --group dev`
 

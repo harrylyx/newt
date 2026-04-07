@@ -4,6 +4,7 @@ from .ks import calculate_ks
 from .lift import calculate_lift, calculate_lift_at_k
 from .psi import (
     calculate_feature_psi_against_base,
+    calculate_feature_psi_pairs_batch,
     calculate_grouped_psi,
     calculate_psi,
     calculate_psi_batch,
@@ -27,6 +28,7 @@ __all__ = [
     "calculate_lift_at_k",
     "calculate_psi",
     "calculate_psi_batch",
+    "calculate_feature_psi_pairs_batch",
     "calculate_grouped_psi",
     "calculate_feature_psi_against_base",
     "calculate_gini",

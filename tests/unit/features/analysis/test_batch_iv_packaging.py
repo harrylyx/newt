@@ -11,6 +11,8 @@ def test_batch_iv_uses_package_internal_rust_module():
     """The Rust extension should be importable as newt._newt_iv_rust."""
     module = import_module("newt._newt_iv_rust")
     assert hasattr(module, "calculate_batch_iv")
+    assert hasattr(module, "calculate_binary_metrics_batch_numpy")
+    assert hasattr(module, "calculate_feature_psi_pairs_numpy")
 
 
 def test_load_rust_extension_does_not_trigger_local_build_when_missing():

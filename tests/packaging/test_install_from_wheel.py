@@ -86,6 +86,12 @@ def test_installed_wheel_can_import_rust_extension(tmp_path: Path):
                 assert hasattr(
                     ext, "calculate_categorical_iv"
                 ), "missing calculate_categorical_iv"
+                assert hasattr(
+                    ext, "calculate_binary_metrics_batch_numpy"
+                ), "missing calculate_binary_metrics_batch_numpy"
+                assert hasattr(
+                    ext, "calculate_feature_psi_pairs_numpy"
+                ), "missing calculate_feature_psi_pairs_numpy"
                 print("RUST_IMPORT_OK")
                 """
             ),

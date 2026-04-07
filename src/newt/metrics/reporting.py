@@ -8,13 +8,14 @@ import numpy as np
 import pandas as pd
 
 from newt.config import BINNING
-from newt.metrics.auc import calculate_auc
-from newt.metrics.ks import calculate_ks
-from newt.metrics.lift import calculate_lift_at_k
+from newt.metrics.binary_metrics import (
+    calculate_binary_metrics as _unified_binary_metrics,
+)
 from newt.metrics.psi import calculate_grouped_psi, calculate_psi
-
-PERCENT_LEVELS = (0.10, 0.05, 0.02, 0.01)
-TAG_ORDER = {"train": 0, "test": 1, "oot": 2, "oos": 3}
+from newt.report_sort_utils import month_sort_key as _shared_month_sort_key
+from newt.report_sort_utils import ordered_month_values as _shared_ordered_month_values
+from newt.report_sort_utils import sort_report_frame as _shared_sort_report_frame
+from newt.report_sort_utils import tag_sort_key as _shared_tag_sort_key
 
 
 def build_reference_quantile_bins(
@@ -57,53 +58,33 @@ def calculate_binary_metrics(
     y_true: pd.Series,
     y_score: pd.Series,
     lift_use_descending_score: bool = True,
+    reverse_auc_label: bool = False,
+    metrics_mode: str = "exact",
+    bins: int = 10,
 ) -> Dict[str, float]:
     """Calculate summary metrics for a binary label/score pair.
+
+    Delegates to :func:`newt.metrics.binary_metrics.calculate_binary_metrics`
+    which uses a single ``roc_curve`` call for both AUC and KS and a
+    single ``argsort`` for all lift levels.
 
     Args:
         y_true: Binary labels.
         y_score: Numeric score/probability.
-        lift_use_descending_score: Whether lift top-k uses higher score as higher risk.
+        lift_use_descending_score: Whether lift top-k uses higher score
+            as higher risk.
+        reverse_auc_label: If True, report AUC = 1 - AUC(y, s).
+        metrics_mode: ``"exact"`` or ``"binned"``.
+        bins: Number of bins for binned mode.
     """
-    mask = y_true.isin([0, 1]) & pd.notna(y_score)
-    y_clean = y_true.loc[mask].astype(int)
-    score_clean = pd.to_numeric(y_score.loc[mask], errors="coerce")
-    valid = pd.notna(score_clean)
-    y_clean = y_clean.loc[valid]
-    score_clean = score_clean.loc[valid]
-
-    total = int(len(y_true))
-    good = int((y_true == 0).sum())
-    bad = int((y_true == 1).sum())
-    binary_total = good + bad
-    bad_rate = float(bad / binary_total) if binary_total else np.nan
-
-    if len(y_clean) == 0 or y_clean.nunique() < 2:
-        metrics = {"KS": np.nan, "AUC": np.nan}
-        lifts = {f"{int(level * 100)}%lift": np.nan for level in PERCENT_LEVELS}
-    else:
-        lift_score = score_clean if lift_use_descending_score else -score_clean
-        metrics = {
-            "KS": calculate_ks(y_clean, score_clean),
-            "AUC": calculate_auc(y_clean, score_clean),
-        }
-        lifts = {
-            f"{int(level * 100)}%lift": calculate_lift_at_k(
-                y_clean.to_numpy(),
-                lift_score.to_numpy(),
-                k=level,
-            )
-            for level in PERCENT_LEVELS
-        }
-
-    return {
-        "总": total,
-        "好": good,
-        "坏": bad,
-        "坏占比": bad_rate,
-        **metrics,
-        **lifts,
-    }
+    return _unified_binary_metrics(
+        y_true=y_true,
+        y_score=y_score,
+        lift_use_descending_score=lift_use_descending_score,
+        reverse_auc_label=reverse_auc_label,
+        metrics_mode=metrics_mode,
+        bins=bins,
+    )
 
 
 def calculate_latest_month_psi(
@@ -411,54 +392,24 @@ def _sort_report_frame(
     tag_column: Optional[str] = None,
     month_column: Optional[str] = None,
 ) -> pd.DataFrame:
-    if frame.empty:
-        return frame
-
-    ordered = frame.copy()
-    sort_columns: List[str] = []
-    helper_columns: List[str] = []
-
-    if tag_column and tag_column in ordered.columns:
-        ordered["_tag_order"] = ordered[tag_column].map(_tag_sort_key)
-        sort_columns.append("_tag_order")
-        helper_columns.append("_tag_order")
-
-    if month_column and month_column in ordered.columns:
-        ordered["_month_order"] = ordered[month_column].map(_month_sort_key)
-        sort_columns.append("_month_order")
-        helper_columns.append("_month_order")
-
-    for column in ["样本标签", "模型", "维度列", "维度值"]:
-        if column in ordered.columns:
-            sort_columns.append(column)
-
-    if not sort_columns:
-        return ordered.reset_index(drop=True)
-
-    ordered = ordered.sort_values(sort_columns, kind="mergesort")
-    return ordered.drop(columns=helper_columns, errors="ignore").reset_index(drop=True)
+    return _shared_sort_report_frame(
+        frame=frame,
+        tag_column=tag_column,
+        month_column=month_column,
+        leading_columns=["样本标签", "模型", "维度列", "维度值"],
+    )
 
 
 def _ordered_month_values(values: pd.Series) -> List[object]:
-    unique_values = pd.Series(values).drop_duplicates().tolist()
-    return sorted(unique_values, key=_month_sort_key)
+    return _shared_ordered_month_values(values)
 
 
 def _month_sort_key(value: object) -> str:
-    if pd.isna(value) or value == "":
-        return "999999"
-    text = str(value).strip()
-    if text.isdigit() and len(text) == 6:
-        return text
-    parsed = pd.to_datetime(value, errors="coerce")
-    if pd.notna(parsed):
-        return parsed.strftime("%Y%m")
-    return f"999998{text}"
+    return _shared_month_sort_key(value)
 
 
 def _tag_sort_key(value: object) -> tuple[int, str]:
-    text = str(value)
-    return TAG_ORDER.get(text.lower(), len(TAG_ORDER)), text
+    return _shared_tag_sort_key(value)
 
 
 def _bin_sort_key(value: object) -> float:

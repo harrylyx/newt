@@ -14,11 +14,8 @@ from newt.config import LOGGING
 from newt.reporting.excel_writer import ExcelReportWriter
 from newt.reporting.model_adapter import ModelAdapter
 from newt.reporting.score_prep import prepare_report_scores
-from newt.reporting.tables import (
-    ReportBuildOptions,
-    build_report_result,
-    resolve_sheet_keys,
-)
+from newt.reporting.table_context import ReportBuildOptions
+from newt.reporting.tables import build_report_result, resolve_sheet_keys
 from newt.results import ModelReportResult
 
 LOGGER = logging.getLogger("newt.reporting.report")
@@ -44,6 +41,7 @@ class Report:
     max_workers: Optional[int] = None
     parallel_sheets: bool = True
     memory_mode: str = "compact"
+    metrics_mode: str = "exact"
 
     result_: Optional[ModelReportResult] = field(default=None, init=False)
 
@@ -57,12 +55,14 @@ class Report:
             max_workers=resolved_workers,
             parallel_sheets=bool(self.parallel_sheets),
             memory_mode=self.memory_mode,
+            metrics_mode=self.metrics_mode,
         )
         stage_timings: List[Tuple[str, float]] = []
         total_start = time.perf_counter()
         LOGGER.debug(
             "Report generation started | rows=%d cols=%d primary_score=%s labels=%s "
             "output=%s engine=%s workers=%d parallel_sheets=%s memory_mode=%s "
+            "metrics_mode=%s "
             "peak_rss_mb=%s",
             len(self.data),
             len(self.data.columns),
@@ -73,6 +73,7 @@ class Report:
             build_options.max_workers,
             build_options.parallel_sheets,
             build_options.memory_mode,
+            build_options.metrics_mode,
             _format_peak_rss(),
         )
 
@@ -180,7 +181,7 @@ class Report:
         prepared = prepared.assign(
             **{
                 self.tag: self.data[self.tag].astype("object"),
-                "_report_month": self.data[self.date_col].apply(_normalize_month),
+                "_report_month": _vectorized_normalize_month(self.data[self.date_col]),
             }
         )
         return prepared
@@ -201,6 +202,8 @@ class Report:
             raise ValueError("engine must be 'rust' or 'python'")
         if self.memory_mode not in {"compact", "standard"}:
             raise ValueError("memory_mode must be 'compact' or 'standard'")
+        if self.metrics_mode not in {"exact", "binned"}:
+            raise ValueError("metrics_mode must be 'exact' or 'binned'")
         if self.max_workers is not None and int(self.max_workers) < 1:
             raise ValueError("max_workers must be >= 1")
 
@@ -227,6 +230,26 @@ def _normalize_month(value: object) -> str:
     if pd.notna(parsed):
         return parsed.strftime("%Y%m")
     return text
+
+
+def _vectorized_normalize_month(values: pd.Series) -> pd.Series:
+    if values.empty:
+        return pd.Series([], dtype="object", index=values.index)
+    if pd.api.types.is_datetime64_any_dtype(values):
+        return values.dt.strftime("%Y%m").fillna("").astype("object")
+
+    series = values.astype("object")
+    text = series.astype(str).str.strip()
+    result = pd.Series("", index=values.index, dtype="object")
+
+    notna = series.notna()
+    parsed = pd.to_datetime(series.where(notna), errors="coerce")
+    result.loc[notna] = parsed.dt.strftime("%Y%m").fillna(text.loc[notna])
+
+    is_yyyymm = notna & text.str.match(r"^\d{6}$", na=False)
+    result.loc[is_yyyymm] = text.loc[is_yyyymm]
+
+    return result
 
 
 def _configure_report_logger() -> None:

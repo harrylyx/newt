@@ -5,9 +5,7 @@ from __future__ import annotations
 import logging
 import time
 from concurrent.futures import ThreadPoolExecutor
-from dataclasses import dataclass, field
 from pathlib import Path
-from threading import Lock
 from typing import Dict, List, Optional, Sequence, Tuple
 
 import numpy as np
@@ -15,102 +13,34 @@ import pandas as pd
 
 from newt.config import BINNING
 from newt.features.analysis.batch_iv import calculate_batch_iv
-from newt.metrics.auc import calculate_auc
-from newt.metrics.psi import calculate_psi_batch
+from newt.metrics.binary_metrics import (
+    calculate_binary_metrics as _unified_binary_metrics,
+)
+from newt.metrics.binary_metrics import (
+    calculate_binary_metrics_batch as _unified_binary_metrics_batch,
+)
+from newt.metrics.psi import calculate_feature_psi_pairs_batch, calculate_psi_batch
 from newt.metrics.reporting import (
     build_reference_quantile_bins,
     calculate_bin_performance_table,
-    calculate_binary_metrics,
     calculate_portrait_means_by_score_bin,
     calculate_score_correlation_matrix,
     summarize_label_distribution,
 )
+from newt.report_sort_utils import month_sort_key as _shared_month_sort_key
+from newt.report_sort_utils import ordered_month_values as _shared_ordered_month_values
+from newt.report_sort_utils import ordered_tag_values as _shared_ordered_tag_values
+from newt.report_sort_utils import sort_report_frame as _shared_sort_report_frame
+from newt.report_sort_utils import tag_sort_key as _shared_tag_sort_key
 from newt.reporting.model_adapter import ModelAdapter
+from newt.reporting.table_context import (
+    FeatureComputationArtifacts,
+    ReportBuildContext,
+    ReportBuildOptions,
+)
 from newt.results import ModelReportResult, ReportBlock, ReportChart, ReportSheet
 
 LOGGER = logging.getLogger("newt.reporting.tables")
-
-
-@dataclass(frozen=True)
-class ReportBuildOptions:
-    """Runtime knobs for report compute path."""
-
-    engine: str = "rust"
-    max_workers: int = 4
-    parallel_sheets: bool = True
-    memory_mode: str = "compact"
-
-
-@dataclass
-class ReportBuildContext:
-    """Shared immutable-ish context and caches across sheet builders."""
-
-    data: pd.DataFrame
-    tag_col: str
-    month_col: str
-    options: ReportBuildOptions
-    timings: List[Tuple[str, float]] = field(default_factory=list)
-    latest_month_psi_cache: Dict[Tuple[str], Dict[object, float]] = field(
-        default_factory=dict
-    )
-    split_metrics_cache: Dict[
-        Tuple[object, ...], Tuple[pd.DataFrame, pd.DataFrame]
-    ] = field(default_factory=dict)
-    group_metrics_cache: Dict[Tuple[object, ...], pd.DataFrame] = field(
-        default_factory=dict
-    )
-    lock: Lock = field(default_factory=Lock, repr=False)
-
-    def record_timing(self, name: str, elapsed: float) -> None:
-        self.timings.append((name, float(elapsed)))
-
-    def cache_get_latest_month_psi(
-        self, key: Tuple[str]
-    ) -> Optional[Dict[object, float]]:
-        with self.lock:
-            value = self.latest_month_psi_cache.get(key)
-        if value is None:
-            return None
-        return dict(value)
-
-    def cache_set_latest_month_psi(
-        self, key: Tuple[str], value: Dict[object, float]
-    ) -> None:
-        with self.lock:
-            self.latest_month_psi_cache[key] = dict(value)
-
-    def cache_get_split_metrics(
-        self,
-        key: Tuple[object, ...],
-    ) -> Optional[Tuple[pd.DataFrame, pd.DataFrame]]:
-        with self.lock:
-            value = self.split_metrics_cache.get(key)
-        if value is None:
-            return None
-        return value[0].copy(), value[1].copy()
-
-    def cache_set_split_metrics(
-        self,
-        key: Tuple[object, ...],
-        value: Tuple[pd.DataFrame, pd.DataFrame],
-    ) -> None:
-        with self.lock:
-            self.split_metrics_cache[key] = (value[0].copy(), value[1].copy())
-
-    def cache_get_group_metrics(
-        self, key: Tuple[object, ...]
-    ) -> Optional[pd.DataFrame]:
-        with self.lock:
-            value = self.group_metrics_cache.get(key)
-        if value is None:
-            return None
-        return value.copy()
-
-    def cache_set_group_metrics(
-        self, key: Tuple[object, ...], value: pd.DataFrame
-    ) -> None:
-        with self.lock:
-            self.group_metrics_cache[key] = value.copy()
 
 
 def _timed_sheet_build(builder) -> Tuple[ReportSheet, float]:
@@ -339,6 +269,34 @@ def build_report_result(
     primary_label = label_list[0]
     primary_report_score = report_score_columns[primary_score_name]
 
+    shared_tag_metrics = pd.DataFrame()
+    shared_month_metrics = pd.DataFrame()
+    if any(key in build_sheet_keys for key in ["model_design", "model_performance"]):
+        step_start = time.perf_counter()
+        shared_tag_metrics, shared_month_metrics = _build_split_metrics_tables(
+            data=data,
+            tag_col=tag_col,
+            month_col=month_col,
+            raw_date_col=raw_date_col,
+            label_list=label_list,
+            score_col=primary_report_score,
+            model_name=primary_score_name,
+            reverse_auc_label=_lookup_reverse_auc(
+                score_metric_options, primary_score_name
+            ),
+            metrics_mode=resolved_options.metrics_mode,
+            build_context=context,
+        )
+        _log_context_stage(
+            context,
+            "precompute_split_metrics",
+            time.perf_counter() - step_start,
+            extra=(
+                f"tag_rows={len(shared_tag_metrics)} "
+                f"month_rows={len(shared_month_metrics)}"
+            ),
+        )
+
     feature_dict = pd.DataFrame()
     feature_cols: List[str] = []
     if "variable_analysis" in build_sheet_keys:
@@ -398,6 +356,20 @@ def build_report_result(
             report_score_columns=report_score_columns,
         )
 
+    shared_oot_frame = (
+        data.loc[data[tag_col] == "oot"]
+        if any(
+            key in build_sheet_keys
+            for key in ["dimensional_comparison", "model_comparison", "portrait"]
+        )
+        else pd.DataFrame()
+    )
+    shared_primary_binary_data = (
+        data.loc[data[primary_label].isin([0, 1])]
+        if "model_performance" in build_sheet_keys
+        else pd.DataFrame()
+    )
+
     child_builders = {
         "model_design": lambda: build_model_design_sheet(
             data=data,
@@ -411,6 +383,8 @@ def build_report_result(
             reverse_auc_label=_lookup_reverse_auc(
                 score_metric_options, primary_score_name
             ),
+            metrics_mode=resolved_options.metrics_mode,
+            precomputed_tag_metrics=shared_tag_metrics,
             build_context=context,
         ),
         "variable_analysis": lambda: build_variable_analysis_sheet(
@@ -437,6 +411,10 @@ def build_report_result(
             reverse_auc_label=_lookup_reverse_auc(
                 score_metric_options, primary_score_name
             ),
+            metrics_mode=resolved_options.metrics_mode,
+            precomputed_tag_metrics=shared_tag_metrics,
+            precomputed_month_metrics=shared_month_metrics,
+            primary_binary_data=shared_primary_binary_data,
             build_context=context,
         ),
         "dimensional_comparison": lambda: build_dimensional_comparison_sheet(
@@ -446,6 +424,8 @@ def build_report_result(
             label_list=label_list,
             score_model_columns=score_model_columns,
             score_metric_options=score_metric_options,
+            oot_frame=shared_oot_frame,
+            build_context=context,
         ),
         "model_comparison": lambda: build_model_comparison_sheet(
             data=data,
@@ -455,6 +435,7 @@ def build_report_result(
             label_list=label_list,
             model_columns=score_model_columns,
             score_metric_options=score_metric_options,
+            oot_frame=shared_oot_frame,
             build_context=context,
         ),
         "portrait": lambda: build_portrait_sheet(
@@ -462,6 +443,7 @@ def build_report_result(
             tag_col=tag_col,
             var_list=var_list,
             score_model_columns=score_model_columns,
+            oot_frame=shared_oot_frame,
         ),
     }
 
@@ -554,6 +536,7 @@ def build_report_result(
                 "max_workers": resolved_options.max_workers,
                 "parallel_sheets": resolved_options.parallel_sheets,
                 "memory_mode": resolved_options.memory_mode,
+                "metrics_mode": resolved_options.metrics_mode,
             },
             "report_compute_top_timings": [
                 {"step": name, "elapsed": elapsed}
@@ -620,7 +603,7 @@ def build_overview_sheet(
                 or block.title.startswith("按月新老模型对比(")
                 or block.title == "OOT相关性矩阵"
             ):
-                blocks.append(ReportBlock(title=block.title, data=block.data.copy()))
+                blocks.append(ReportBlock(title=block.title, data=block.data))
 
     portrait = _extract_block_data(portrait_sheet, "OOT画像变量均值对比")
     if not portrait.empty:
@@ -636,7 +619,7 @@ def _extract_block_data(sheet: Optional[ReportSheet], title: str) -> pd.DataFram
         block = sheet.get_block(title)
     except KeyError:
         return pd.DataFrame()
-    return block.data.copy()
+    return block.data
 
 
 def build_dimensional_comparison_sheet(
@@ -646,9 +629,11 @@ def build_dimensional_comparison_sheet(
     label_list: Sequence[str],
     score_model_columns: Sequence[Tuple[str, str]],
     score_metric_options: Dict[str, Dict[str, bool]],
+    oot_frame: Optional[pd.DataFrame] = None,
+    build_context: Optional[ReportBuildContext] = None,
 ) -> ReportSheet:
     """Build appendix sheet for dimensional model-effect comparison."""
-    oot_frame = data.loc[data[tag_col] == "oot"].copy()
+    oot_frame = oot_frame if oot_frame is not None else data.loc[data[tag_col] == "oot"]
     dim_table = (
         _build_dimensional_comparison(
             data=oot_frame,
@@ -656,6 +641,11 @@ def build_dimensional_comparison_sheet(
             label_list=label_list,
             score_model_columns=score_model_columns,
             score_metric_options=score_metric_options,
+            metrics_mode=(
+                build_context.options.metrics_mode
+                if build_context is not None
+                else "exact"
+            ),
         )
         if dim_list and not oot_frame.empty
         else pd.DataFrame()
@@ -677,6 +667,7 @@ def build_model_comparison_sheet(
     label_list: Sequence[str],
     model_columns: Sequence[Tuple[str, str]],
     score_metric_options: Dict[str, Dict[str, bool]],
+    oot_frame: Optional[pd.DataFrame] = None,
     build_context: Optional[ReportBuildContext] = None,
 ) -> ReportSheet:
     """Build appendix sheet for old/new model comparison."""
@@ -693,6 +684,11 @@ def build_model_comparison_sheet(
                 month_col=month_col,
                 raw_date_col=raw_date_col,
                 score_metric_options=score_metric_options,
+                metrics_mode=(
+                    build_context.options.metrics_mode
+                    if build_context is not None
+                    else "exact"
+                ),
                 build_context=build_context,
             )
             month_compare = _build_model_pair_comparison(
@@ -704,6 +700,11 @@ def build_model_comparison_sheet(
                 month_col=month_col,
                 raw_date_col=raw_date_col,
                 score_metric_options=score_metric_options,
+                metrics_mode=(
+                    build_context.options.metrics_mode
+                    if build_context is not None
+                    else "exact"
+                ),
                 build_context=build_context,
             )
             blocks.append(
@@ -719,7 +720,7 @@ def build_model_comparison_sheet(
                 )
             )
 
-    oot_frame = data.loc[data[tag_col] == "oot"].copy()
+    oot_frame = oot_frame if oot_frame is not None else data.loc[data[tag_col] == "oot"]
     if not oot_frame.empty and model_columns:
         display_by_column = {column: model for model, column in model_columns}
         corr = calculate_score_correlation_matrix(
@@ -738,9 +739,10 @@ def build_portrait_sheet(
     tag_col: str,
     var_list: Sequence[str],
     score_model_columns: Sequence[Tuple[str, str]],
+    oot_frame: Optional[pd.DataFrame] = None,
 ) -> ReportSheet:
     """Build appendix sheet for OOT portrait variable means."""
-    oot_frame = data.loc[data[tag_col] == "oot"].copy()
+    oot_frame = oot_frame if oot_frame is not None else data.loc[data[tag_col] == "oot"]
     portrait = pd.DataFrame()
     if var_list and not oot_frame.empty and score_model_columns:
         display_by_column = {column: model for model, column in score_model_columns}
@@ -771,6 +773,8 @@ def build_model_design_sheet(
     score_col: str,
     model_name: str,
     reverse_auc_label: bool = False,
+    metrics_mode: str = "exact",
+    precomputed_tag_metrics: Optional[pd.DataFrame] = None,
     build_context: Optional[ReportBuildContext] = None,
 ) -> ReportSheet:
     """Build sheet 2."""
@@ -810,6 +814,7 @@ def build_model_design_sheet(
                 tag_frame[label_col],
                 tag_frame[score_col],
                 reverse_auc_label=reverse_auc_label,
+                metrics_mode=metrics_mode,
             )
             sample_rows.append(
                 {
@@ -825,20 +830,11 @@ def build_model_design_sheet(
     blocks.append(ReportBlock(title="建模样本分布情况表", data=pd.DataFrame(sample_rows)))
 
     effect_rows = []
-    for label_col in label_list:
-        effect_table = _build_group_metrics(
-            data=data,
-            group_cols=[tag_col],
-            label_col=label_col,
-            score_col=score_col,
-            tag_col=tag_col,
-            month_col=month_col,
-            raw_date_col=raw_date_col,
-            model_name=model_name,
-            reverse_auc_label=reverse_auc_label,
-            build_context=build_context,
-        )
-        for _, row in effect_table.iterrows():
+    if precomputed_tag_metrics is not None and not precomputed_tag_metrics.empty:
+        effect_source = precomputed_tag_metrics.loc[
+            precomputed_tag_metrics["样本标签"].isin(label_list)
+        ]
+        for _, row in effect_source.iterrows():
             effect_rows.append(
                 {
                     "样本集": row["样本集"],
@@ -847,6 +843,30 @@ def build_model_design_sheet(
                     "KS": row["KS"],
                 }
             )
+    else:
+        for label_col in label_list:
+            effect_table = _build_group_metrics(
+                data=data,
+                group_cols=[tag_col],
+                label_col=label_col,
+                score_col=score_col,
+                tag_col=tag_col,
+                month_col=month_col,
+                raw_date_col=raw_date_col,
+                model_name=model_name,
+                reverse_auc_label=reverse_auc_label,
+                metrics_mode=metrics_mode,
+                build_context=build_context,
+            )
+            for _, row in effect_table.iterrows():
+                effect_rows.append(
+                    {
+                        "样本集": row["样本集"],
+                        "样本标签": row["样本标签"],
+                        "AUC": row["AUC"],
+                        "KS": row["KS"],
+                    }
+                )
     blocks.append(ReportBlock(title="模型效果汇总", data=pd.DataFrame(effect_rows)))
     return ReportSheet(name="模型设计", blocks=blocks)
 
@@ -887,7 +907,7 @@ def build_variable_analysis_sheet(
     )
 
     step_start = time.perf_counter()
-    feature_table = _build_feature_analysis_table(
+    feature_table, feature_artifacts = _build_feature_analysis_table(
         train_frame=train_frame,
         oot_frame=oot_frame,
         month_frame=data,
@@ -931,13 +951,17 @@ def build_variable_analysis_sheet(
     ) -> Tuple[int, str, str, pd.DataFrame, pd.DataFrame, float]:
         rank, feature_name = job
         feature_start = time.perf_counter()
-        edges = build_reference_quantile_bins(train_frame[feature_name], bins=10)
-        oot_bins = _build_feature_bin_stats(
-            frame=oot_frame,
-            feature=feature_name,
-            label_col=primary_label,
-            edges=edges,
-        )
+        edges = feature_artifacts.edges_by_feature.get(feature_name)
+        if edges is None:
+            edges = build_reference_quantile_bins(train_frame[feature_name], bins=10)
+        oot_bins = feature_artifacts.oot_bin_stats_by_feature.get(feature_name)
+        if oot_bins is None:
+            oot_bins = _build_feature_bin_stats(
+                frame=oot_frame,
+                feature=feature_name,
+                label_col=primary_label,
+                edges=edges,
+            )
         monthly_table = _build_feature_monthly_metrics(
             all_data=data,
             train_frame=train_frame,
@@ -946,6 +970,11 @@ def build_variable_analysis_sheet(
             month_col=month_col,
             edges=edges,
             engine=build_context.options.engine if build_context else "python",
+            metrics_mode=(
+                build_context.options.metrics_mode
+                if build_context is not None
+                else "exact"
+            ),
         )
         display_name = _lookup_feature_meta(feature_dict, feature_name).get("中文名", "")
         title_prefix = f"{rank}.{feature_name}"
@@ -1044,25 +1073,43 @@ def build_model_performance_sheet(
     model_adapter: ModelAdapter,
     score_edges: Sequence[float],
     reverse_auc_label: bool = False,
+    metrics_mode: str = "exact",
+    precomputed_tag_metrics: Optional[pd.DataFrame] = None,
+    precomputed_month_metrics: Optional[pd.DataFrame] = None,
+    primary_binary_data: Optional[pd.DataFrame] = None,
     build_context: Optional[ReportBuildContext] = None,
 ) -> ReportSheet:
     """Build sheet 4."""
     blocks = [ReportBlock(title="一、建模方法选择", data=model_adapter.get_param_table())]
-    tag_metrics, month_metrics = _build_split_metrics_tables(
-        data=data,
-        tag_col=tag_col,
-        month_col=month_col,
-        raw_date_col=raw_date_col,
-        label_list=label_list,
-        score_col=score_col,
-        model_name=model_name,
-        reverse_auc_label=reverse_auc_label,
-        build_context=build_context,
-    )
+    if (
+        precomputed_tag_metrics is not None
+        and precomputed_month_metrics is not None
+        and not precomputed_tag_metrics.empty
+        and not precomputed_month_metrics.empty
+    ):
+        tag_metrics = precomputed_tag_metrics
+        month_metrics = precomputed_month_metrics
+    else:
+        tag_metrics, month_metrics = _build_split_metrics_tables(
+            data=data,
+            tag_col=tag_col,
+            month_col=month_col,
+            raw_date_col=raw_date_col,
+            label_list=label_list,
+            score_col=score_col,
+            model_name=model_name,
+            reverse_auc_label=reverse_auc_label,
+            metrics_mode=metrics_mode,
+            build_context=build_context,
+        )
     blocks.append(ReportBlock(title="二、按tag模型效果", data=tag_metrics))
     blocks.append(ReportBlock(title="三、按月模型效果", data=month_metrics))
 
-    binary_data = data.loc[data[primary_label].isin([0, 1])].copy()
+    binary_data = (
+        primary_binary_data
+        if primary_binary_data is not None
+        else data.loc[data[primary_label].isin([0, 1])]
+    )
     blocks.append(ReportBlock(title="四、模型分箱表现", blank_rows_after=1))
     for tag_value in _ordered_tag_values(binary_data[tag_col]):
         tag_frame = binary_data.loc[binary_data[tag_col] == tag_value]
@@ -1101,6 +1148,7 @@ def _build_split_metrics_tables(
     score_col: str,
     model_name: str,
     reverse_auc_label: bool = False,
+    metrics_mode: str = "exact",
     build_context: Optional[ReportBuildContext] = None,
 ) -> Tuple[pd.DataFrame, pd.DataFrame]:
     cache_key = (
@@ -1108,6 +1156,7 @@ def _build_split_metrics_tables(
         score_col,
         model_name,
         bool(reverse_auc_label),
+        str(metrics_mode),
         tag_col,
         month_col,
         raw_date_col,
@@ -1142,6 +1191,7 @@ def _build_split_metrics_tables(
             train_reference=train_reference,
             model_name=model_name,
             reverse_auc_label=reverse_auc_label,
+            metrics_mode=metrics_mode,
             build_context=build_context,
         )
         tag_rows.append(tag_table)
@@ -1157,6 +1207,7 @@ def _build_split_metrics_tables(
             train_reference=train_reference,
             model_name=model_name,
             reverse_auc_label=reverse_auc_label,
+            metrics_mode=metrics_mode,
             build_context=build_context,
         )
         if not month_table.empty:
@@ -1187,6 +1238,7 @@ def _build_model_pair_comparison(
     month_col: str,
     raw_date_col: str,
     score_metric_options: Dict[str, Dict[str, bool]],
+    metrics_mode: str = "exact",
     build_context: Optional[ReportBuildContext] = None,
 ) -> pd.DataFrame:
     if group_mode not in {"tag", "month"}:
@@ -1221,6 +1273,7 @@ def _build_model_pair_comparison(
                 train_reference=train_reference,
                 model_name=model_name,
                 reverse_auc_label=_lookup_reverse_auc(score_metric_options, model_name),
+                metrics_mode=metrics_mode,
                 build_context=build_context,
             )
             if group_mode == "month":
@@ -1252,6 +1305,7 @@ def _build_group_metrics(
     latest_month_psi: Optional[pd.DataFrame] = None,
     model_name: str = "",
     reverse_auc_label: bool = False,
+    metrics_mode: str = "exact",
     build_context: Optional[ReportBuildContext] = None,
 ) -> pd.DataFrame:
     group_key = (
@@ -1263,6 +1317,7 @@ def _build_group_metrics(
         raw_date_col,
         model_name,
         bool(reverse_auc_label),
+        str(metrics_mode),
         bool(train_reference is not None),
     )
     if build_context is not None:
@@ -1271,12 +1326,20 @@ def _build_group_metrics(
             return cached
 
     records: List[Dict[str, object]] = []
+    resolved_metrics_mode = (
+        build_context.options.metrics_mode
+        if build_context is not None
+        else metrics_mode
+    )
+    resolved_engine = (
+        build_context.options.engine if build_context is not None else "python"
+    )
     required_columns = list(
         dict.fromkeys(
             [*group_cols, label_col, score_col, tag_col, month_col, raw_date_col]
         )
     )
-    ordered = data.loc[:, required_columns].copy()
+    ordered = data.loc[:, required_columns]
     for group_col in group_cols:
         ordered[group_col] = (
             ordered[group_col]
@@ -1289,6 +1352,17 @@ def _build_group_metrics(
     ordered = ordered.sort_values(list(group_cols))
     psi_values: List[float] = []
     grouped_frames = list(ordered.groupby(list(group_cols), dropna=False))
+    metric_groups = [
+        (group_frame[label_col], group_frame[score_col])
+        for _, group_frame in grouped_frames
+    ]
+    grouped_metrics = _unified_binary_metrics_batch(
+        groups=metric_groups,
+        lift_use_descending_score=not reverse_auc_label,
+        reverse_auc_label=reverse_auc_label,
+        metrics_mode=resolved_metrics_mode,
+        engine=resolved_engine,
+    )
     if train_reference is not None:
         group_binary_scores = [
             group_frame.loc[group_frame[label_col].isin([0, 1]), score_col]
@@ -1304,11 +1378,7 @@ def _build_group_metrics(
     for group_index, (group_values, group_frame) in enumerate(grouped_frames):
         if not isinstance(group_values, tuple):
             group_values = (group_values,)
-        metrics = _calculate_report_metrics(
-            group_frame[label_col],
-            group_frame[score_col],
-            reverse_auc_label=reverse_auc_label,
-        )
+        metrics = grouped_metrics[group_index]
         sample_tag_value = _resolve_sample_set_label(
             group_frame=group_frame,
             group_cols=group_cols,
@@ -1358,32 +1428,16 @@ def _calculate_report_metrics(
     y_true: pd.Series,
     y_score: pd.Series,
     reverse_auc_label: bool = False,
+    metrics_mode: str = "exact",
 ) -> Dict[str, float]:
-    metrics = calculate_binary_metrics(
-        y_true,
-        y_score,
+    """Calculate report metrics using the unified binary metrics path."""
+    return _unified_binary_metrics(
+        y_true=y_true,
+        y_score=y_score,
         lift_use_descending_score=not reverse_auc_label,
+        reverse_auc_label=reverse_auc_label,
+        metrics_mode=metrics_mode,
     )
-    if reverse_auc_label:
-        metrics["AUC"] = _calculate_report_auc(y_true, y_score, reverse_auc_label=True)
-    return metrics
-
-
-def _calculate_report_auc(
-    y_true: pd.Series,
-    y_score: pd.Series,
-    reverse_auc_label: bool = False,
-) -> float:
-    mask = y_true.isin([0, 1]) & pd.notna(y_score)
-    y_clean = y_true.loc[mask].astype(int)
-    score_clean = pd.to_numeric(y_score.loc[mask], errors="coerce")
-    valid = pd.notna(score_clean)
-    y_clean = y_clean.loc[valid]
-    score_clean = score_clean.loc[valid]
-    if len(y_clean) == 0 or y_clean.nunique() < 2:
-        return np.nan
-    auc_target = 1 - y_clean if reverse_auc_label else y_clean
-    return float(calculate_auc(auc_target, score_clean))
 
 
 def _build_latest_month_psi_map(
@@ -1470,6 +1524,7 @@ def _build_dimensional_comparison(
     label_list: Sequence[str],
     score_model_columns: Sequence[Tuple[str, str]],
     score_metric_options: Dict[str, Dict[str, bool]],
+    metrics_mode: str = "exact",
 ) -> pd.DataFrame:
     rows: List[Dict[str, object]] = []
     for dim_col in dim_list:
@@ -1482,6 +1537,7 @@ def _build_dimensional_comparison(
                         reverse_auc_label=_lookup_reverse_auc(
                             score_metric_options, model_name
                         ),
+                        metrics_mode=metrics_mode,
                     )
                     rows.append(
                         {
@@ -1600,9 +1656,9 @@ def _build_feature_analysis_table(
     feature_dict: pd.DataFrame,
     importance: pd.DataFrame,
     build_context: Optional[ReportBuildContext] = None,
-) -> pd.DataFrame:
+) -> Tuple[pd.DataFrame, FeatureComputationArtifacts]:
     if not feature_cols:
-        return pd.DataFrame()
+        return pd.DataFrame(), FeatureComputationArtifacts()
 
     table_start = time.perf_counter()
     step_start = time.perf_counter()
@@ -1656,20 +1712,15 @@ def _build_feature_analysis_table(
     feature_psi_lookup: Dict[str, float] = {}
     psi_engine = build_context.options.engine if build_context else "python"
     if not oot_frame.empty and feature_cols:
-        batch_actual = [oot_frame[feature] for feature in feature_cols]
-        for feature_name, train_series in zip(
-            feature_cols,
-            [train_frame[feature] for feature in feature_cols],
-        ):
-            psi_values = calculate_psi_batch(
-                expected=train_series,
-                actual_groups=[batch_actual[feature_cols.index(feature_name)]],
-                buckets=10,
-                engine=psi_engine,
-            )
-            feature_psi_lookup[feature_name] = (
-                float(psi_values[0]) if psi_values else float("nan")
-            )
+        psi_values = calculate_feature_psi_pairs_batch(
+            expected_groups=[train_frame[feature] for feature in feature_cols],
+            actual_groups=[oot_frame[feature] for feature in feature_cols],
+            buckets=10,
+            engine=psi_engine,
+        )
+        feature_psi_lookup = {
+            feature: float(value) for feature, value in zip(feature_cols, psi_values)
+        }
     LOGGER.debug(
         "build_feature_analysis_table step finished | step=batch_feature_psi "
         "elapsed=%.3fs features=%d",
@@ -1690,24 +1741,29 @@ def _build_feature_analysis_table(
 
     loop_start = time.perf_counter()
 
-    def _build_feature_row(index_feature: Tuple[int, str]) -> Dict[str, object]:
+    def _build_feature_row(
+        index_feature: Tuple[int, str]
+    ) -> Tuple[Dict[str, object], np.ndarray, pd.DataFrame, pd.DataFrame]:
         index, feature = index_feature
         meta = _lookup_feature_meta(feature_dict, feature)
-        train_edges = build_reference_quantile_bins(train_frame[feature], bins=10)
-        ks_train = _calculate_feature_metric_score(
+        train_edges = np.asarray(
+            build_reference_quantile_bins(train_frame[feature], bins=10),
+            dtype=float,
+        )
+        train_stats = _build_feature_bin_stats(
             train_frame,
             feature=feature,
             label_col=label_col,
             edges=train_edges,
-            metric_name="ks",
         )
-        ks_oot = _calculate_feature_metric_score(
+        oot_stats = _build_feature_bin_stats(
             oot_frame,
             feature=feature,
             label_col=label_col,
             edges=train_edges,
-            metric_name="ks",
         )
+        ks_train = float(train_stats["ks"].max()) if not train_stats.empty else np.nan
+        ks_oot = float(oot_stats["ks"].max()) if not oot_stats.empty else np.nan
         psi_value = feature_psi_lookup.get(feature, float("nan"))
         row = {
             "序号": index,
@@ -1739,18 +1795,30 @@ def _build_feature_analysis_table(
                 time.perf_counter() - loop_start,
                 feature,
             )
-        return row
+        return row, train_edges, train_stats, oot_stats
 
     indexed_features = list(enumerate(feature_cols, start=1))
     if worker_count > 1:
         with ThreadPoolExecutor(max_workers=worker_count) as executor:
-            rows = list(executor.map(_build_feature_row, indexed_features))
+            feature_results = list(executor.map(_build_feature_row, indexed_features))
     else:
-        rows = [_build_feature_row(index_feature) for index_feature in indexed_features]
+        feature_results = [
+            _build_feature_row(index_feature) for index_feature in indexed_features
+        ]
+
+    rows = [item[0] for item in feature_results]
+    artifacts = FeatureComputationArtifacts()
+    for (_, feature), (_, edges, train_stats, oot_stats) in zip(
+        indexed_features,
+        feature_results,
+    ):
+        artifacts.edges_by_feature[feature] = edges
+        artifacts.train_bin_stats_by_feature[feature] = train_stats
+        artifacts.oot_bin_stats_by_feature[feature] = oot_stats
 
     result = pd.DataFrame(rows)
     if result.empty:
-        return result
+        return result, artifacts
     result = result.sort_values(
         ["gain", "weight"], ascending=False, kind="mergesort"
     ).reset_index(drop=True)
@@ -1760,7 +1828,7 @@ def _build_feature_analysis_table(
         time.perf_counter() - table_start,
         len(result),
     )
-    return result
+    return result, artifacts
 
 
 def _calculate_batch_iv_with_fallback(
@@ -1920,6 +1988,7 @@ def _build_feature_monthly_metrics(
     month_col: str,
     edges: Sequence[float],
     engine: str = "python",
+    metrics_mode: str = "exact",
 ) -> pd.DataFrame:
     if all_data.empty:
         return pd.DataFrame()
@@ -1971,17 +2040,26 @@ def _build_feature_monthly_metrics(
     else:
         psi_values = []
 
-    for idx, (month_value, month_vals, month_labs) in enumerate(month_data_list):
+    metric_groups: List[Tuple[np.ndarray, np.ndarray]] = []
+    month_payload: List[Tuple[object, np.ndarray, np.ndarray]] = []
+    for month_value, month_vals, month_labs in month_data_list:
         month_indices = _assign_bin_indices(month_vals, edges_array)
         month_bin_scores = train_bin_scores[month_indices]
         fallback = (month_indices == non_missing_bins).astype(float)
         month_bin_scores = np.where(
             np.isnan(month_bin_scores), fallback, month_bin_scores
         )
-        metrics = calculate_binary_metrics(
-            pd.Series(month_labs),
-            pd.Series(month_bin_scores),
-        )
+        metric_groups.append((month_labs, month_bin_scores))
+        month_payload.append((month_value, month_labs, month_bin_scores))
+
+    metric_rows = _unified_binary_metrics_batch(
+        groups=metric_groups,
+        metrics_mode=metrics_mode,
+        engine=engine,
+    )
+
+    for idx, (month_value, _, _) in enumerate(month_payload):
+        metrics = metric_rows[idx] if idx < len(metric_rows) else {}
         rows.append(
             {
                 "month": month_value,
@@ -2130,60 +2208,28 @@ def _sort_report_table(
     month_column: Optional[str] = None,
     leading_columns: Optional[Sequence[str]] = None,
 ) -> pd.DataFrame:
-    if frame.empty:
-        return frame
-
-    ordered = frame.copy()
-    sort_columns: List[str] = []
-    helper_columns: List[str] = []
-
-    for column in leading_columns or ():
-        if column in ordered.columns:
-            sort_columns.append(column)
-
-    if tag_column and tag_column in ordered.columns:
-        ordered["_tag_order"] = ordered[tag_column].map(_tag_sort_key)
-        sort_columns.append("_tag_order")
-        helper_columns.append("_tag_order")
-
-    if month_column and month_column in ordered.columns:
-        ordered["_month_order"] = ordered[month_column].map(_month_sort_key)
-        sort_columns.append("_month_order")
-        helper_columns.append("_month_order")
-
-    if not sort_columns:
-        return ordered.reset_index(drop=True)
-
-    ordered = ordered.sort_values(sort_columns, kind="mergesort")
-    return ordered.drop(columns=helper_columns, errors="ignore").reset_index(drop=True)
+    return _shared_sort_report_frame(
+        frame=frame,
+        tag_column=tag_column,
+        month_column=month_column,
+        leading_columns=leading_columns,
+    )
 
 
 def _ordered_month_values(values: pd.Series) -> List[object]:
-    unique_values = pd.Series(values).drop_duplicates().tolist()
-    return sorted(unique_values, key=_month_sort_key)
+    return _shared_ordered_month_values(values)
 
 
 def _ordered_tag_values(values: pd.Series) -> List[object]:
-    unique_values = pd.Series(values).drop_duplicates().tolist()
-    return sorted(unique_values, key=_tag_sort_key)
+    return _shared_ordered_tag_values(values)
 
 
 def _month_sort_key(value: object) -> str:
-    if pd.isna(value) or value == "":
-        return "999999"
-    text = str(value).strip()
-    if text.isdigit() and len(text) == 6:
-        return text
-    parsed = pd.to_datetime(value, errors="coerce")
-    if pd.notna(parsed):
-        return parsed.strftime("%Y%m")
-    return f"999998{text}"
+    return _shared_month_sort_key(value)
 
 
 def _tag_sort_key(value: object) -> tuple[int, str]:
-    text = str(value)
-    order = {"train": 0, "test": 1, "oot": 2, "oos": 3}.get(text.lower(), 9)
-    return order, text
+    return _shared_tag_sort_key(value)
 
 
 def _interval_left(value: object) -> float:

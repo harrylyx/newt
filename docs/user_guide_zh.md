@@ -929,6 +929,7 @@ report = Report(
     max_workers=8,           # 默认: min(8, cpu_count)
     parallel_sheets=True,    # 默认
     memory_mode="compact",   # 默认: "compact" | "standard"
+    metrics_mode="exact",    # 默认: "exact" | "binned"
 )
 
 report.generate()
@@ -951,6 +952,7 @@ report.generate()
 - `max_workers` 控制并行计算线程数；默认是 `min(8, cpu_count)`
 - `parallel_sheets` 控制是否并行计算各个 sheet（Excel 写入仍是串行）
 - `memory_mode` 控制内存策略：`compact`（默认）或 `standard`
+- `metrics_mode` 控制指标计算模式：`exact`（默认）或 `binned`（更快、近似）
 - 如果你只想看某一部分报表，可以只传对应的 sheet 名称或编号
 - 跑报表开发和验收时，建议使用 `uv sync --group dev`
 

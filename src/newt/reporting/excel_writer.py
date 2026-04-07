@@ -179,8 +179,13 @@ class ExcelReportWriter:
     def _format_table(
         self, worksheet, data: pd.DataFrame, start_row: int, formats: Dict[str, object]
     ) -> None:
+        worksheet.write_row(
+            start_row,
+            0,
+            [str(column_name) for column_name in data.columns],
+            formats["header"],
+        )
         for column_index, column_name in enumerate(data.columns):
-            worksheet.write(start_row, column_index, column_name, formats["header"])
             number_format = self._choose_body_format(column_name, formats)
             worksheet.set_column(
                 column_index,
@@ -188,30 +193,22 @@ class ExcelReportWriter:
                 self._column_width(data[column_name], column_name),
                 number_format,
             )
-            for row_offset, value in enumerate(data[column_name], start=1):
-                if pd.isna(value) or (
-                    isinstance(value, (float, np.floating)) and not np.isfinite(value)
-                ):
-                    worksheet.write_blank(
-                        start_row + row_offset,
-                        column_index,
-                        None,
-                        number_format,
-                    )
-                elif isinstance(value, (str, int, float, bool, pd.Timestamp)):
-                    worksheet.write(
-                        start_row + row_offset,
-                        column_index,
-                        value,
-                        number_format,
-                    )
-                else:
-                    worksheet.write(
-                        start_row + row_offset,
-                        column_index,
-                        str(value),
-                        number_format,
-                    )
+            values = [self._excel_cell_value(value) for value in data[column_name]]
+            worksheet.write_column(
+                start_row + 1,
+                column_index,
+                values,
+                number_format,
+            )
+
+    def _excel_cell_value(self, value):
+        if pd.isna(value):
+            return None
+        if isinstance(value, (float, np.floating)) and not np.isfinite(value):
+            return None
+        if isinstance(value, (str, int, float, bool, pd.Timestamp)):
+            return value
+        return str(value)
 
     def _build_formats(self, workbook):
         title = workbook.add_format(
@@ -272,9 +269,7 @@ class ExcelReportWriter:
             token in lower for token in ["auc", "ks", "psi", "lift", "gain", "weight"]
         ):
             return formats["decimal"]
-        if any(
-            token in name for token in ["总", "好", "坏", "灰", "count"]
-        ) or lower in {
+        if any(token in name for token in ["总", "好", "坏", "灰", "count"]) or lower in {
             "bads",
             "goods",
             "total",

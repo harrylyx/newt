@@ -534,6 +534,7 @@ def test_report_parallel_sheets_preserve_order_and_record_runtime_options(
         "max_workers": 2,
         "parallel_sheets": True,
         "memory_mode": "compact",
+        "metrics_mode": "exact",
     }
     assert report.result_.metadata["report_compute_top_timings"]
 
@@ -693,3 +694,52 @@ def test_report_runtime_option_validation_rejects_invalid_engine(
 
     with pytest.raises(ValueError, match="engine must be 'rust' or 'python'"):
         report.generate()
+
+
+def test_report_runtime_option_validation_rejects_invalid_metrics_mode(
+    report_frame,
+    fake_lightgbm_model,
+):
+    report = Report(
+        data=report_frame,
+        model=fake_lightgbm_model,
+        tag="tag",
+        score_col="score_new",
+        date_col="obs_date",
+        label_list=["label_main"],
+        metrics_mode="invalid-mode",
+    )
+
+    with pytest.raises(ValueError, match="metrics_mode must be 'exact' or 'binned'"):
+        report.generate()
+
+
+def test_report_metrics_mode_binned_is_exposed_and_usable(
+    tmp_path,
+    report_frame,
+    fake_lightgbm_model,
+):
+    output_path = tmp_path / "metrics_mode_binned.xlsx"
+    report = Report(
+        data=report_frame,
+        model=fake_lightgbm_model,
+        tag="tag",
+        score_col="score_new",
+        date_col="obs_date",
+        label_list=["label_main"],
+        score_list=["score_old_a"],
+        dim_list=["channel_dim"],
+        var_list=["profile_income"],
+        metrics_mode="binned",
+        report_out_path=str(output_path),
+    )
+
+    report.generate()
+
+    options = report.result_.metadata["report_compute_options"]
+    assert options["metrics_mode"] == "binned"
+    performance_sheet = report.result_.get_sheet("3.模型表现")
+    tag_metrics = performance_sheet.get_block("二、按tag模型效果").data
+    month_metrics = performance_sheet.get_block("三、按月模型效果").data
+    assert tag_metrics["AUC"].notna().all()
+    assert month_metrics["KS"].notna().all()

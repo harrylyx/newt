@@ -88,6 +88,49 @@ def calculate_psi_batch(
     )
 
 
+def calculate_feature_psi_pairs_batch(
+    expected_groups: Sequence[Union[np.ndarray, list, pd.Series]],
+    actual_groups: Sequence[Union[np.ndarray, list, pd.Series]],
+    buckets: int = BINNING.DEFAULT_BUCKETS,
+    include_nan: bool = True,
+    nan_strategy: Optional[str] = None,
+    engine: str = "rust",
+) -> List[float]:
+    """Calculate PSI for many (expected, actual) feature pairs."""
+    if buckets < 1:
+        raise ValueError("buckets must be >= 1")
+    if len(expected_groups) != len(actual_groups):
+        raise ValueError("expected_groups and actual_groups must have the same length")
+
+    strategy = _resolve_nan_strategy(include_nan=include_nan, nan_strategy=nan_strategy)
+    expected_arrays = [_to_numeric_array(values) for values in expected_groups]
+    actual_arrays = [_to_numeric_array(values) for values in actual_groups]
+
+    if engine == "rust":
+        rust_values = _calculate_feature_psi_pairs_with_rust(
+            expected_groups=expected_arrays,
+            actual_groups=actual_arrays,
+            buckets=buckets,
+            strategy=strategy,
+        )
+        if rust_values is not None:
+            return rust_values
+
+    values: List[float] = []
+    for expected_values, actual_values in zip(expected_arrays, actual_arrays):
+        reference = _build_psi_reference(
+            expected=expected_values,
+            buckets=buckets,
+            strategy=strategy,
+        )
+        value = _calculate_psi_batch_with_python(
+            reference=reference,
+            actual_groups=[actual_values],
+        )
+        values.append(float(value[0]) if value else float("nan"))
+    return values
+
+
 def calculate_grouped_psi(
     data: pd.DataFrame,
     group_cols: Sequence[str],
@@ -490,6 +533,42 @@ def _calculate_psi_batch_with_rust(
         return None
 
 
+def _calculate_feature_psi_pairs_with_rust(
+    expected_groups: Sequence[np.ndarray],
+    actual_groups: Sequence[np.ndarray],
+    buckets: int,
+    strategy: str,
+) -> Optional[List[float]]:
+    module = _load_rust_module()
+    if module is None:
+        return None
+
+    fn = getattr(module, "calculate_feature_psi_pairs_numpy", None)
+    if not callable(fn):
+        return None
+
+    try:
+        expected_arrays = [
+            np.ascontiguousarray(expected.astype(np.float64, copy=False))
+            for expected in expected_groups
+        ]
+        actual_arrays = [
+            np.ascontiguousarray(actual.astype(np.float64, copy=False))
+            for actual in actual_groups
+        ]
+        include_missing_bucket = strategy == "separate"
+        values = fn(
+            expected_arrays,
+            actual_arrays,
+            int(buckets),
+            bool(include_missing_bucket),
+            float(BINNING.DEFAULT_EPSILON),
+        )
+        return [float(item) for item in values]
+    except Exception:
+        return None
+
+
 def _to_optional_float_list(
     values: Union[np.ndarray, list, pd.Series]
 ) -> List[Optional[float]]:
@@ -559,6 +638,7 @@ def _reference_sort_key(value: object) -> str:
 __all__ = [
     "calculate_psi",
     "calculate_psi_batch",
+    "calculate_feature_psi_pairs_batch",
     "calculate_grouped_psi",
     "calculate_feature_psi_against_base",
     "NAN_STRATEGIES",

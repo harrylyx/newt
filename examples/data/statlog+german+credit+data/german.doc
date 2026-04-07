@@ -4,22 +4,22 @@ Description of the German credit dataset.
 
 2. Source Information
 
-Professor Dr. Hans Hofmann  
-Institut f"ur Statistik und "Okonometrie  
-Universit"at Hamburg  
-FB Wirtschaftswissenschaften  
-Von-Melle-Park 5    
-2000 Hamburg 13 
+Professor Dr. Hans Hofmann
+Institut f"ur Statistik und "Okonometrie
+Universit"at Hamburg
+FB Wirtschaftswissenschaften
+Von-Melle-Park 5
+2000 Hamburg 13
 
 3. Number of Instances:  1000
 
 Two datasets are provided.  the original dataset, in the form provided
 by Prof. Hofmann, contains categorical/symbolic attributes and
-is in the file "german.data".   
- 
-For algorithms that need numerical attributes, Strathclyde University 
-produced the file "german.data-numeric".  This file has been edited 
-and several indicator variables added to make it suitable for 
+is in the file "german.data".
+
+For algorithms that need numerical attributes, Strathclyde University
+produced the file "german.data-numeric".  This file has been edited
+and several indicator variables added to make it suitable for
 algorithms which cannot cope with categorical variables.   Several
 attributes that are ordered categorical (such as attribute 17) have
 been coded as integer.    This was the form used by StatLog.
@@ -81,7 +81,7 @@ Attribute 7:  (qualitative)
 	      Present employment since
 	      A71 : unemployed
 	      A72 :       ... < 1 year
-	      A73 : 1  <= ... < 4 years  
+	      A73 : 1  <= ... < 4 years
 	      A74 : 4  <= ... < 7 years
 	      A75 :       .. >= 7 years
 
@@ -117,7 +117,7 @@ Attribute 13: (numerical)
 	      Age in years
 
 Attribute 14: (qualitative)
-	      Other installment plans 
+	      Other installment plans
 	      A141 : bank
 	      A142 : stores
 	      A143 : none
@@ -170,6 +170,5 @@ This dataset requires use of a cost matrix (see below)
 the rows represent the actual classification and the columns
 the predicted classification.
 
-It is worse to class a customer as good when they are bad (5), 
+It is worse to class a customer as good when they are bad (5),
 than it is to class a customer as bad when they are good (1).
-

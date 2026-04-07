@@ -13,18 +13,7 @@ A lightweight Python toolkit for efficient feature analysis and statistical diag
 - **Pipeline Workflow**: Fluent API for end-to-end scorecard development
 - **Visualization Tools**: Binning plots, IV ranking, WOE patterns, PSI comparison
 - **Excel Model Report**: Multi-sheet model report generation with overview, model design, variable analysis, and model performance output
-
-## Recent Changes
-
-- `v0.1.4`: Linux wheels now build on native `x86_64` and native `aarch64` runners (no Linux QEMU emulation path).
-- `v0.1.2-v0.1.3`: Reporting and release workflow stability fixes.
-- `v0.1.1`: IV defaults to Rust, with toad-aligned IV smoothing across Rust and Python engines.
-
-See full notes:
-
-- [Recent Release Notes (English)](docs/release_notes.md)
-- [最近版本更新说明 (中文)](docs/release_notes_zh.md)
-
+ß
 ## Installation
 
 Newt supports Python `>=3.8.5,<3.13` (Python `3.8.5` through `3.12.x`).

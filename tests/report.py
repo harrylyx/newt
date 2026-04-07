@@ -6,7 +6,7 @@ import pandas as pd
 from newt import Report
 
 df = pd.read_parquet("./examples/data/test_data/all_data.pq").sample(
-    500000, random_state=123
+    2000000, random_state=123
 )
 model = pickle.load(open("./examples/data/test_data/xgb_model.pkl", "rb"))
 

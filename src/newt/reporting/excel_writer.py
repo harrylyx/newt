@@ -15,6 +15,8 @@ from newt.results import ModelReportResult, ReportBlock
 class ExcelReportWriter:
     """Write report sheets to a styled Excel workbook."""
 
+    TITLE_RIGHT_COLUMN = 6
+
     def __init__(self) -> None:
         self.font_name = (
             "PingFang SC" if platform.system() == "Darwin" else "Microsoft YaHei"
@@ -67,6 +69,13 @@ class ExcelReportWriter:
         row = start_row
         if block.title:
             worksheet.write(start_row, 0, block.title, formats["title"])
+            if block.title_right:
+                worksheet.write(
+                    start_row,
+                    self.TITLE_RIGHT_COLUMN,
+                    block.title_right,
+                    formats["title_right"],
+                )
             row = start_row + 1
         if block.note:
             worksheet.write(row, 0, block.note, formats["note"])
@@ -218,6 +227,15 @@ class ExcelReportWriter:
                 "font_size": 14,
             }
         )
+        title_right = workbook.add_format(
+            {
+                "font_name": self.font_name,
+                "font_size": 11,
+                "align": "right",
+                "valign": "vcenter",
+                "font_color": "#666666",
+            }
+        )
         note = workbook.add_format({"font_name": self.font_name, "italic": True})
         header = workbook.add_format(
             {
@@ -244,6 +262,7 @@ class ExcelReportWriter:
         )
         return {
             "title": title,
+            "title_right": title_right,
             "note": note,
             "header": header,
             "text": text,

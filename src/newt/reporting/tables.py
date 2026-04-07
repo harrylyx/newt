@@ -298,8 +298,7 @@ def build_report_result(
         )
 
     feature_dict = pd.DataFrame()
-    feature_cols: List[str] = []
-    if "variable_analysis" in build_sheet_keys:
+    if any(key in build_sheet_keys for key in ["variable_analysis", "portrait"]):
         step_start = time.perf_counter()
         feature_dict = _load_feature_dictionary(feature_path)
         _log_context_stage(
@@ -309,6 +308,8 @@ def build_report_result(
             extra=f"rows={len(feature_dict)}",
         )
 
+    feature_cols: List[str] = []
+    if "variable_analysis" in build_sheet_keys:
         step_start = time.perf_counter()
         feature_cols = _determine_feature_columns(
             data,
@@ -443,6 +444,7 @@ def build_report_result(
             tag_col=tag_col,
             var_list=var_list,
             score_model_columns=score_model_columns,
+            feature_dict=feature_dict,
             oot_frame=shared_oot_frame,
         ),
     }
@@ -592,9 +594,7 @@ def build_overview_sheet(
     if not month_metrics.empty:
         blocks.append(ReportBlock(title="按月模型效果", data=month_metrics))
 
-    dim_table = _extract_block_data(dimensional_sheet, "分维度对比模型效果")
-    if not dim_table.empty:
-        blocks.append(ReportBlock(title="分维度对比模型效果", data=dim_table))
+    blocks.extend(_extract_numbered_data_blocks(dimensional_sheet))
 
     if comparison_sheet is not None:
         for block in comparison_sheet.blocks:
@@ -605,9 +605,7 @@ def build_overview_sheet(
             ):
                 blocks.append(ReportBlock(title=block.title, data=block.data))
 
-    portrait = _extract_block_data(portrait_sheet, "OOT画像变量均值对比")
-    if not portrait.empty:
-        blocks.append(ReportBlock(title="OOT画像变量均值对比", data=portrait))
+    blocks.extend(_extract_numbered_data_blocks(portrait_sheet))
 
     return ReportSheet(name="总览", blocks=blocks)
 
@@ -620,6 +618,26 @@ def _extract_block_data(sheet: Optional[ReportSheet], title: str) -> pd.DataFram
     except KeyError:
         return pd.DataFrame()
     return block.data
+
+
+def _extract_numbered_data_blocks(sheet: Optional[ReportSheet]) -> List[ReportBlock]:
+    if sheet is None:
+        return []
+    blocks: List[ReportBlock] = []
+    for block in sheet.blocks:
+        if not block.title or block.data.empty:
+            continue
+        prefix = block.title.split(".", 1)[0]
+        if not prefix.isdigit():
+            continue
+        blocks.append(
+            ReportBlock(
+                title=block.title,
+                title_right=block.title_right,
+                data=block.data,
+            )
+        )
+    return blocks
 
 
 def build_dimensional_comparison_sheet(
@@ -650,12 +668,25 @@ def build_dimensional_comparison_sheet(
         if dim_list and not oot_frame.empty
         else pd.DataFrame()
     )
+    blocks = [ReportBlock(title="一、分维度对比", blank_rows_after=1)]
+    if dim_table.empty:
+        return ReportSheet(name="分维度对比", blocks=blocks)
+
+    for index, dim_col in enumerate(dim_list, start=1):
+        dim_rows = dim_table.loc[dim_table["维度列"] == dim_col]
+        if dim_rows.empty:
+            continue
+        blocks.append(
+            ReportBlock(
+                title=f"{index}.{dim_col}",
+                data=dim_rows.drop(columns=["维度列"], errors="ignore").reset_index(
+                    drop=True
+                ),
+            )
+        )
     return ReportSheet(
         name="分维度对比",
-        blocks=[
-            ReportBlock(title="一、分维度对比", blank_rows_after=1),
-            ReportBlock(title="分维度对比模型效果", data=dim_table),
-        ],
+        blocks=blocks,
     )
 
 
@@ -739,6 +770,7 @@ def build_portrait_sheet(
     tag_col: str,
     var_list: Sequence[str],
     score_model_columns: Sequence[Tuple[str, str]],
+    feature_dict: Optional[pd.DataFrame] = None,
     oot_frame: Optional[pd.DataFrame] = None,
 ) -> ReportSheet:
     """Build appendix sheet for OOT portrait variable means."""
@@ -753,14 +785,23 @@ def build_portrait_sheet(
         )
         portrait["模型"] = portrait["模型"].map(display_by_column).fillna(portrait["模型"])
         portrait = _reshape_portrait_table(portrait)
-
-    return ReportSheet(
-        name="画像变量",
-        blocks=[
-            ReportBlock(title="一、画像变量均值对比", blank_rows_after=1),
-            ReportBlock(title="OOT画像变量均值对比", data=portrait),
-        ],
-    )
+    feature_dict = feature_dict if feature_dict is not None else pd.DataFrame()
+    blocks = [ReportBlock(title="一、画像变量均值对比", blank_rows_after=1)]
+    target_columns = ["模型", *[str(index) for index in range(1, 11)], "Missing"]
+    for index, variable_name in enumerate(var_list, start=1):
+        variable_table = portrait.loc[
+            portrait["画像变量"] == variable_name,
+            target_columns,
+        ].copy()
+        meta = _lookup_feature_meta(feature_dict, str(variable_name))
+        blocks.append(
+            ReportBlock(
+                title=f"{index}.{variable_name}",
+                title_right=str(meta.get("中文名", "") or ""),
+                data=variable_table.reset_index(drop=True),
+            )
+        )
+    return ReportSheet(name="画像变量", blocks=blocks)
 
 
 def build_model_design_sheet(
@@ -948,7 +989,7 @@ def build_variable_analysis_sheet(
 
     def _run_feature_job(
         job: Tuple[int, str]
-    ) -> Tuple[int, str, str, pd.DataFrame, pd.DataFrame, float]:
+    ) -> Tuple[int, str, str, str, pd.DataFrame, pd.DataFrame, float]:
         rank, feature_name = job
         feature_start = time.perf_counter()
         edges = feature_artifacts.edges_by_feature.get(feature_name)
@@ -978,18 +1019,19 @@ def build_variable_analysis_sheet(
         )
         display_name = _lookup_feature_meta(feature_dict, feature_name).get("中文名", "")
         title_prefix = f"{rank}.{feature_name}"
-        if display_name:
-            title_prefix = f"{title_prefix} {display_name}"
         return (
             rank,
             feature_name,
             title_prefix,
+            str(display_name or ""),
             oot_bins,
             monthly_table,
             time.perf_counter() - feature_start,
         )
 
-    feature_results: List[Tuple[int, str, str, pd.DataFrame, pd.DataFrame, float]] = []
+    feature_results: List[
+        Tuple[int, str, str, str, pd.DataFrame, pd.DataFrame, float]
+    ] = []
     if use_parallel_features:
         worker_cap = min(build_context.options.max_workers, len(feature_jobs))
         if build_context.options.memory_mode == "compact":
@@ -1006,11 +1048,18 @@ def build_variable_analysis_sheet(
         _,
         feature_name,
         title_prefix,
+        title_right,
         oot_bins,
         monthly_table,
         elapsed,
     ) in feature_results:
-        blocks.append(ReportBlock(title=title_prefix, blank_rows_after=0))
+        blocks.append(
+            ReportBlock(
+                title=title_prefix,
+                title_right=title_right,
+                blank_rows_after=0,
+            )
+        )
         blocks.append(ReportBlock(title=f"{title_prefix} 分箱表", data=oot_bins))
         blocks.append(ReportBlock(title=f"{title_prefix} 按月效果", data=monthly_table))
         if not oot_bins.empty:
@@ -1784,7 +1833,7 @@ def _build_feature_analysis_table(
             "weight": _lookup_importance(importance_lookup, feature, "weight"),
             "weight_per": _lookup_importance(importance_lookup, feature, "weight_per"),
             "psi": psi_value,
-            "指标表英文名": feature,
+            "指标表英文名": meta.get("指标表英文名", feature) or feature,
         }
         if index == 1 or index % 25 == 0 or index == total_features:
             LOGGER.debug(
@@ -1871,16 +1920,33 @@ def _build_feature_selection_summary(
             }
         ]
     )
-    if feature_dict.empty or "来源" not in feature_dict.columns:
+    if (
+        feature_dict.empty
+        or "来源" not in feature_dict.columns
+        or "英文名" not in feature_dict.columns
+    ):
         return base
+    feature_source_map = (
+        feature_dict.loc[:, ["英文名", "来源"]]
+        .rename(columns={"来源": "来源_字典"})
+        .drop_duplicates(
+            subset=["英文名"],
+            keep="first",
+        )
+    )
     type_table = (
-        feature_table.merge(feature_dict, left_on="vars", right_on="英文名", how="left")
-        .groupby("来源", dropna=False)
+        feature_table.merge(
+            feature_source_map,
+            left_on="vars",
+            right_on="英文名",
+            how="left",
+        )
+        .groupby("来源_字典", dropna=False)
         .size()
         .reset_index(name="变量数量")
     )
     type_table["重要性占比"] = type_table["变量数量"] / max(type_table["变量数量"].sum(), 1)
-    type_table = type_table.rename(columns={"来源": "变量类型"})
+    type_table = type_table.rename(columns={"来源_字典": "变量类型"})
     return pd.concat([base, type_table], ignore_index=True, sort=False)
 
 
@@ -2132,27 +2198,70 @@ def _load_feature_dictionary(feature_path: Optional[str]) -> pd.DataFrame:
     if not path.exists():
         return pd.DataFrame()
     feature_dict = pd.read_csv(path)
-    rename_map = {}
+    rename_map: Dict[str, str] = {}
+    metric_alias_columns: List[str] = []
     for column in feature_dict.columns:
         normalized = str(column).strip().lower()
         if normalized in {"英文名", "english_name", "var_name", "variable_name"}:
             rename_map[column] = "英文名"
         elif normalized in {"中文名", "chinese_name", "variable_desc", "desc"}:
             rename_map[column] = "中文名"
+        elif normalized in {
+            "指标表英文名",
+            "metric_table_english_name",
+            "metric_table_name",
+            "metric_table_en_name",
+        }:
+            rename_map[column] = "指标表英文名"
         elif normalized in {"表名", "table_name"}:
-            rename_map[column] = "表名"
+            rename_map[column] = "_legacy_metric_table_name"
+            metric_alias_columns.append("_legacy_metric_table_name")
         elif normalized in {"数据源类型", "来源", "source", "source_type"}:
             rename_map[column] = "来源"
-    return feature_dict.rename(columns=rename_map)
+    feature_dict = feature_dict.rename(columns=rename_map)
+    feature_dict = _coalesce_duplicate_columns(feature_dict)
+    if "指标表英文名" not in feature_dict.columns:
+        feature_dict["指标表英文名"] = np.nan
+    for alias_column in metric_alias_columns:
+        if alias_column in feature_dict.columns:
+            feature_dict["指标表英文名"] = feature_dict["指标表英文名"].where(
+                feature_dict["指标表英文名"].notna(),
+                feature_dict[alias_column],
+            )
+            feature_dict = feature_dict.drop(columns=[alias_column], errors="ignore")
+    return feature_dict
 
 
 def _lookup_feature_meta(feature_dict: pd.DataFrame, feature: str) -> Dict[str, object]:
     if feature_dict.empty or "英文名" not in feature_dict.columns:
-        return {"英文名": feature}
+        return {"英文名": feature, "指标表英文名": feature}
     matched = feature_dict.loc[feature_dict["英文名"] == feature]
     if matched.empty:
-        return {"英文名": feature}
-    return matched.iloc[0].to_dict()
+        return {"英文名": feature, "指标表英文名": feature}
+    meta = matched.iloc[0].to_dict()
+    if not meta.get("指标表英文名"):
+        meta["指标表英文名"] = feature
+    return meta
+
+
+def _coalesce_duplicate_columns(frame: pd.DataFrame) -> pd.DataFrame:
+    if frame.empty:
+        return frame
+    if not frame.columns.duplicated().any():
+        return frame
+    combined: Dict[str, pd.Series] = {}
+    ordered_names: List[str] = []
+    for index, name in enumerate(frame.columns):
+        column_values = frame.iloc[:, index]
+        if name in combined:
+            combined[name] = combined[name].where(
+                combined[name].notna(),
+                column_values,
+            )
+            continue
+        combined[name] = column_values
+        ordered_names.append(name)
+    return pd.DataFrame({name: combined[name] for name in ordered_names})
 
 
 def _lookup_importance(

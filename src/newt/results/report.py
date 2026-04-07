@@ -24,6 +24,7 @@ class ReportBlock:
     """A renderable block inside a report sheet."""
 
     title: str
+    title_right: str = ""
     data: pd.DataFrame = field(default_factory=pd.DataFrame)
     note: str = ""
     chart: Optional[ReportChart] = None

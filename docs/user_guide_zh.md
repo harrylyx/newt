@@ -944,9 +944,16 @@ report.generate()
 - `date_col` 会被转成 `_report_month`，格式统一成 `YYYYMM`，用于按月统计
 - `label_list` 是标签列列表，支持多个标签；第一个标签会作为主标签
 - `score_list` 是老模型或对照分数字段，用于和主模型做对比
-- `dim_list` 是分维度对比字段，只会出现在总览页的 OOT 维度效果对比里
-- `var_list` 是总览页的画像变量列表，只用于 OOT 的“画像变量均值对比”；它不是变量分析页的开关
-- `feature_path` 是特征字典文件，常见列名有 `英文名`、`中文名`、`表名`、`来源`
+- `dim_list` 是分维度对比字段，会在“分维度对比”附录页按维度拆表展示，并同步到总览页
+- `var_list` 是画像变量列表，会在“画像变量”附录页按变量拆表展示，并同步到总览页；它不是变量分析页的开关
+- `feature_path` 是特征字典文件，建议按下面 4 列准备（表头名请保持一致）：
+
+| 变量英文名 | 变量中文名 | 变量来源 | 变量指标表英文名 |
+|---|---|---|---|
+| `英文名` | `中文名` | `来源` | `指标表英文名` |
+| `thirdparty_info_period1_6` | `近6个月三方查询次数` | `thirdparty` | `thirdparty_info` |
+
+  兼容说明：如果历史字典仍使用 `表名`，报表会自动映射到 `指标表英文名`。
 - `sheet_list` 可选传入序号 `1-4` 或名称来控制输出页面；不传时默认输出四个 sheet
 - `engine` 控制报表计算引擎：`rust`（默认）或 `python`
 - `max_workers` 控制并行计算线程数；默认是 `min(8, cpu_count)`
@@ -955,6 +962,16 @@ report.generate()
 - `metrics_mode` 控制指标计算模式：`exact`（默认）或 `binned`（更快、近似）
 - 如果你只想看某一部分报表，可以只传对应的 sheet 名称或编号
 - 跑报表开发和验收时，建议使用 `uv sync --group dev`
+
+外部配置加载（可选）：
+
+```python
+from newt import load_conf
+
+load_conf("./newt_conf.json")
+```
+
+`load_conf` 会把外部文件中的配置覆盖到运行时（支持 `.json` / `.toml` / `.yaml` / `.yml`）。
 
 ---
 

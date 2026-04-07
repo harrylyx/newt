@@ -950,9 +950,16 @@ Notes:
 - `date_col` is normalized into `_report_month` in `YYYYMM` format for monthly tables
 - `label_list` is the list of target columns; the first label acts as the primary label
 - `score_list` is the list of comparison score columns for older or alternative models
-- `dim_list` is used only for the OOT dimensional comparison block on the overview sheet
-- `var_list` is used only for the OOT profile mean comparison block on the overview sheet; it does not drive the variable-analysis sheet
-- `feature_path` is an optional feature dictionary CSV, with common columns such as `英文名`, `中文名`, `表名`, and `来源`
+- `dim_list` is used for dimensional comparison and is rendered as one table per dimension in the appendix sheet, then mirrored into the overview sheet
+- `var_list` is used for portrait-variable comparison and is rendered as one table per variable in the appendix sheet, then mirrored into the overview sheet; it does not drive the variable-analysis sheet
+- `feature_path` is an optional feature dictionary CSV. Prepare these 4 headers exactly:
+
+| Variable English Name | Variable Chinese Name | Variable Source | Metric Table English Name |
+|---|---|---|---|
+| `英文名` | `中文名` | `来源` | `指标表英文名` |
+| `thirdparty_info_period1_6` | `近6个月三方查询次数` | `thirdparty` | `thirdparty_info` |
+
+  Compatibility note: legacy dictionaries that still use `表名` are auto-mapped to `指标表英文名`.
 - `sheet_list` can optionally select sheets by index `1-4` or by name; if omitted, all four sheets are generated
 - `engine` controls report compute engine: `rust` (default) or `python`
 - `max_workers` controls compute parallelism; default is `min(8, cpu_count)`
@@ -961,6 +968,16 @@ Notes:
 - `metrics_mode` controls metric computation mode: `exact` (default) or `binned` (faster, approximate)
 - If you only need part of the report, pass just the sheet names or indexes you want
 - For report development and validation, use `uv sync --group dev`
+
+Optional external runtime config loading:
+
+```python
+from newt import load_conf
+
+load_conf("./newt_conf.json")
+```
+
+`load_conf` applies external overrides at runtime (supports `.json` / `.toml` / `.yaml` / `.yml`).
 
 ---
 

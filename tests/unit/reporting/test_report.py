@@ -424,14 +424,13 @@ def test_report_overview_corr_precision_and_portrait_wide_layout(
         equal_nan=True,
     )
 
-    portrait = overview_sheet.get_block("OOT画像变量均值对比").data
-    expected_columns = ["画像变量", "模型", *[str(i) for i in range(1, 11)], "Missing"]
-    assert list(portrait.columns) == expected_columns
-    assert set(portrait["画像变量"]) == {"profile_income", "profile_age"}
-    assert len(portrait) == 4
-    for variable_name in ["profile_income", "profile_age"]:
-        models = set(portrait.loc[portrait["画像变量"] == variable_name, "模型"])
-        assert models == {"score_new", "score_old_a"}
+    portrait_income = overview_sheet.get_block("1.profile_income").data
+    portrait_age = overview_sheet.get_block("2.profile_age").data
+    expected_columns = ["模型", *[str(i) for i in range(1, 11)], "Missing"]
+    assert list(portrait_income.columns) == expected_columns
+    assert list(portrait_age.columns) == expected_columns
+    assert set(portrait_income["模型"]) == {"score_new", "score_old_a"}
+    assert set(portrait_age["模型"]) == {"score_new", "score_old_a"}
 
 
 def test_report_model_design_distribution_layout_and_tag_order(
@@ -655,10 +654,17 @@ def test_report_overview_reuses_child_sheet_blocks(
         overview.get_block("按月模型效果").data.reset_index(drop=True),
         performance.get_block("三、按月模型效果").data.reset_index(drop=True),
     )
-    pd.testing.assert_frame_equal(
-        overview.get_block("分维度对比模型效果").data.reset_index(drop=True),
-        dimensional.get_block("分维度对比模型效果").data.reset_index(drop=True),
-    )
+    dimensional_titles = [
+        block.title
+        for block in dimensional.blocks
+        if block.title.endswith("channel_dim")
+    ]
+    assert dimensional_titles == ["1.channel_dim"]
+    for title in dimensional_titles:
+        pd.testing.assert_frame_equal(
+            overview.get_block(title).data.reset_index(drop=True),
+            dimensional.get_block(title).data.reset_index(drop=True),
+        )
     pd.testing.assert_frame_equal(
         overview.get_block("按tag新老模型对比(score_old_a)").data.reset_index(drop=True),
         comparison.get_block("按tag新老模型对比(score_old_a)").data.reset_index(drop=True),
@@ -671,11 +677,134 @@ def test_report_overview_reuses_child_sheet_blocks(
         overview.get_block("OOT相关性矩阵").data.reset_index(drop=True),
         comparison.get_block("OOT相关性矩阵").data.reset_index(drop=True),
     )
-    pd.testing.assert_frame_equal(
-        overview.get_block("OOT画像变量均值对比").data.reset_index(drop=True),
-        portrait.get_block("OOT画像变量均值对比").data.reset_index(drop=True),
-    )
+    portrait_titles = [
+        block.title for block in portrait.blocks if block.title.startswith("1.")
+    ]
+    assert portrait_titles == ["1.profile_income"]
+    for title in portrait_titles:
+        pd.testing.assert_frame_equal(
+            overview.get_block(title).data.reset_index(drop=True),
+            portrait.get_block(title).data.reset_index(drop=True),
+        )
     assert call_count["value"] == 1
+
+
+def test_report_feature_dictionary_headers_and_title_right_text(
+    tmp_path,
+    report_frame,
+    fake_lightgbm_model,
+):
+    feature_dict_path = tmp_path / "feature_dict.csv"
+    pd.DataFrame(
+        [
+            {
+                "英文名": "feature_a",
+                "中文名": "特征A中文",
+                "来源": "thirdparty",
+                "指标表英文名": "metric_feature_a",
+            },
+            {
+                "英文名": "feature_b",
+                "中文名": "特征B中文",
+                "来源": "thirdparty",
+                "指标表英文名": "metric_feature_b",
+            },
+            {
+                "英文名": "profile_income",
+                "中文名": "收入",
+                "来源": "profile",
+                "指标表英文名": "metric_profile_income",
+            },
+        ]
+    ).to_csv(feature_dict_path, index=False)
+
+    output_path = tmp_path / "feature_dict_report.xlsx"
+    report = Report(
+        data=report_frame,
+        model=fake_lightgbm_model,
+        tag="tag",
+        score_col="score_new",
+        date_col="obs_date",
+        label_list=["label_main"],
+        var_list=["profile_income"],
+        feature_path=str(feature_dict_path),
+        sheet_list=["变量分析", "画像变量"],
+        report_out_path=str(output_path),
+    )
+
+    generated = report.generate()
+
+    variable_sheet = report.result_.get_sheet("2.变量分析")
+    top_block = variable_sheet.get_block("1.feature_a")
+    assert top_block.title_right == "特征A中文"
+    feature_table = variable_sheet.get_block("二、变量分析").data.set_index("vars")
+    assert feature_table.loc["feature_a", "指标表英文名"] == "metric_feature_a"
+    assert feature_table.loc["feature_b", "指标表英文名"] == "metric_feature_b"
+
+    portrait_sheet = report.result_.get_sheet("附1 画像变量")
+    portrait_block = portrait_sheet.get_block("1.profile_income")
+    assert portrait_block.title_right == "收入"
+
+    workbook = openpyxl.load_workbook(generated)
+    variable_ws = workbook["2.变量分析"]
+    variable_row = next(
+        row
+        for row in variable_ws.iter_rows()
+        if any(cell.value == "1.feature_a" for cell in row)
+    )
+    assert any(cell.value == "特征A中文" for cell in variable_row)
+
+    portrait_ws = workbook["附1 画像变量"]
+    portrait_row = next(
+        row
+        for row in portrait_ws.iter_rows()
+        if any(cell.value == "1.profile_income" for cell in row)
+    )
+    assert any(cell.value == "收入" for cell in portrait_row)
+
+
+def test_report_feature_dictionary_legacy_table_name_alias_fills_metric_table_name(
+    tmp_path,
+):
+    from newt.reporting import tables
+
+    feature_dict_path = tmp_path / "legacy_feature_dict.csv"
+    pd.DataFrame(
+        [
+            {
+                "英文名": "feature_a",
+                "中文名": "特征A中文",
+                "来源": "thirdparty",
+                "表名": "legacy_metric_feature_a",
+            }
+        ]
+    ).to_csv(feature_dict_path, index=False)
+
+    parsed = tables._load_feature_dictionary(str(feature_dict_path))
+    assert {"英文名", "中文名", "来源", "指标表英文名"}.issubset(parsed.columns)
+    assert parsed.loc[0, "指标表英文名"] == "legacy_metric_feature_a"
+
+
+def test_report_feature_dictionary_prefers_explicit_metric_table_name(
+    tmp_path,
+):
+    from newt.reporting import tables
+
+    feature_dict_path = tmp_path / "mixed_feature_dict.csv"
+    pd.DataFrame(
+        [
+            {
+                "英文名": "feature_a",
+                "中文名": "特征A中文",
+                "来源": "thirdparty",
+                "指标表英文名": "explicit_metric_feature_a",
+                "表名": "legacy_metric_feature_a",
+            }
+        ]
+    ).to_csv(feature_dict_path, index=False)
+
+    parsed = tables._load_feature_dictionary(str(feature_dict_path))
+    assert parsed.loc[0, "指标表英文名"] == "explicit_metric_feature_a"
 
 
 def test_report_runtime_option_validation_rejects_invalid_engine(

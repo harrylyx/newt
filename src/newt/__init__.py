@@ -12,6 +12,9 @@ A comprehensive Python library for building credit scorecards with:
 
 __version__ = "0.1.5"
 
+# Runtime config loader
+from newt.config import load_conf
+
 # WOE analysis
 from newt.features.analysis import WOEEncoder
 
@@ -82,6 +85,8 @@ __all__ = [
     "Scorecard",
     # Reporting
     "Report",
+    # Runtime config
+    "load_conf",
     # Pipeline
     "ScorecardPipeline",
 ]

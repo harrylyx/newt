@@ -52,7 +52,12 @@ from newt.modeling import LogisticModel, Scorecard
 from newt.pipeline import ScorecardPipeline
 
 # Reporting
-from newt.reporting import Report
+from newt.reporting import (
+    Report,
+    calculate_dimensional_comparison,
+    calculate_model_comparison,
+    calculate_split_metrics,
+)
 
 __all__ = [
     # Core
@@ -85,6 +90,9 @@ __all__ = [
     "Scorecard",
     # Reporting
     "Report",
+    "calculate_split_metrics",
+    "calculate_dimensional_comparison",
+    "calculate_model_comparison",
     # Runtime config
     "load_conf",
     # Pipeline

@@ -977,7 +977,74 @@ from newt import load_conf
 load_conf("./newt_conf.json")
 ```
 
-`load_conf` applies external overrides at runtime (supports `.json` / `.toml` / `.yaml` / `.yml`).
+---
+
+## 12. Interactive Table Generation in Jupyter
+
+Beyond the full Excel report, you can also generate individual report modules as Pandas DataFrames directly in an interactive environment like Jupyter Notebooks. The API handles internal transformations (like normalizing dates to month columns) automatically.
+
+### 12.1. Split Metrics (Tag & Month)
+
+Calculate performance metrics grouping by `tag` (e.g. train, oot) and by `month`.
+
+```python
+import pandas as pd
+from newt import calculate_split_metrics
+
+# Returns two DataFrames: one grouped by tag, one grouped by month
+tag_metrics, month_metrics = calculate_split_metrics(
+    data=df,
+    tag_col='tag',
+    date_col='obs_date',      # Only date_col is needed
+    label_list=['target'],
+    score_col='xgb_score',
+    model_name='XGBoost Model'
+)
+
+print(tag_metrics)
+print(month_metrics)
+```
+
+### 12.2. Dimensional Comparison
+
+Compare metrics split by custom dimensions (only applies to OOT samples typically).
+
+```python
+from newt import calculate_dimensional_comparison
+
+# We recommend passing only OOT data for this analysis
+dim_metrics = calculate_dimensional_comparison(
+    data=df[df['tag'] == 'oot'],
+    dim_list=['channel', 'education'],
+    label_list=['target'],
+    score_model_columns=[('XGBoost Model', 'xgb_score')]
+)
+
+print(dim_metrics)
+```
+
+### 12.3. Model Comparison
+
+Compare the relative performance of a new model against older benchmarks either by `tag` or by `month`.
+
+```python
+from newt import calculate_model_comparison
+
+# Head-to-head comparison between two models
+compare_metrics = calculate_model_comparison(
+    data=df,
+    tag_col='tag',
+    date_col='obs_date',
+    label_list=['target'],
+    model_columns=[
+        ('New XGBoost Model', 'xgb_score'),
+        ('Old Logistic Model', 'old_score')
+    ],
+    group_mode='month'  # also accepts 'tag'
+)
+
+print(compare_metrics)
+```
 
 ---
 

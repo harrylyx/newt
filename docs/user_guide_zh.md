@@ -975,6 +975,75 @@ load_conf("./newt_conf.json")
 
 ---
 
+## 12. 在 Jupyter 中进行单表交互式分析
+
+除了生成完整的 Excel 报告外，您还可以在 Jupyter Notebook 等交互式环境中直接将各个报表模块作为 Pandas DataFrame 生成。API 会自动处理内部转换（如将日期标准化为月份列）。
+
+### 12.1. 按 Tag 与 按月模型效果拆分
+
+计算按 `tag`（例如 train、oot）和按 `month` 分组的模型表现指标。
+
+```python
+import pandas as pd
+from newt import calculate_split_metrics
+
+# 返回两个 DataFrame：一个按 tag 分组，一个按 month 分组
+tag_metrics, month_metrics = calculate_split_metrics(
+    data=df,
+    tag_col='tag',
+    date_col='obs_date',      # 只需要传入日期列
+    label_list=['target'],
+    score_col='xgb_score',
+    model_name='XGBoost Model'
+)
+
+print(tag_metrics)
+print(month_metrics)
+```
+
+### 12.2. 分维度对比
+
+比较按自定义维度拆分的指标（通常仅适用于 OOT 样本）。
+
+```python
+from newt import calculate_dimensional_comparison
+
+# 建议仅传入 OOT 数据进行此分析
+dim_metrics = calculate_dimensional_comparison(
+    data=df[df['tag'] == 'oot'],
+    dim_list=['channel', 'education'],
+    label_list=['target'],
+    score_model_columns=[('XGBoost Model', 'xgb_score')]
+)
+
+print(dim_metrics)
+```
+
+### 12.3. 新老模型对比
+
+按 `tag` 或 `month` 对比新模型与旧基准模型的相对表现。
+
+```python
+from newt import calculate_model_comparison
+
+# 两个模型之间的正面交锋对比
+compare_metrics = calculate_model_comparison(
+    data=df,
+    tag_col='tag',
+    date_col='obs_date',
+    label_list=['target'],
+    model_columns=[
+        ('New XGBoost Model', 'xgb_score'),
+        ('Old Logistic Model', 'old_score')
+    ],
+    group_mode='month'  # 也接受 'tag'
+)
+
+print(compare_metrics)
+```
+
+---
+
 ## 其他资源
 
 - **API 文档**：查看各模块的文档字符串获取详细 API 参考

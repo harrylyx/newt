@@ -1215,6 +1215,16 @@ def _build_split_metrics_tables(
         if cached is not None:
             return cached
 
+    LOGGER.debug(
+        "_build_split_metrics_tables started | rows=%d label_list=%s "
+        "tag_col=%s month_col=%s score_col=%s",
+        len(data),
+        list(label_list),
+        tag_col,
+        month_col,
+        score_col,
+    )
+
     tag_rows: List[pd.DataFrame] = []
     month_rows: List[pd.DataFrame] = []
     month_latest_psi = _build_latest_month_psi_map(
@@ -1374,6 +1384,15 @@ def _build_group_metrics(
         if cached is not None:
             return cached
 
+    LOGGER.debug(
+        "_build_group_metrics started | rows=%d group_cols=%s "
+        "label_col=%s score_col=%s",
+        len(data),
+        list(group_cols),
+        label_col,
+        score_col,
+    )
+
     records: List[Dict[str, object]] = []
     resolved_metrics_mode = (
         build_context.options.metrics_mode
@@ -1383,24 +1402,43 @@ def _build_group_metrics(
     resolved_engine = (
         build_context.options.engine if build_context is not None else "python"
     )
-    required_columns = list(
-        dict.fromkeys(
-            [*group_cols, label_col, score_col, tag_col, month_col, raw_date_col]
+    # Only include raw_date_col when grouping by tag (needed for date-range display).
+    # Excluding it from the sort columns gives a massive speedup when raw_date_col
+    # contains mixed-format datetime strings.
+    _group_cols_set = set(group_cols)
+    if _group_cols_set == {tag_col}:
+        required_columns = list(
+            dict.fromkeys([*group_cols, label_col, score_col, tag_col, raw_date_col])
         )
-    )
-    ordered = data.loc[:, required_columns]
+    else:
+        required_columns = list(
+            dict.fromkeys([*group_cols, label_col, score_col, tag_col, month_col])
+        )
+    ordered = data.loc[:, required_columns].copy()
     for group_col in group_cols:
-        ordered[group_col] = (
-            ordered[group_col]
-            .astype("object")
-            .where(
-                pd.notna(ordered[group_col]),
-                "",
-            )
-        )
-    ordered = ordered.sort_values(list(group_cols))
+        col = ordered[group_col]
+        # Convert object-dtype columns to Categorical for faster sorting in groupby.
+        # Only add "" as a category when there are actual NaN values to fill —
+        # otherwise fillna("") would add a phantom "" category and create an extra
+        # empty-string group (0 rows) when groupby(dropna=False).
+        has_na = col.isna().any()
+        if not isinstance(col.dtype, pd.CategoricalDtype):
+            unique_vals = pd.unique(col)
+            cats = list(unique_vals)
+            if has_na and "" not in cats:
+                cats.append("")
+            ordered[group_col] = pd.Categorical(col, categories=cats, ordered=False)
+        elif has_na and "" not in ordered[group_col].cat.categories:
+            ordered[group_col] = ordered[group_col].cat.add_categories("")
+        if has_na:
+            ordered[group_col] = ordered[group_col].fillna("")
+
     psi_values: List[float] = []
-    grouped_frames = list(ordered.groupby(list(group_cols), dropna=False))
+    # Use observed=True to only iterate over groups that actually appear in the data.
+    # This prevents creating redundant "phantom" groups for unused Categorical levels.
+    grouped_frames = list(
+        ordered.groupby(list(group_cols), sort=True, dropna=False, observed=True)
+    )
     metric_groups = [
         (group_frame[label_col], group_frame[score_col])
         for _, group_frame in grouped_frames
@@ -1500,6 +1538,14 @@ def _build_latest_month_psi_map(
         cached = build_context.cache_get_latest_month_psi(cache_key)
         if cached is not None:
             return cached
+
+    LOGGER.debug(
+        "_build_latest_month_psi_map started | rows=%d month_col=%s score_col=%s",
+        len(data),
+        month_col,
+        score_col,
+    )
+
     if data.empty:
         return {}
     month_values = _ordered_month_values(data[month_col])
@@ -1621,7 +1667,7 @@ def _resolve_observation_window(
     month_col: str,
     raw_date_col: str,
 ) -> str:
-    if list(group_cols) == [tag_col]:
+    if list(group_cols) == [tag_col] and raw_date_col in group_frame.columns:
         return _format_date_range(group_frame[raw_date_col])
     if list(group_cols) == [month_col]:
         first = group_frame[month_col].iloc[0] if not group_frame.empty else ""
@@ -1630,7 +1676,16 @@ def _resolve_observation_window(
 
 
 def _format_date_range(values: pd.Series) -> str:
-    parsed = pd.to_datetime(values, errors="coerce").dropna()
+    # Large scale optimization for 10M+ rows: truncate to date part first
+    # to reduce cardinality before parsing. This is robust against mixed
+    # formats and timestamps (seconds/milliseconds).
+    truncated = values.astype(str).str.slice(stop=10)
+    unique_days = pd.unique(truncated)
+    unique_days = [v for v in unique_days if pd.notna(v) and str(v).lower() != "nan"]
+    if not unique_days:
+        return ""
+
+    parsed = pd.to_datetime(unique_days, errors="coerce").dropna()
     if parsed.empty:
         return ""
     return f"{parsed.min().strftime('%Y%m%d')}-{parsed.max().strftime('%Y%m%d')}"

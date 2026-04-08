@@ -238,17 +238,36 @@ def _vectorized_normalize_month(values: pd.Series) -> pd.Series:
     if pd.api.types.is_datetime64_any_dtype(values):
         return values.dt.strftime("%Y%m").fillna("").astype("object")
 
+    # Optimization for 10M+ rows: truncate to date part (e.g., YYYY-MM-DD)
+    # to reduce cardinality from millions to thousands before parsing.
     series = values.astype("object")
     text = series.astype(str).str.strip()
-    result = pd.Series("", index=values.index, dtype="object")
+    trunc = text.str.slice(stop=10)
+    unique_trunc = pd.unique(trunc)
+    # Filter out empty/NaN strings
+    unique_trunc = [
+        v
+        for v in unique_trunc
+        if pd.notna(v) and str(v).lower() != "nan" and str(v).strip() != ""
+    ]
 
-    notna = series.notna()
-    parsed = pd.to_datetime(series.where(notna), errors="coerce")
-    result.loc[notna] = parsed.dt.strftime("%Y%m").fillna(text.loc[notna])
+    if not unique_trunc:
+        return pd.Series("", index=values.index, dtype="object")
 
-    is_yyyymm = notna & text.str.match(r"^\d{6}$", na=False)
-    result.loc[is_yyyymm] = text.loc[is_yyyymm]
+    # Parse only unique date prefixes (a few thousand vs 10 million)
+    parsed_unique = pd.to_datetime(unique_trunc, errors="coerce")
+    mapping = {}
+    for orig, p in zip(unique_trunc, parsed_unique):
+        if pd.notna(p):
+            mapping[orig] = p.strftime("%Y%m")
+        else:
+            # If parsing fails, fall back to original text if it looks like YYYYMM
+            mapping[orig] = (
+                orig[:6] if (len(orig) >= 6 and orig[:6].isdigit()) else orig
+            )
 
+    # Map back to the full series (fast O(N) operation)
+    result = trunc.map(mapping).fillna("").astype("object")
     return result
 
 

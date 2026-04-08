@@ -51,7 +51,7 @@ def assign_reference_bins(values: pd.Series, edges: Sequence[float]) -> pd.Serie
         include_lowest=True,
         duplicates="drop",
     )
-    return binned.astype("object").where(~numeric.isna(), "Missing")
+    return binned.cat.add_categories("Missing").fillna("Missing")
 
 
 def calculate_binary_metrics(
@@ -125,9 +125,10 @@ def calculate_grouped_binary_metrics(
 ) -> pd.DataFrame:
     """Calculate grouped binary metrics for reporting."""
     records: List[Dict[str, object]] = []
-    ordered = data.sort_values(list(group_cols))
-
-    for group_values, group_frame in ordered.groupby(list(group_cols), dropna=False):
+    # groupby with sort=True is much faster than sorting the entire 10M row DataFrame.
+    for group_values, group_frame in data.groupby(
+        list(group_cols), dropna=False, sort=True
+    ):
         if not isinstance(group_values, tuple):
             group_values = (group_values,)
         group_dict = dict(zip(group_cols, group_values))

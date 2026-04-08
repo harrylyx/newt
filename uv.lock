@@ -2518,7 +2518,7 @@ wheels = [
 
 [[package]]
 name = "newt"
-version = "0.1.7"
+version = "0.1.8"
 source = { editable = "." }
 dependencies = [
     { name = "matplotlib", version = "3.7.5", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.9'" },
@@ -2543,6 +2543,16 @@ dependencies = [
 ]
 
 [package.optional-dependencies]
+docs = [
+    { name = "mkdocs" },
+    { name = "mkdocs-autorefs", version = "1.2.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.9'" },
+    { name = "mkdocs-autorefs", version = "1.4.4", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.9'" },
+    { name = "mkdocs-material" },
+    { name = "mkdocs-static-i18n" },
+    { name = "mkdocstrings", version = "0.26.1", source = { registry = "https://pypi.org/simple" }, extra = ["python"], marker = "python_full_version < '3.9'" },
+    { name = "mkdocstrings", version = "0.30.1", source = { registry = "https://pypi.org/simple" }, extra = ["python"], marker = "python_full_version == '3.9.*'" },
+    { name = "mkdocstrings", version = "1.0.3", source = { registry = "https://pypi.org/simple" }, extra = ["python"], marker = "python_full_version >= '3.10'" },
+]
 optbinning = [
     { name = "cvxpy", marker = "python_full_version < '3.12'" },
     { name = "optbinning", marker = "python_full_version < '3.12'" },
@@ -2576,21 +2586,16 @@ dev = [
     { name = "pytest" },
     { name = "pytest-cov" },
 ]
-docs = [
-    { name = "mkdocs" },
-    { name = "mkdocs-autorefs", version = "1.2.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.9'" },
-    { name = "mkdocs-autorefs", version = "1.4.4", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.9'" },
-    { name = "mkdocs-material" },
-    { name = "mkdocs-static-i18n" },
-    { name = "mkdocstrings", version = "0.26.1", source = { registry = "https://pypi.org/simple" }, extra = ["python"], marker = "python_full_version < '3.9'" },
-    { name = "mkdocstrings", version = "0.30.1", source = { registry = "https://pypi.org/simple" }, extra = ["python"], marker = "python_full_version == '3.9.*'" },
-    { name = "mkdocstrings", version = "1.0.3", source = { registry = "https://pypi.org/simple" }, extra = ["python"], marker = "python_full_version >= '3.10'" },
-]
 
 [package.metadata]
 requires-dist = [
     { name = "cvxpy", marker = "python_full_version < '3.12' and extra == 'optbinning'", specifier = ">=1.3,<1.5" },
     { name = "matplotlib", specifier = ">=3.7.0,<4.0.0" },
+    { name = "mkdocs", marker = "extra == 'docs'", specifier = ">=1.5.0,<2.0.0" },
+    { name = "mkdocs-autorefs", marker = "extra == 'docs'", specifier = ">=1.0.0" },
+    { name = "mkdocs-material", marker = "extra == 'docs'", specifier = ">=9.4.0,<10.0.0" },
+    { name = "mkdocs-static-i18n", marker = "extra == 'docs'", specifier = ">=1.2.0" },
+    { name = "mkdocstrings", extras = ["python"], marker = "extra == 'docs'", specifier = ">=0.23.0" },
     { name = "numpy", specifier = "<2.0.0" },
     { name = "optbinning", marker = "python_full_version < '3.12' and extra == 'optbinning'", specifier = ">=0.20.0,<0.21.0" },
     { name = "ortools", marker = "python_full_version < '3.12' and extra == 'optbinning'", specifier = "<9.8" },
@@ -2601,7 +2606,7 @@ requires-dist = [
     { name = "statsmodels", specifier = ">=0.14.0,<0.15.0" },
     { name = "xlsxwriter", specifier = ">=3.2.0,<4.0.0" },
 ]
-provides-extras = ["optbinning"]
+provides-extras = ["optbinning", "docs"]
 
 [package.metadata.requires-dev]
 benchmark = [{ name = "toad", specifier = "==0.1.5" }]
@@ -2620,13 +2625,6 @@ dev = [
     { name = "pyarrow", specifier = ">=15.0.0,<20.0.0" },
     { name = "pytest", specifier = ">=7.0.0,<8.0.0" },
     { name = "pytest-cov", specifier = ">=4.0.0,<5.0.0" },
-]
-docs = [
-    { name = "mkdocs", specifier = ">=1.5.0,<2.0.0" },
-    { name = "mkdocs-autorefs", specifier = ">=1.0.0" },
-    { name = "mkdocs-material", specifier = ">=9.4.0,<10.0.0" },
-    { name = "mkdocs-static-i18n", specifier = ">=1.2.0" },
-    { name = "mkdocstrings", extras = ["python"], specifier = ">=0.23.0" },
 ]
 
 [[package]]

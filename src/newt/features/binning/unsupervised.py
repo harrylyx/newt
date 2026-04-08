@@ -7,11 +7,23 @@ from .base import BaseBinner
 
 
 class EqualWidthBinner(BaseBinner):
-    """
-    Bins continuous data into intervals of equal size (width).
+    """Discretizes continuous data into intervals of equal width.
+
+    This method divides the range of values into 'n_bins' equal-sized intervals.
+    Useful for uniform distributions or when the physical scale of the feature
+    is the primary concern.
+
+    Examples:
+        >>> binner = EqualWidthBinner(n_bins=5)
+        >>> binner.fit(X_series)
     """
 
     def __init__(self, **kwargs):
+        """Initialize EqualWidthBinner.
+
+        Args:
+            **kwargs: Arguments passed to BaseBinner.
+        """
         super().__init__(**kwargs)
 
     def _fit_splits(self, X: pd.Series, y: Optional[pd.Series] = None) -> List[float]:
@@ -28,11 +40,22 @@ class EqualWidthBinner(BaseBinner):
 
 
 class EqualFrequencyBinner(BaseBinner):
-    """
-    Bins continuous data into intervals with equal number of samples (quantiles).
+    """Discretizes continuous data into intervals with an equal number of samples.
+
+    Also known as quantile binning. This method ensures that each bin contains
+    approximately the same number of observations.
+
+    Examples:
+        >>> binner = EqualFrequencyBinner(n_bins=5)
+        >>> binner.fit(X_series)
     """
 
     def __init__(self, **kwargs):
+        """Initialize EqualFrequencyBinner.
+
+        Args:
+            **kwargs: Arguments passed to BaseBinner.
+        """
         super().__init__(**kwargs)
 
     def _fit_splits(self, X: pd.Series, y: Optional[pd.Series] = None) -> List[float]:
@@ -49,13 +72,22 @@ class EqualFrequencyBinner(BaseBinner):
 
 
 class KMeansBinner(BaseBinner):
-    """
-    Bins continuous data using K-Means clustering.
-    Center of clusters are used to define bins?
-    Usually KMeans binning uses the boundaries between clusters.
+    """Discretizes continuous data using K-Means clustering.
+
+    This method finds 'n_bins' clusters in the 1D space and chooses boundaries
+    as the midpoints between adjacent cluster centers.
+
+    Examples:
+        >>> binner = KMeansBinner(n_bins=5)
+        >>> binner.fit(X_series)
     """
 
     def __init__(self, **kwargs):
+        """Initialize KMeansBinner.
+
+        Args:
+            **kwargs: Arguments passed to BaseBinner.
+        """
         super().__init__(**kwargs)
 
     def _fit_splits(self, X: pd.Series, y: Optional[pd.Series] = None) -> List[float]:

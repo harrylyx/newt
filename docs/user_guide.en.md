@@ -4,11 +4,6 @@ This guide covers the end-to-end workflow for credit scorecard development using
 
 The project supports Python `>=3.8.5,<3.13` (Python `3.8.5` through `3.12.x`).
 
-For recent production changes, see:
-
-- [Recent Release Notes (English)](release_notes.md)
-- [最近版本更新说明 (中文)](release_notes_zh.md)
-
 ## Installation
 
 ### From PyPI
@@ -76,7 +71,7 @@ When working inside this repository, keep environments split by purpose:
 
 1. [Feature Binning](#1-feature-binning)
 2. [Feature Selection](#2-feature-selection)
-3. [WOE & IV Analysis](#3-woe--iv-analysis)
+3. [WOE & IV Analysis](#3-woe-iv-analysis)
 4. [Logistic Regression Modeling](#4-logistic-regression-modeling)
 5. [Scorecard Generation](#5-scorecard-generation)
 6. [Complete Pipeline](#6-complete-pipeline)

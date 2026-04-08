@@ -19,4 +19,5 @@ pip install newt
 
 ## 快速开始
 
-查看 [用户指南](user_guide.md) 了解详细使用说明。
+- [用户指南](user_guide.md)
+- [API 参考](api/reference.md)

@@ -9,7 +9,18 @@ from newt.pipeline.state import PipelineState
 
 
 class PrefilterStep:
-    """Apply pre-filtering based on feature metrics."""
+    """Pipeline step for exploratory data analysis and basic feature filtering.
+
+    This step calculates metrics like Information Value (IV), missing rates, and
+    feature correlations to perform an initial reduction of the feature space.
+
+    Args:
+        iv_threshold: Minimum IV for a feature to be retained.
+        missing_threshold: Maximum missing rate for a feature to be retained.
+        corr_threshold: Maximum absolute correlation between any two features.
+        iv_bins: Number of bins used for initial IV calculation.
+        **kwargs: Additional arguments passed to the FeatureSelector.
+    """
 
     def __init__(
         self,
@@ -19,6 +30,7 @@ class PrefilterStep:
         iv_bins: int = BINNING.DEFAULT_BUCKETS,
         **kwargs,
     ):
+        """Initialize PrefilterStep."""
         self.iv_threshold = iv_threshold
         self.missing_threshold = missing_threshold
         self.corr_threshold = corr_threshold
@@ -51,7 +63,17 @@ class PrefilterStep:
 
 
 class BinningStep:
-    """Fit binning rules and apply them to train and test data."""
+    """Pipeline step for fitting discretization rules to numeric features.
+
+    This step uses one of several algorithms (ChiMerge, DT, etc.) to discover
+    optimal bin boundaries and applies these boundaries to the dataset.
+
+    Args:
+        method: Binning algorithm name ('chi', 'dt', 'opt', 'kmean', etc.).
+        n_bins: Target number of bins.
+        cols: Specific columns to bin. If None, all numeric columns are used.
+        **kwargs: Additional arguments passed to the Binner.
+    """
 
     def __init__(
         self,
@@ -60,6 +82,7 @@ class BinningStep:
         cols: Optional[List[str]] = None,
         **kwargs,
     ):
+        """Initialize BinningStep."""
         self.method = method
         self.n_bins = n_bins
         self.cols = cols
@@ -89,9 +112,18 @@ class BinningStep:
 
 
 class WoeTransformStep:
-    """Apply WOE encoding to binned data."""
+    """Pipeline step for Weight of Evidence (WOE) encoding.
+
+    Converts discrete bin indices into numerical WOE values based on the
+    log-odds of the event rate in each bin.
+
+    Args:
+        epsilon: Small constant to avoid log(0) and division by zero.
+        **kwargs: Additional arguments passed to the WOEEncoder.
+    """
 
     def __init__(self, epsilon: float = BINNING.DEFAULT_EPSILON, **kwargs):
+        """Initialize WoeTransformStep."""
         self.epsilon = epsilon
         self.kwargs = kwargs
 
@@ -131,7 +163,17 @@ class WoeTransformStep:
 
 
 class PostfilterStep:
-    """Apply PSI and VIF post-filtering."""
+    """Pipeline step for stability (PSI) and multicollinearity (VIF) filtering.
+
+    Ensures that selected features are stable across time/segments and do not
+    suffer from high redundancy.
+
+    Args:
+        psi_threshold: Maximum PSI value for a feature to be retained.
+        vif_threshold: Maximum VIF value for a feature to be retained.
+        X_test: Optional test dataset for PSI calculation.
+        **kwargs: Additional arguments passed to the PostFilter.
+    """
 
     def __init__(
         self,
@@ -140,6 +182,7 @@ class PostfilterStep:
         X_test: Optional[pd.DataFrame] = None,
         **kwargs,
     ):
+        """Initialize PostfilterStep."""
         self.psi_threshold = psi_threshold
         self.vif_threshold = vif_threshold
         self.X_test = X_test
@@ -165,8 +208,20 @@ class PostfilterStep:
         return state
 
 
-class StepwiseSelectionStep:
-    """Apply stepwise regression selection."""
+class StepwiseStep:
+    """Pipeline step for stepwise feature selection based on statistical criteria.
+
+    Iteratively adds or removes features based on p-values or information
+    criteria (AIC/BIC) to find a high-performing subset.
+
+    Args:
+        direction: Selection strategy: 'forward', 'backward', or 'both'.
+        criterion: The statistical criterion for selection: 'pvalue', 'aic', 'bic'.
+        p_enter: p-value threshold for adding a feature.
+        p_remove: p-value threshold for removing a feature.
+        exclude: List of columns to always keep.
+        **kwargs: Additional arguments passed to the StepwiseSelector.
+    """
 
     def __init__(
         self,
@@ -177,6 +232,7 @@ class StepwiseSelectionStep:
         exclude: Optional[List[str]] = None,
         **kwargs,
     ):
+        """Initialize StepwiseStep."""
         self.direction = direction
         self.criterion = criterion
         self.p_enter = p_enter
@@ -206,26 +262,46 @@ class StepwiseSelectionStep:
         return state
 
 
-class ModelBuildStep:
-    """Fit the logistic model."""
+class ModelingStep:
+    """Pipeline step for fitting the final Logistic Regression model.
+
+    Standardizes the model interface and ensures all training artifacts are
+    captured for scorecard conversion.
+
+    Args:
+        fit_intercept: Whether to calculate the intercept for this model.
+        **kwargs: Arguments passed to the LogisticModel.
+    """
 
     def __init__(self, fit_intercept: bool = True, **kwargs):
+        """Initialize ModelingStep."""
         self.fit_intercept = fit_intercept
         self.kwargs = kwargs
 
     def run(self, state: PipelineState) -> PipelineState:
-        """Fit the model and update the pipeline state."""
+        """Run model training and update the pipeline state."""
         from newt.modeling.logistic import LogisticModel
 
         model = LogisticModel(fit_intercept=self.fit_intercept, **self.kwargs)
         model.fit(state.X_current, state.y_train)
+
         state.model = model
-        state.steps.append("build_model")
+        state.steps.append("model")
         return state
 
 
-class ScorecardBuildStep:
-    """Build the scorecard from fitted pipeline artifacts."""
+class ScorecardStep:
+    """Pipeline step for converting a fitted model into an additive scorecard.
+
+    Scales model coefficients based on business requirements like Base Score
+    and Points to Double the Odds (PDO).
+
+    Args:
+        base_score: Target score at the given base_odds.
+        pdo: Points to Double the Odds.
+        base_odds: Target odds at the given base_score.
+        **kwargs: Optional keyword arguments for Scorecard initialization.
+    """
 
     def __init__(
         self,
@@ -234,27 +310,21 @@ class ScorecardBuildStep:
         base_odds: float = SCORECARD.DEFAULT_BASE_ODDS,
         **kwargs,
     ):
+        """Initialize ScorecardStep."""
         self.base_score = base_score
         self.pdo = pdo
         self.base_odds = base_odds
         self.kwargs = kwargs
 
     def run(self, state: PipelineState) -> PipelineState:
-        """Build the scorecard and update the pipeline state."""
+        """Run scorecard generation and update the pipeline state."""
         from newt.modeling.scorecard import Scorecard
 
-        if state.model is None:
-            raise ValueError("Must call build_model() before generate_scorecard().")
-        if state.binner is None:
-            raise ValueError("Must call bin() before generate_scorecard().")
-
         scorecard = Scorecard(
-            base_score=self.base_score,
-            pdo=self.pdo,
-            base_odds=self.base_odds,
+            base_score=self.base_score, pdo=self.pdo, base_odds=self.base_odds
         )
         scorecard.from_model(state.model, state.binner, state.woe_encoders)
 
         state.scorecard = scorecard
-        state.steps.append("generate_scorecard")
+        state.steps.append("scorecard")
         return state

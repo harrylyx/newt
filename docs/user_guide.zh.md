@@ -4,11 +4,6 @@
 
 当前项目支持 Python `>=3.8.5,<3.13`（即 Python `3.8.5` 到 `3.12.x`）。
 
-近期线上版本变更可参考：
-
-- [Recent Release Notes (English)](release_notes.md)
-- [最近版本更新说明 (中文)](release_notes_zh.md)
-
 ## 安装
 
 ### 从 PyPI 安装
@@ -70,7 +65,7 @@ batch_py = calculate_batch_iv(X, y, engine="python")
 
 1. [特征分箱](#1-特征分箱)
 2. [特征选择](#2-特征选择)
-3. [WOE & IV 分析](#3-woe--iv-分析)
+3. [WOE & IV 分析](#3-woe-iv-分析)
 4. [逻辑回归建模](#4-逻辑回归建模)
 5. [评分卡生成](#5-评分卡生成)
 6. [完整流程](#6-完整流程)

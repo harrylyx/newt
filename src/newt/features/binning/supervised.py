@@ -14,8 +14,16 @@ from .base import BaseBinner
 
 
 class DecisionTreeBinner(BaseBinner):
-    """
-    Bins continuous data using a Decision Tree to find optimal splits.
+    """Discretizes continuous data using a Decision Tree to find optimal splits.
+
+    Uses a classification tree to split the feature based on its relationship with
+    the target variable. This method naturally finds boundaries that maximize
+    separation between classes.
+
+    Examples:
+        >>> binner = DecisionTreeBinner(n_bins=5, min_samples_leaf=0.1)
+        >>> binner.fit(X_series, y_series)
+        >>> print(binner.splits_)
     """
 
     def __init__(
@@ -25,6 +33,14 @@ class DecisionTreeBinner(BaseBinner):
         min_samples_leaf: float = 0.05,
         **kwargs,
     ):
+        """Initialize DecisionTreeBinner.
+
+        Args:
+            n_bins: Maximum number of bins (max_leaf_nodes).
+            monotonic: Enforce monotonic trend.
+            min_samples_leaf: Minimum fraction of samples required in a leaf.
+            **kwargs: Arguments passed to BaseBinner.
+        """
         super().__init__(n_bins=n_bins, monotonic=monotonic, **kwargs)
         self.min_samples_leaf = min_samples_leaf
 
@@ -56,8 +72,15 @@ class DecisionTreeBinner(BaseBinner):
 
 
 class ChiMergeBinner(BaseBinner):
-    """
-    Bins continuous data using Fast ChiMerge algorithm.
+    """Discretizes continuous data using the ChiMerge algorithm.
+
+    ChiMerge is a bottom-up merging algorithm that starts with each unique value
+    as a bin and iteratively merges adjacent bins if they are statistically
+    similar (based on Chi-square test).
+
+    Examples:
+        >>> binner = ChiMergeBinner(n_bins=5, alpha=0.05)
+        >>> binner.fit(X_series, y_series)
     """
 
     def __init__(
@@ -68,6 +91,16 @@ class ChiMergeBinner(BaseBinner):
         min_samples: float = 0.05,
         **kwargs,
     ):
+        """Initialize ChiMergeBinner.
+
+        Args:
+            n_bins: Target number of bins.
+            monotonic: Enforce monotonic trend.
+            alpha: Significance level for Chi-square test (merges if p > alpha).
+            min_samples: Minimum fraction of samples per bin (not yet enforced
+                in core loop).
+            **kwargs: Arguments passed to BaseBinner.
+        """
         super().__init__(n_bins=n_bins, monotonic=monotonic, **kwargs)
         self.alpha = alpha
         self.min_samples = min_samples
@@ -252,14 +285,16 @@ class ChiMergeBinner(BaseBinner):
 
 
 class OptBinningBinner(BaseBinner):
-    """
-    Bins using the OptBinning library.
+    """Discretizes continuous data using the `optbinning` library.
 
-    Supports monotonic constraints via the monotonic parameter:
-    - None/False: no constraint (monotonic_trend="auto")
-    - True/"auto": auto-detect direction (monotonic_trend="auto_asc_desc")
-    - "ascending": force increasing bad rate (monotonic_trend="ascending")
-    - "descending": force decreasing bad rate (monotonic_trend="descending")
+    Provides a wrapper for the Optimal Binning algorithm which uses constrained
+    programming to find splits that optimize information value (IV).
+
+    Note: Requires `optbinning` and is only available on Python < 3.12.
+
+    Examples:
+        >>> binner = OptBinningBinner(n_bins=5, monotonic='ascending')
+        >>> binner.fit(X, y)
     """
 
     def __init__(
@@ -268,6 +303,13 @@ class OptBinningBinner(BaseBinner):
         monotonic: Union[bool, str, None] = None,
         **kwargs,
     ):
+        """Initialize OptBinningBinner.
+
+        Args:
+            n_bins: Maximum number of bins.
+            monotonic: Monotonic constraint setting.
+            **kwargs: Arguments passed to `optbinning.OptimalBinning`.
+        """
         # OptBinning handles monotonicity internally, so we don't pass to base
         super().__init__(n_bins=n_bins, monotonic=None)
         self.monotonic_setting = monotonic

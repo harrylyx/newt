@@ -19,16 +19,23 @@ from .woe_storage import WOEStorage
 
 
 class BinningResult:
-    """
-    Proxy object for accessing binning results of a single feature.
+    """Proxy object for accessing binning results of a single feature.
 
-    Attributes
-    ----------
-    stats : pd.DataFrame
-        Binning statistics.
+    This class provides a convenient way to access statistics, plots, and WOE
+    mappings for a specific feature within a fitted Binner instance.
+
+    Attributes:
+        stats (pd.DataFrame): Binning statistics including bin ranges, counts,
+            bad rates, WOE, and IV contribution.
     """
 
     def __init__(self, binner: "Binner", feature: str):
+        """Initialize BinningResult.
+
+        Args:
+            binner: The parent Binner instance.
+            feature: The name of the feature to proxy.
+        """
         self._binner = binner
         self._feature = feature
 
@@ -45,19 +52,22 @@ class BinningResult:
         secondary_y: Optional[Union[str, List[str]]] = "bad_rate",
         **kwargs,
     ):
-        """
-        Plot binning results for this feature.
+        """Plot binning results for this feature.
 
-        Parameters
-        ----------
-        x : str
-            Column for x-axis. Default 'bin'.
-        y : str or list
-            Column(s) for primary y-axis (bar). Default ['bad_prop'].
-        secondary_y : str or list, optional
-            Column(s) for secondary y-axis (line). Default 'bad_rate'.
-        **kwargs :
-            Arguments passed to plot_binning_result.
+        Generates a bar-and-line chart showing the distribution of samples and the
+        bad rate (or other metrics) across bins.
+
+        Args:
+            x: Column for x-axis. Default 'bin'.
+            y: Column(s) for primary y-axis (bar). Default ['bad_prop'].
+            secondary_y: Column(s) for secondary y-axis (line). Default 'bad_rate'.
+            **kwargs: Arguments passed to plot_binning_result.
+
+        Returns:
+            matplotlib.figure.Figure: The generated figure.
+
+        Examples:
+            >>> binner['age'].plot(title="Age Binning Distribution")
         """
         if y is None:
             y = ["bad_prop"]
@@ -75,37 +85,43 @@ class BinningResult:
         )
 
     def woe_map(self) -> Dict[Any, float]:
-        """Get WOE mapping for this feature."""
+        """Get the WOE mapping for this feature.
+
+        Returns:
+            Dict[Any, float]: A dictionary mapping bin labels to WOE values.
+        """
         return self._binner.get_woe_map(self._feature)
-
-    def __repr__(self):
-        return self.stats.__repr__()
-
-    def _repr_html_(self):
-        return self.stats._repr_html_()
 
 
 class Binner(BinnerStatsMixin, BinnerIOMixin, BinnerWOEMixin):
-    """
-    A unified interface for binning multiple features using various algorithms.
+    """Unified interface for multi-feature binning using various algorithms.
 
-    Supported methods: 'chi', 'dt', 'kmean', 'quantile', 'step', 'opt'.
+    The Binner class manages the discretization of multiple features, handles
+    missing values automatically, and stores WOE encoders for downstream modeling.
+    It supports both supervised (ChiMerge, Decision Tree, Optimal) and
+    unsupervised (K-Means, Equal Width, Equal Frequency) algorithms.
 
-    Features:
-    - Access binning info with binner['feature_name'] -> returns BinningResult
-    - Missing values are automatically binned separately
-    - WOE encoders are stored for scorecard generation
+    Supported methods:
+        - 'chi': ChiMerge (Default)
+        - 'dt': Decision Tree
+        - 'opt': Optimal Binning
+        - 'kmean': K-Means
+        - 'quantile': Equal Frequency
+        - 'step': Equal Width
 
-    Examples
-    --------
-    >>> binner = Binner()
-    >>> binner.fit(X, y, method='opt', n_bins=5)
-    >>> binner['age'].stats         # View stats DataFrame
-    >>> binner['age'].plot()        # Plot results
-    >>> binner['age'].woe_map()     # View WOE map
+    Examples:
+        >>> from newt.features.binning import Binner
+        >>> binner = Binner()
+        >>> binner.fit(X_train, y_train, method='chi', n_bins=5, monotonic=True)
+        >>> # Access results via item access
+        >>> print(binner['age'].stats)
+        >>> binner['age'].plot()
+        >>> # Transform new data
+        >>> X_binned = binner.transform(X_test)
     """
 
     def __init__(self):
+        """Initialize the Binner."""
         self.rules_: Dict[str, List[float]] = {}
         self.method_map = {
             "chi": ChiMergeBinner,
@@ -125,7 +141,11 @@ class Binner(BinnerStatsMixin, BinnerIOMixin, BinnerWOEMixin):
 
     @property
     def woe_encoders_(self) -> Dict[str, Any]:
-        """Get WOE encoders dictionary (for backward compatibility)."""
+        """Get WOE encoders dictionary (for backward compatibility).
+
+        Returns:
+            Dict[str, Any]: Mapping of feature names to WOEEncoder objects.
+        """
         return self.woe_storage.encoders_
 
     def fit(
@@ -139,36 +159,28 @@ class Binner(BinnerStatsMixin, BinnerIOMixin, BinnerWOEMixin):
         monotonic: Union[bool, str, None] = None,
         **kwargs,
     ) -> "Binner":
-        """
-        Fit the binning model.
+        """Fit the binning model to multiple features.
 
-        Missing values are automatically handled as a separate bin.
+        Initializes and fits specific binning algorithms for each selected feature,
+        calculates binning statistics, and stores WOE mappings.
 
-        Parameters
-        ----------
-        X : pd.DataFrame
-            Data to be binned.
-        y : str or pd.Series, optional
-            Target data. Required for supervised methods ('chi', 'dt').
-        method : str
-            Binning method. 'chi', 'dt', 'kmean', 'quantile', 'step', 'opt'.
-        n_bins : int
-            Number of bins.
-        min_samples : int, float
-            Minimum samples per leaf (for decision tree).
-        cols : List[str]
-            List of columns to bin. If None, selects all numeric columns.
-        monotonic : bool, str, or None
-            Enforce monotonic bad rate across bins.
-            - None/False: no constraint
-            - True/"auto": auto-detect direction and enforce monotonicity
-            - "ascending": force bad rate to increase with bin value
-            - "descending": force bad rate to decrease with bin value
+        Args:
+            X: Data to be binned.
+            y: Target data or target column name. Required for supervised methods.
+            method: Binning algorithm name ('chi', 'dt', 'opt', 'kmean', etc.).
+            n_bins: Target number of bins.
+            min_samples: Minimum samples per leaf (relevant for 'dt').
+            cols: List of columns to bin. If None, all numeric columns are selected.
+            monotonic: Enforce monotonic bad rate trend.
+                - True/'auto': Enforce auto-detected trend.
+                - 'ascending'/'descending': Enforce specific trend.
+            **kwargs: Additional parameters passed to the underlying binner.
 
-        Returns
-        -------
-        Binner
-            Fitted binner instance.
+        Returns:
+            Binner: The fitted Binner instance.
+
+        Examples:
+            >>> binner.fit(df, target='default', method='chi', monotonic=True)
         """
         y_series = y
         if isinstance(y, str):
@@ -223,23 +235,19 @@ class Binner(BinnerStatsMixin, BinnerIOMixin, BinnerWOEMixin):
         X: pd.DataFrame,
         labels: bool = False,
     ) -> pd.DataFrame:
-        """
-        Apply binning rules to the data.
+        """Apply binning rules to a DataFrame.
 
-        Missing values are placed in 'Missing' bin.
+        Discretizes values based on splits discovered during fitting. Missing
+        values are automatically assigned to a 'Missing' bin.
 
-        Parameters
-        ----------
-        X : pd.DataFrame
-            Data to transform.
-        labels : bool
-            If True, return interval string (e.g., '(0, 10]').
-            If False, return integer code (0, 1, 2...).
+        Args:
+            X: Data to transform.
+            labels: If True, return bin intervals (str).
+                If False, return bin indices (int).
 
-        Returns
-        -------
-        pd.DataFrame
-            Transformed data.
+        Returns:
+            pd.DataFrame: Binned data with original columns replaced by
+                bin codes/labels.
         """
         X_new = X.copy()
 
@@ -269,27 +277,16 @@ class Binner(BinnerStatsMixin, BinnerIOMixin, BinnerWOEMixin):
         return X_new
 
     def woe_transform(self, X: pd.DataFrame) -> pd.DataFrame:
-        """
-        Apply WOE transformation to the data.
+        """Convenience method to bin and WOE-transform data in one pass.
 
-        Uses the WOE values computed during fit(). This is a convenient
-        method that combines binning and WOE transformation in one step.
+        Args:
+            X: Raw feature DataFrame.
 
-        Parameters
-        ----------
-        X : pd.DataFrame
-            Data to transform.
+        Returns:
+            pd.DataFrame: WOE-encoded DataFrame.
 
-        Returns
-        -------
-        pd.DataFrame
-            WOE-transformed data.
-
-        Examples
-        --------
-        >>> binner = Binner()
-        >>> binner.fit(X_train, y_train, method='opt', n_bins=5)
-        >>> X_woe = binner.woe_transform(X_train)
+        Examples:
+            >>> X_woe = binner.woe_transform(X_raw)
         """
         X_new = X.copy()
 

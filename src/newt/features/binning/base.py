@@ -11,9 +11,17 @@ MONOTONIC_TRENDS = frozenset(["ascending", "descending", "auto"])
 
 
 class BaseBinner(ABC):
-    """
-    Base class for feature binning.
-    Supports monotonicity adjustment and custom splits.
+    """Abstract base class for all feature discretization (binning) algorithms.
+
+    A binner discovers optimal split points for continuous features and transforms
+    them into discrete categories (bins). It supports automatic monotonicity
+    adjustment to ensure binned features have a logical relationship with the target.
+
+    Attributes:
+        n_bins (int): Target number of bins.
+        monotonic (Union[bool, str, None]): Monotonicity constraint setting.
+        splits_ (List[float]): The internal split boundaries found during fit().
+        is_fitted_ (bool): Whether the binner has been fitted.
     """
 
     def __init__(
@@ -22,6 +30,14 @@ class BaseBinner(ABC):
         monotonic: Union[bool, str, None] = None,
         **kwargs,
     ):
+        """Initialize the BaseBinner.
+
+        Args:
+            n_bins: Maximum number of bins to discover.
+            monotonic: Monotonicity constraint. Options: 'ascending', 'descending',
+                'auto', True (alias for 'auto'), or None/False (no constraint).
+            **kwargs: Additional keyword arguments.
+        """
         self.n_bins = n_bins
         self.monotonic = monotonic
         self.splits_ = []  # List of break points (float)
@@ -29,12 +45,27 @@ class BaseBinner(ABC):
 
     @abstractmethod
     def _fit_splits(self, X: pd.Series, y: Optional[pd.Series] = None) -> List[float]:
-        """Calculate initial splits."""
+        """Calculate the initial split points (to be implemented by subclasses).
+
+        Args:
+            X: Input numerical series.
+            y: Optional target labels for supervised binning.
+
+        Returns:
+            List[float]: Internal split boundaries.
+        """
         pass
 
     def fit(self, X: pd.Series, y: Optional[pd.Series] = None) -> "BaseBinner":
-        """
-        Fit the binner to the data.
+        """Fit the binner to find optimal discretization rules.
+
+        Args:
+            X: Numerical series to discretize.
+            y: Optional binary target labels. Required if monotonicity or
+                supervised methods are used.
+
+        Returns:
+            BaseBinner: The fitted binner instance.
         """
         X = X.copy()
         if y is not None:
@@ -49,20 +80,21 @@ class BaseBinner(ABC):
             splits = self._adjust_monotonicity(X, y, splits)
 
         # 3. Finalize splits
-        # splits should define the upper bounds of bins (excluding infinity)
-        # We usually store internal boundaries.
-        # pd.cut uses bins argument.
         self.splits_ = splits
         self.is_fitted_ = True
         return self
 
     def transform(self, X: pd.Series) -> pd.Series:
-        """
-        Bin the data using fitted splits.
-        Returns the bin index or interval?
-        Usually returning the bin index (categorical) or Interval index is useful.
-        Let's return IntervalIndex for clarity, or integer codes?
-        IntervalIndex is safer for mapping.
+        """Apply the learned split rules to discretize new data.
+
+        Args:
+            X: Numerical series to transform.
+
+        Returns:
+            pd.Series: Categorical series containing Interval objects.
+
+        Raises:
+            ValueError: If the binner has not been fitted.
         """
         if not self.is_fitted_:
             raise ValueError("Binner is not fitted.")

@@ -32,22 +32,33 @@ def calculate_psi(
     include_nan: bool = True,
     nan_strategy: Optional[str] = None,
 ) -> float:
-    """Calculate Population Stability Index (PSI)."""
-    try:
-        values = calculate_psi_batch(
-            expected=expected,
-            actual_groups=[actual],
-            buckets=buckets,
-            include_nan=include_nan,
-            nan_strategy=nan_strategy,
-            engine="python",
-        )
-        return float(values[0]) if values else float("nan")
-    except Exception as error:
-        import warnings
+    """Calculate the Population Stability Index (PSI) between two distributions.
 
-        warnings.warn(f"Error calculating PSI: {str(error)}", stacklevel=2)
-        return float("nan")
+    PSI measures how much a variable's distribution has shifted over time or between
+    two datasets (e.g., training vs. production). A common rule of thumb:
+    - PSI < 0.1: No significant shift (stable).
+    - 0.1 <= PSI < 0.25: Moderate shift (monitor).
+    - PSI >= 0.25: Significant shift (requires action).
+
+    Internal calculation uses `calculate_psi_batch` with the Python engine for
+    simplicity in single-pair calls.
+
+    Args:
+        expected: Baseline distribution (e.g., training data).
+        actual: Comparison distribution (e.g., OOT data).
+        buckets: Number of quantiles to use for discretization.
+        include_nan: Whether to include NaN values in the calculation.
+        nan_strategy: How to handle NaNs: 'separate' (extra bin) or 'exclude'.
+            Defaults to 'separate' if include_nan is True.
+
+    Returns:
+        float: The calculated PSI value.
+
+    Examples:
+        >>> from newt.metrics import calculate_psi
+        >>> psi = calculate_psi(train['age'], oot['age'], buckets=10)
+        >>> print(f"Stability: {psi:.4f}")
+    """
 
 
 def calculate_psi_batch(
@@ -58,7 +69,27 @@ def calculate_psi_batch(
     nan_strategy: Optional[str] = None,
     engine: str = "rust",
 ) -> List[float]:
-    """Calculate PSI values for multiple groups against one reference."""
+    """Calculate PSI values for multiple groups against a single reference distribution.
+
+    This is the optimized batch core for PSI calculation. It pre-calculates the
+    reference distribution's bin edges and expected counts once, then applies them
+    to all comparison groups.
+
+    Args:
+        expected: Baseline distribution (the 'expected' reference).
+        actual_groups: A sequence of distributions to compare against the reference.
+        buckets: Number of quantiles for discretization.
+        include_nan: Whether to include NaNs.
+        nan_strategy: 'separate' or 'exclude'.
+        engine: Computation engine to use: 'rust' (highly recommended) or 'python'.
+
+    Returns:
+        List[float]: A list of PSI values, one for each group in actual_groups.
+
+    Examples:
+        >>> actuals = [oct_data, nov_data, dec_data]
+        >>> psis = calculate_psi_batch(jan_baseline, actuals, engine='rust')
+    """
     if buckets < 1:
         raise ValueError("buckets must be >= 1")
 
@@ -145,7 +176,36 @@ def calculate_grouped_psi(
     engine: str = "rust",
     include_stats: bool = False,
 ) -> pd.DataFrame:
-    """Calculate PSI for grouped DataFrame slices."""
+    """Calculate PSI for grouped DataFrame slices (e.g., month-over-month).
+
+    Provides a high-level API for typical monitoring tasks where data is split by
+    time (month) or segment (tag). Supports automatic reference detection (e.g.,
+    use the latest month as baseline).
+
+    Args:
+        data: Input DataFrame containing scores and grouping columns.
+        group_cols: Columns to group by (e.g., ['month']).
+        score_col: The score column to calculate PSI for.
+        reference_mode: How to find the baseline: 'latest' or 'value'.
+        reference_col: Column to use for reference detection.
+            Defaults to group_cols[-1].
+        reference_value: Explicit value for reference (if mode is 'value').
+        partition_cols: Higher-level grouping columns (e.g., ['tag']). PSI is calculated
+            independently within each partition.
+        buckets: Number of quantiles for discretization.
+        include_nan: Whether to include NaNs.
+        nan_strategy: 'separate' or 'exclude'.
+        engine: Computation engine ('rust' or 'python').
+        include_stats: Whether to include sample counts and missing rates in output.
+
+    Returns:
+        pd.DataFrame: A DataFrame with grouping columns, PSI values, and
+            is_reference flag.
+
+    Examples:
+        >>> # Calculate monthly PSI within each tag, using the latest month as baseline
+        >>> res = calculate_grouped_psi(df, ['month'], 'score', partition_cols=['tag'])
+    """
     if score_col not in data.columns:
         raise ValueError(f"Column not found: {score_col}")
 
@@ -280,7 +340,34 @@ def calculate_feature_psi_against_base(
     engine: str = "rust",
     include_stats: bool = True,
 ) -> pd.DataFrame:
-    """Batch-calculate feature PSI values against a chosen base slice."""
+    """Calculate stability (PSI) for multiple features against a fixed baseline slice.
+
+    Useful for "Variable Stability" reports where you want to see how each feature
+    shifted compared to a specific reference month or segment.
+
+    Args:
+        data: Input DataFrame.
+        feature_cols: List of feature columns to analyze.
+        base_col: Column used to define the baseline (e.g., 'month').
+        base_value: Value in base_col defining the baseline slice (e.g., '202401').
+        compare_col: Column used to define comparison slices. Defaults to base_col.
+        compare_values: Explicit list of values to compare. Defaults to all
+            unique values.
+        buckets: Number of quantiles for discretization.
+        include_nan: Whether to include NaNs.
+        nan_strategy: 'separate' or 'exclude'.
+        engine: Computation engine ('rust' or 'python').
+        include_stats: Whether to include sample counts in the output.
+
+    Returns:
+        pd.DataFrame: A long-format DataFrame with feature, compare_value, and PSI.
+
+    Examples:
+        >>> # Compare multiple features in Feb and Mar against Jan baseline
+        >>> res = calculate_feature_psi_against_base(
+        ...     df, ['feat1', 'feat2'], base_col='month', base_value='202401'
+        ... )
+    """
     if base_col not in data.columns:
         raise ValueError(f"Column not found: {base_col}")
 

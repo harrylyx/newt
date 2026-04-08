@@ -19,4 +19,5 @@ pip install newt
 
 ## Quick Start
 
-See the [User Guide](user_guide.md) for detailed usage instructions.
+- [User Guide](user_guide.md)
+- [API Reference](api/reference.md)

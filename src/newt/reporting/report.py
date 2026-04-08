@@ -23,7 +23,49 @@ LOGGER = logging.getLogger("newt.reporting.report")
 
 @dataclass
 class Report:
-    """Generate a multi-sheet Excel model report."""
+    """Orchestrator for generating multi-sheet Excel model reports.
+
+    The Report class serves as the primary entry point for creating professional,
+    styled Excel workbooks that summarize model performance, variable distributions,
+    and dimensional comparisons.
+
+    Attributes:
+        data (pd.DataFrame): The input dataset containing scores, labels, and features.
+        model (object): A fitted model object (scikit-learn, LightGBM, XGBoost, etc.)
+            used to extract feature importance and parameters.
+        tag (str): Column name identifying sample segments (e.g., 'train', 'oot').
+        score_col (str): Column name for the primary model score to be analyzed.
+        date_col (str): Column name for the observation date (used for monthly trends).
+        label_list (Sequence[str]): List of target column names (binary 0/1).
+        score_list (Sequence[str]): Optional list of secondary/benchmark scores.
+        dim_list (Sequence[str]): Optional list of columns for dimensional comparison.
+        var_list (Sequence[str]): Optional list of columns for portrait/feature
+            analysis.
+        sheet_list (Sequence[object]): Optional list of sheets to include
+            (names or indices).
+        feature_path (str, optional): Path to a feature dictionary CSV for
+            mapping names.
+        report_out_path (str): File path where the Excel workbook will be saved.
+        engine (str): Calculation engine to use: 'rust' (default) or 'python'.
+        max_workers (int, optional): Maximum parallel workers for computation.
+        parallel_sheets (bool): Whether to calculate different sheets in parallel.
+        memory_mode (str): Memory usage strategy: 'compact' (default) or 'standard'.
+        metrics_mode (str): Calculation mode: 'exact' (default) or
+            'binned' (approximate).
+
+    Examples:
+        >>> from newt import Report
+        >>> report = Report(
+        ...     data=df,
+        ...     model=fitted_model,
+        ...     tag="segment",
+        ...     score_col="new_score",
+        ...     date_col="report_date",
+        ...     label_list=["target"],
+        ...     report_out_path="./final_report.xlsx"
+        ... )
+        >>> report.generate()
+    """
 
     data: pd.DataFrame
     model: object

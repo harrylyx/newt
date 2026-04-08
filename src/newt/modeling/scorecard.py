@@ -12,7 +12,20 @@ from newt.results import ScorecardSpec
 
 
 class Scorecard:
-    """Scorecard generator from logistic regression model."""
+    """Scorecard generator from logistic regression model coefficients.
+
+    The Scorecard class converts the continuous probability output of a logistic
+    regression model into an additive point-based scoring system. It manages
+    scaliing parameters (base score, PDO) and provides methods for scoring new data,
+    exporting definitions, and summarizing findings.
+
+    Attributes:
+        base_score (int): The target score at 'base_odds'.
+        pdo (int): Points to Double the Odds.
+        base_odds (float): The odds (Good:Bad) at 'base_score'.
+        factor (float): Calculated scaling factor.
+        offset (float): Calculated scaling offset.
+    """
 
     def __init__(
         self,
@@ -20,6 +33,13 @@ class Scorecard:
         pdo: int = SCORECARD.DEFAULT_PDO,
         base_odds: float = SCORECARD.DEFAULT_BASE_ODDS,
     ):
+        """Initialize the Scorecard instance.
+
+        Args:
+            base_score: Target score at the given base_odds.
+            pdo: Points to Double the Odds (PDO).
+            base_odds: Target odds at the given base_score.
+        """
         self.base_score = base_score
         self.pdo = pdo
         self.base_odds = base_odds
@@ -44,7 +64,20 @@ class Scorecard:
         binner: Any,
         woe_encoder: Any,
     ) -> "Scorecard":
-        """Build scorecard from fitted model, binner, and WOE encoder."""
+        """Build a scorecard from a fitted model and its binning/encoding artifacts.
+
+        Args:
+            model: A fitted model object (scikit-learn, statsmodels, or dict).
+            binner: A fitted Binner instance or rules dictionary.
+            woe_encoder: A fitted WOEEncoder instance or mapping dictionary.
+
+        Returns:
+            Scorecard: The built Scorecard instance.
+
+        Examples:
+            >>> scorecard = Scorecard(base_score=600, pdo=20)
+            >>> scorecard.from_model(lr_model, binner, woe_encoders)
+        """
         builder = ScorecardBuilder(
             base_score=self.base_score,
             pdo=self.pdo,
@@ -59,12 +92,19 @@ class Scorecard:
         return self._load_spec(spec)
 
     def from_dict(self, payload: Dict[str, Any]) -> "Scorecard":
-        """Restore scorecard from a serialized specification."""
+        """Restore a scorecard from a serialized specification.
+
+        Args:
+            payload: A dictionary representing a serialized ScorecardSpec.
+
+        Returns:
+            Scorecard: The restored Scorecard instance.
+        """
         spec = ScorecardSpec.from_dict(payload)
         return self._load_spec(spec)
 
     def _load_spec(self, spec: ScorecardSpec) -> "Scorecard":
-        """Load an in-memory scorecard spec into the compatibility facade."""
+        """Internal helper to load a specification into the facade properties."""
         self.spec_ = spec
         self.scorer_ = ScorecardScorer(spec)
         self.base_score = spec.base_score
@@ -82,25 +122,48 @@ class Scorecard:
         return self
 
     def score(self, X: pd.DataFrame) -> pd.Series:
-        """Calculate scores for input data."""
+        """Calculate scores for input raw data.
+
+        Args:
+            X: Input DataFrame containing raw (un-binned) features.
+
+        Returns:
+            pd.Series: Calculated scores for each row.
+
+        Raises:
+            ValueError: If the scorecard has not been built.
+        """
         if not self.is_built_ or self.scorer_ is None:
             raise ValueError("Scorecard is not built. Call from_model() first.")
         return self.scorer_.score(X)
 
     def export(self) -> pd.DataFrame:
-        """Export scorecard as a single dataframe."""
+        """Export the scorecard as a single flat DataFrame.
+
+        Returns:
+            pd.DataFrame: A DataFrame containing bin ranges and corresponding points
+                for all features.
+        """
         if not self.is_built_ or self.spec_ is None:
             raise ValueError("Scorecard is not built. Call from_model() first.")
         return self.spec_.export()
 
     def to_dict(self) -> Dict[str, Any]:
-        """Export scorecard configuration as a dictionary."""
+        """Export the scorecard specification as a serializable dictionary.
+
+        Returns:
+            Dict[str, Any]: The scorecard definition payload.
+        """
         if not self.is_built_ or self.spec_ is None:
             raise ValueError("Scorecard is not built. Call from_model() first.")
         return self.spec_.to_dict()
 
     def summary(self) -> str:
-        """Get scorecard summary."""
+        """Generate a human-readable summary of the scorecard configuration and points.
+
+        Returns:
+            str: The summary text.
+        """
         if not self.is_built_ or self.spec_ is None:
             raise ValueError("Scorecard is not built. Call from_model() first.")
 

@@ -15,37 +15,39 @@ from .iv_math import build_iv_summary
 
 
 class WOEEncoder:
-    """
-    Weight of Evidence (WoE) Encoder.
+    """Weight of Evidence (WOE) Encoder and Information Value (IV) calculator.
 
-    Encodes features using WoE values based on a binary target.
-    Designed to work with already binned data (from Binner) or categorical features.
+    The WOEEncoder transforms discrete bins or categorical features into numerical
+    Weight of Evidence values, which represent the log-odds of the event rate
+    in each bin relative to the overall population. It also calculates the
+    Information Value (IV) to measure feature predictive power.
 
-    For numeric data, first use Binner to bin the data, then apply WOEEncoder.
+    Attributes:
+        woe_map_ (Dict[Any, float]): Mapping of bin labels to WOE values.
+        iv_ (float): Total Information Value for the feature.
+        summary_ (pd.DataFrame): Detailed table showing bin counts, event rates,
+            WOE, and IV contribution.
 
-    Examples
-    --------
-    >>> # With already binned data
-    >>> woe = WOEEncoder()
-    >>> woe.fit(X_binned, y)
-    >>> X_woe = woe.transform(X_binned)
-    >>>
-    >>> # With categorical data
-    >>> woe = WOEEncoder()
-    >>> woe.fit(df['category_col'], df['target'])
+    Examples:
+        >>> from newt.features.analysis import WOEEncoder
+        >>> encoder = WOEEncoder()
+        >>> # Fit on categorical column 'city' with target 'default'
+        >>> encoder.fit(df['city'], df['default'])
+        >>> print(f"IV: {encoder.iv_:.4f}")
+        >>> # Transform to numerical values
+        >>> df['city_woe'] = encoder.transform(df['city'])
     """
 
     def __init__(self, epsilon: float = BINNING.DEFAULT_EPSILON):
-        """
-        Initialize WOEEncoder.
+        """Initialize the WOEEncoder.
 
-        Parameters
-        ----------
-        epsilon : float
-            Retained for backward compatibility. IV smoothing follows
-            toad-compatible defaults.
+        Args:
+            epsilon: Small constant for smoothing (to avoid log(0)).
+                Maintained for API compatibility; internal math follows
+                distribution-aware smoothing.
         """
-        # Kept for API compatibility; IV smoothing now follows toad semantics.
+        # Kept for API compatibility; IV smoothing now follows
+        # toad-compatible semantics.
         self.epsilon = epsilon
         self.woe_map_: Dict[Any, float] = {}
         self.iv_: float = 0.0
@@ -53,20 +55,14 @@ class WOEEncoder:
         self.is_fitted_: bool = False
 
     def fit(self, X: pd.Series, y: pd.Series) -> "WOEEncoder":
-        """
-        Fit the WoE encoder to the data.
+        """Fit the WOE encoder by calculating distributions and log-odds.
 
-        Parameters
-        ----------
-        X : pd.Series
-            Feature data - can be binned numeric (codes or intervals) or categorical.
-        y : pd.Series
-            Target data (binary 0/1).
+        Args:
+            X: Input feature series (categorical or binned).
+            y: Binary target series (0/1).
 
-        Returns
-        -------
-        WOEEncoder
-            Fitted instance.
+        Returns:
+            WOEEncoder: The fitted encoder instance.
         """
         summary, iv_value = build_iv_summary(X.copy(), y.copy())
         self.summary_ = summary
@@ -81,23 +77,18 @@ class WOEEncoder:
 
     @requires_fit()
     def transform(self, X: pd.Series) -> pd.Series:
-        """
-        Transform X using the learned WoE mapping.
+        """Apply learned WOE transformations to new data.
 
-        Parameters
-        ----------
-        X : pd.Series
-            Feature data to transform.
+        Args:
+            X: Input feature series.
 
-        Returns
-        -------
-        pd.Series
-            Transformed data (WoE values).
+        Returns:
+            pd.Series: Transformed series with float WOE values.
         """
-        X = X.copy()
+        X_copy = X.copy()
 
         # Convert to string for consistent mapping
-        X_str = X.astype(str)
+        X_str = X_copy.astype(str)
 
         # Map values
         # Note: If X_str contains categories not in woe_map_, map returns NaN.

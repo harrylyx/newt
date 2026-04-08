@@ -55,3 +55,10 @@
     options:
       members:
         - ScorecardPipeline
+
+## 报告生成 (Reporting)
+
+::: newt.reporting.report
+    options:
+      members:
+        - Report

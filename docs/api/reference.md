@@ -55,3 +55,10 @@ This page provides automated documentation for the core components of `newt`.
     options:
       members:
         - ScorecardPipeline
+
+## Reporting
+
+::: newt.reporting.report
+    options:
+      members:
+        - Report

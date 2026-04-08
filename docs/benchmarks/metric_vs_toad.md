@@ -2,10 +2,7 @@
 
 This benchmark validates Newt's `AUC`, `KS`, `IV`, and `PSI` implementations against `toad` using the bundled sample dataset at `examples/data/test_data/all_data.pq`.
 
-For broader release-level context, see:
-
-- [Recent Release Notes (English)](../release_notes.md)
-- [最近版本更新说明 (中文)](../release_notes_zh.md)
+For broader release-level context, see the project [README.md](../../README.md).
 
 ## What It Checks
 

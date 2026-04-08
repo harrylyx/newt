@@ -10,12 +10,10 @@ build:
 
 python:
   install:
-    - requirements: requirements.txt
-    - method: pip
-      extra_requirements:
-        - docs
     - method: pip
       path: .
+      extra_requirements:
+        - docs
 
 mkdocs:
   configuration: mkdocs.yml

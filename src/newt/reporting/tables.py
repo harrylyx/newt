@@ -558,14 +558,38 @@ def build_overview_sheet(
     portrait_sheet: Optional[ReportSheet] = None,
 ) -> ReportSheet:
     """Build overview sheet from prebuilt child sheets."""
-    blocks = [ReportBlock(title="一、目标与设计方案", blank_rows_after=1)]
+    section_mapping = {
+        1: "一",
+        2: "二",
+        3: "三",
+        4: "四",
+        5: "五",
+        6: "六",
+        7: "七",
+        8: "八",
+        9: "九",
+        10: "十",
+    }
+    current_section = 1
+
+    blocks = [
+        ReportBlock(
+            title=f"{section_mapping[current_section]}、目标与设计方案", blank_rows_after=1
+        )
+    ]
     blocks.append(
         ReportBlock(
             title="表格1",
             data=pd.DataFrame(columns=["迭代目标", "问题", "原因", "迭代方向"]),
         )
     )
-    blocks.append(ReportBlock(title="二、迭代效果", blank_rows_after=1))
+    current_section += 1
+
+    blocks.append(
+        ReportBlock(
+            title=f"{section_mapping[current_section]}、迭代效果", blank_rows_after=1
+        )
+    )
 
     if not score_direction_summary.empty:
         direction_columns = [
@@ -594,18 +618,47 @@ def build_overview_sheet(
     if not month_metrics.empty:
         blocks.append(ReportBlock(title="按月模型效果", data=month_metrics))
 
-    blocks.extend(_extract_numbered_data_blocks(dimensional_sheet))
+    dimensional_blocks = _extract_numbered_data_blocks(dimensional_sheet)
+    if dimensional_blocks:
+        current_section += 1
+        blocks.append(
+            ReportBlock(
+                title=f"{section_mapping[current_section]}、分维度对比", blank_rows_after=1
+            )
+        )
+        blocks.extend(dimensional_blocks)
 
     if comparison_sheet is not None:
+        comparison_blocks = []
         for block in comparison_sheet.blocks:
             if (
                 block.title.startswith("按tag新老模型对比(")
                 or block.title.startswith("按月新老模型对比(")
                 or block.title == "OOT相关性矩阵"
             ):
-                blocks.append(ReportBlock(title=block.title, data=block.data))
+                comparison_blocks.append(
+                    ReportBlock(title=block.title, data=block.data)
+                )
 
-    blocks.extend(_extract_numbered_data_blocks(portrait_sheet))
+        if comparison_blocks:
+            current_section += 1
+            blocks.append(
+                ReportBlock(
+                    title=f"{section_mapping[current_section]}、新老模型对比",
+                    blank_rows_after=1,
+                )
+            )
+            blocks.extend(comparison_blocks)
+
+    portrait_blocks = _extract_numbered_data_blocks(portrait_sheet)
+    if portrait_blocks:
+        current_section += 1
+        blocks.append(
+            ReportBlock(
+                title=f"{section_mapping[current_section]}、画像变量", blank_rows_after=1
+            )
+        )
+        blocks.extend(portrait_blocks)
 
     return ReportSheet(name="总览", blocks=blocks)
 
@@ -794,10 +847,12 @@ def build_portrait_sheet(
             target_columns,
         ].copy()
         meta = _lookup_feature_meta(feature_dict, str(variable_name))
+        display_name = meta.get("中文名", "")
+        title_prefix = f"{index}.{variable_name}"
+        full_title = f"{title_prefix} {display_name}" if display_name else title_prefix
         blocks.append(
             ReportBlock(
-                title=f"{index}.{variable_name}",
-                title_right=str(meta.get("中文名", "") or ""),
+                title=full_title,
                 data=variable_table.reset_index(drop=True),
             )
         )
@@ -970,13 +1025,17 @@ def build_variable_analysis_sheet(
         feature_table["vars"].head(30).tolist() if not feature_table.empty else []
     )
 
+    summary_table, type_table = _build_feature_selection_summary(
+        feature_table, feature_dict
+    )
     blocks = [
-        ReportBlock(
-            title="一、变量筛选",
-            data=_build_feature_selection_summary(feature_table, feature_dict),
-        ),
-        ReportBlock(title="二、变量分析", data=feature_table),
+        ReportBlock(title="一、变量筛选", data=summary_table),
     ]
+    if not type_table.empty:
+        blocks.append(ReportBlock(title="变量类型分布", data=type_table))
+
+    blocks.append(ReportBlock(title="二、变量分析", data=feature_table))
+    blocks.append(ReportBlock(title="三、单变量分析", blank_rows_after=1))
 
     feature_jobs = [
         (rank, str(feature)) for rank, feature in enumerate(top_features, start=1)
@@ -989,7 +1048,7 @@ def build_variable_analysis_sheet(
 
     def _run_feature_job(
         job: Tuple[int, str]
-    ) -> Tuple[int, str, str, str, pd.DataFrame, pd.DataFrame, float]:
+    ) -> Tuple[int, str, str, str, str, pd.DataFrame, pd.DataFrame, float]:
         rank, feature_name = job
         feature_start = time.perf_counter()
         edges = feature_artifacts.edges_by_feature.get(feature_name)
@@ -1019,11 +1078,16 @@ def build_variable_analysis_sheet(
         )
         display_name = _lookup_feature_meta(feature_dict, feature_name).get("中文名", "")
         title_prefix = f"{rank}.{feature_name}"
+        # Merge English and Chinese names in the main title to ensure
+        # consistent font styling
+        full_title = f"{title_prefix} {display_name}" if display_name else title_prefix
+        # Use Chinese name for chart title if available, otherwise feature name
+        chart_title = str(display_name or feature_name)
         return (
             rank,
             feature_name,
-            title_prefix,
-            str(display_name or ""),
+            full_title,
+            chart_title,
             oot_bins,
             monthly_table,
             time.perf_counter() - feature_start,
@@ -1047,21 +1111,20 @@ def build_variable_analysis_sheet(
     for (
         _,
         feature_name,
-        title_prefix,
-        title_right,
+        full_title,
+        chart_title,
         oot_bins,
         monthly_table,
         elapsed,
     ) in feature_results:
         blocks.append(
             ReportBlock(
-                title=title_prefix,
-                title_right=title_right,
+                title=full_title,
                 blank_rows_after=0,
             )
         )
-        blocks.append(ReportBlock(title=f"{title_prefix} 分箱表", data=oot_bins))
-        blocks.append(ReportBlock(title=f"{title_prefix} 按月效果", data=monthly_table))
+        blocks.append(ReportBlock(title=f"{full_title} 分箱表", data=oot_bins))
+        blocks.append(ReportBlock(title=f"{full_title} 按月效果", data=monthly_table))
         if not oot_bins.empty:
             blocks.append(
                 ReportBlock(
@@ -1071,8 +1134,8 @@ def build_variable_analysis_sheet(
                         category_column="bin",
                         value_columns=["total_prop"],
                         secondary_value_columns=["bad_rate"],
-                        title=feature_name,
-                        source_block_title=f"{title_prefix} 分箱表",
+                        title=chart_title,
+                        source_block_title=f"{full_title} 分箱表",
                     ),
                     blank_rows_after=2,
                 )
@@ -1503,9 +1566,40 @@ def _build_group_metrics(
         record["近期月对比各集合PSI"] = latest_value
         records.append(record)
 
-    result = _sort_report_table(
-        pd.DataFrame(records), tag_column="样本集", month_column="观察点月"
-    )
+    result = pd.DataFrame(records)
+    if not result.empty:
+        # Define exact column order as requested
+        # First sample/model/tag identification columns
+        leading = ["样本标签", "模型", "样本集", "观察点月"]
+
+        # Then performance metrics in the specific order
+        metrics_cols = [
+            "总",
+            "好",
+            "坏",
+            "坏占比",
+            "KS",
+            "AUC",
+            "10%lift",
+            "5%lift",
+            "2%lift",
+            "1%lift",
+        ]
+
+        # Then PSI columns
+        psi_cols = ["train和各集合的PSI", "近期月对比各集合PSI"]
+
+        # Assemble final column list, preserving only existing ones
+        final_columns = []
+        for col in leading + metrics_cols + psi_cols:
+            if col in result.columns:
+                final_columns.append(col)
+
+        # Append any remaining columns that were not in the explicit list
+        remaining = [c for c in result.columns if c not in final_columns]
+        result = result.reindex(columns=final_columns + remaining)
+
+    result = _sort_report_table(result, tag_column="样本集", month_column="观察点月")
     if build_context is not None:
         build_context.cache_set_group_metrics(group_key, result)
     return result
@@ -1643,7 +1737,28 @@ def _build_dimensional_comparison(
                             **metrics,
                         }
                     )
-    return pd.DataFrame(rows)
+    result = pd.DataFrame(rows)
+    if not result.empty:
+        leading = ["维度列", "维度值", "样本标签", "模型"]
+        metrics_cols = [
+            "总",
+            "好",
+            "坏",
+            "坏占比",
+            "KS",
+            "AUC",
+            "10%lift",
+            "5%lift",
+            "2%lift",
+            "1%lift",
+        ]
+        final_columns = []
+        for col in leading + metrics_cols:
+            if col in result.columns:
+                final_columns.append(col)
+        remaining = [c for c in result.columns if c not in final_columns]
+        result = result.reindex(columns=final_columns + remaining)
+    return result
 
 
 def _resolve_sample_set_label(
@@ -1960,9 +2075,9 @@ def _lookup_iv_value(iv_table: pd.DataFrame, feature: str) -> float:
 def _build_feature_selection_summary(
     feature_table: pd.DataFrame,
     feature_dict: pd.DataFrame,
-) -> pd.DataFrame:
+) -> Tuple[pd.DataFrame, pd.DataFrame]:
     if feature_table.empty:
-        return pd.DataFrame()
+        return pd.DataFrame(), pd.DataFrame()
     total = len(feature_table)
     selected = min(total, 30)
     base = pd.DataFrame(
@@ -1980,7 +2095,7 @@ def _build_feature_selection_summary(
         or "来源" not in feature_dict.columns
         or "英文名" not in feature_dict.columns
     ):
-        return base
+        return base, pd.DataFrame()
     feature_source_map = (
         feature_dict.loc[:, ["英文名", "来源"]]
         .rename(columns={"来源": "来源_字典"})
@@ -2002,7 +2117,7 @@ def _build_feature_selection_summary(
     )
     type_table["重要性占比"] = type_table["变量数量"] / max(type_table["变量数量"].sum(), 1)
     type_table = type_table.rename(columns={"来源_字典": "变量类型"})
-    return pd.concat([base, type_table], ignore_index=True, sort=False)
+    return base, type_table
 
 
 def _build_feature_bin_stats(

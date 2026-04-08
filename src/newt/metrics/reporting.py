@@ -276,7 +276,9 @@ def calculate_bin_performance_table(
     total_all = int(len(frame))
     overall_bad_rate = float(total_bad / total_all) if total_all else np.nan
 
-    for bin_label, bin_frame in frame.groupby("bin", dropna=False, sort=False):
+    for bin_label, bin_frame in frame.groupby(
+        "bin", dropna=False, sort=False, observed=True
+    ):
         bads = int((bin_frame[label_col] == 1).sum())
         goods = int((bin_frame[label_col] == 0).sum())
         total = bads + goods
@@ -286,8 +288,8 @@ def calculate_bin_performance_table(
                 "bin": str(bin_label),
                 "min": _extract_interval_left(bin_label),
                 "max": _extract_interval_right(bin_label),
-                "bads": bads,
                 "goods": goods,
+                "bads": bads,
                 "total": total,
                 "bad_rate": bad_rate,
                 "lift": (
@@ -321,16 +323,22 @@ def calculate_bin_performance_table(
     else:
         result["ks"] = np.nan
     result["cum_lift"] = result["cum_bad_rate"] / max(overall_bad_rate, 1e-8)
-    return result.drop(
-        columns=[
-            "_missing_order",
-            "_bin_order",
-            "cum_bads",
-            "cum_total",
-            "cum_goods_prop",
-        ],
-        errors="ignore",
-    ).reset_index(drop=True)
+
+    ordered_columns = [
+        "bin",
+        "min",
+        "max",
+        "goods",
+        "bads",
+        "total",
+        "bad_rate",
+        "cum_bad_rate",
+        "cum_bads_prop",
+        "ks",
+        "lift",
+        "cum_lift",
+    ]
+    return result.reindex(columns=ordered_columns).reset_index(drop=True)
 
 
 def calculate_feature_psi(

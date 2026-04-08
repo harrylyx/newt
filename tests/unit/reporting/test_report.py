@@ -735,32 +735,32 @@ def test_report_feature_dictionary_headers_and_title_right_text(
     generated = report.generate()
 
     variable_sheet = report.result_.get_sheet("2.变量分析")
-    top_block = variable_sheet.get_block("1.feature_a")
-    assert top_block.title_right == "特征A中文"
+    top_block = variable_sheet.get_block("1.feature_a 特征A中文")
+    assert top_block.title == "1.feature_a 特征A中文"
     feature_table = variable_sheet.get_block("二、变量分析").data.set_index("vars")
     assert feature_table.loc["feature_a", "指标表英文名"] == "metric_feature_a"
     assert feature_table.loc["feature_b", "指标表英文名"] == "metric_feature_b"
 
     portrait_sheet = report.result_.get_sheet("附1 画像变量")
-    portrait_block = portrait_sheet.get_block("1.profile_income")
-    assert portrait_block.title_right == "收入"
+    portrait_block = portrait_sheet.get_block("1.profile_income 收入")
+    assert portrait_block.title == "1.profile_income 收入"
 
     workbook = openpyxl.load_workbook(generated)
     variable_ws = workbook["2.变量分析"]
     variable_row = next(
         row
         for row in variable_ws.iter_rows()
-        if any(cell.value == "1.feature_a" for cell in row)
+        if any(cell.value == "1.feature_a 特征A中文" for cell in row)
     )
-    assert any(cell.value == "特征A中文" for cell in variable_row)
+    assert any(cell.value == "1.feature_a 特征A中文" for cell in variable_row)
 
     portrait_ws = workbook["附1 画像变量"]
     portrait_row = next(
         row
         for row in portrait_ws.iter_rows()
-        if any(cell.value == "1.profile_income" for cell in row)
+        if any(cell.value == "1.profile_income 收入" for cell in row)
     )
-    assert any(cell.value == "收入" for cell in portrait_row)
+    assert any(cell.value == "1.profile_income 收入" for cell in portrait_row)
 
 
 def test_report_feature_dictionary_legacy_table_name_alias_fills_metric_table_name(

@@ -2,6 +2,9 @@
 
 A lightweight Python toolkit for efficient feature analysis and statistical diagnostics in credit risk modeling.
 
+[![Documentation Status](https://readthedocs.org/projects/newt/badge/?version=latest)](https://newt.readthedocs.io/en/latest/?badge=latest)
+[![PyPI version](https://badge.fury.io/py/newt.svg)](https://badge.fury.io/py/newt)
+
 ## Features
 
 - **6 Binning Algorithms**: ChiMerge, Decision Tree, K-Means, Equal Frequency, Equal Width, Optimal Binning
@@ -13,7 +16,6 @@ A lightweight Python toolkit for efficient feature analysis and statistical diag
 - **Pipeline Workflow**: Fluent API for end-to-end scorecard development
 - **Visualization Tools**: Binning plots, IV ranking, WOE patterns, PSI comparison
 - **Excel Model Report**: Multi-sheet model report generation with overview, model design, variable analysis, and model performance output
-ß
 ## Installation
 
 Newt supports Python `>=3.8.5,<3.13` (Python `3.8.5` through `3.12.x`).
@@ -301,10 +303,11 @@ fig = plot_psi_comparison(psi_dict, threshold=0.25)
 
 ## Documentation
 
-- [User Guide (English)](docs/user_guide.md) - Comprehensive end-to-end workflow guide
-- [用户指南 (中文)](docs/user_guide_zh.md) - Chinese version of the user guide
-- [Recent Release Notes (English)](docs/release_notes.md) - Summary of `v0.1.1` to `v0.1.4`
-- [最近版本更新说明 (中文)](docs/release_notes_zh.md) - `v0.1.1` 到 `v0.1.4` 版本汇总
+- **[NEW] [Hosted Documentation (RTD)](https://newt.readthedocs.io)** - The primary place for full API reference and guides.
+- [User Guide (English)](docs/user_guide.en.md) - Comprehensive end-to-end workflow guide
+- [用户指南 (中文)](docs/user_guide.zh.md) - Chinese version of the user guide
+- [Release Notes (English)](docs/release_notes.md) - Summary of fixes and enhancements up to `v0.1.8`
+- [最近版本更新说明 (中文)](docs/release_notes_zh.md) - `v0.1.8` 及早期版本汇总
 - [Benchmark Guide](docs/benchmarks/metric_vs_toad.md) - Compare Newt metrics against toad on the bundled sample dataset
 - [PSI Engine Benchmark](docs/benchmarks/psi_performance.md) - Compare scalar PSI with Python/Rust batch engines
 - [Examples](examples/) - Jupyter notebook examples

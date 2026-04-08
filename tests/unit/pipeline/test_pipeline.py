@@ -83,7 +83,7 @@ def test_pipeline_build_model(mock_model_cls, sample_data):
     pipeline = pipeline.build_model()
 
     assert pipeline.model_ is not None
-    assert "build_model" in pipeline.steps_
+    assert "model" in pipeline.steps_
     mock_model_cls.return_value.fit.assert_called()
 
 
@@ -131,5 +131,5 @@ def test_pipeline_real_flow_scores_missing_values():
     scores = pipeline.score(X_test)
 
     assert scores.notna().all()
-    assert "generate_scorecard" in pipeline.steps_
+    assert "scorecard" in pipeline.steps_
     assert scores[X_test["feature1"].isna()].nunique() == 1

@@ -59,6 +59,14 @@ def calculate_psi(
         >>> psi = calculate_psi(train['age'], oot['age'], buckets=10)
         >>> print(f"Stability: {psi:.4f}")
     """
+    psis = calculate_psi_batch(
+        expected=expected,
+        actual_groups=[actual],
+        buckets=buckets,
+        include_nan=include_nan,
+        nan_strategy=nan_strategy,
+    )
+    return psis[0] if psis else float("nan")
 
 
 def calculate_psi_batch(

@@ -8,11 +8,11 @@ from newt.config import BINNING, FILTERING, MODELING, SCORECARD
 from newt.pipeline.state import PipelineState
 from newt.pipeline.steps import (
     BinningStep,
-    ModelBuildStep,
+    ModelingStep,
     PostfilterStep,
     PrefilterStep,
-    ScorecardBuildStep,
-    StepwiseSelectionStep,
+    ScorecardStep,
+    StepwiseStep,
     WoeTransformStep,
 )
 
@@ -214,7 +214,7 @@ class ScorecardPipeline:
         Examples:
             >>> pipeline.stepwise(direction='both', criterion='aic')
         """
-        step = StepwiseSelectionStep(
+        step = StepwiseStep(
             direction=direction,
             criterion=criterion,
             p_enter=p_enter,
@@ -242,7 +242,7 @@ class ScorecardPipeline:
         Examples:
             >>> pipeline.build_model(method='bfgs')
         """
-        step = ModelBuildStep(fit_intercept=fit_intercept, **kwargs)
+        step = ModelingStep(fit_intercept=fit_intercept, **kwargs)
         self._state = step.run(self._state)
         return self
 
@@ -267,7 +267,7 @@ class ScorecardPipeline:
         Examples:
             >>> pipeline.generate_scorecard(base_score=600, pdo=20)
         """
-        step = ScorecardBuildStep(
+        step = ScorecardStep(
             base_score=base_score,
             pdo=pdo,
             base_odds=base_odds,

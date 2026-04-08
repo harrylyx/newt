@@ -1,3 +1,6 @@
-env: development
-debug: true
-log_level: DEBUG
+# Development overrides for Newt
+LOGGING:
+  DEFAULT_LOG_LEVEL: DEBUG
+
+BINNING:
+  DEFAULT_N_BINS: 10

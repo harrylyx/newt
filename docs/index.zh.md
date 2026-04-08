@@ -1,0 +1,22 @@
+# Newt (中文)
+
+Newt 是一个轻量级的 Python 工具包，专为信用风险建模中的特征分析和统计诊断而设计。
+
+## 核心特性
+
+- **6 种分箱算法**：ChiMerge, Decision Tree, K-Means, 等频, 等宽, Optimal。
+- **单调性支持**：完善的单调分箱支持（递增、递减、自动检测）。
+- **WOE/IV 分析**：稳健的 WOE 编码和 IV (Information Value) 计算。
+- **特征筛选**：流水线式的特征筛选（IV, PSI, VIF, 逐步回归）。
+- **评分卡生成**：端到端的评分卡生成和评分。
+- **高性能**：由 Rust 驱动的 IV 计算引擎。
+
+## 安装
+
+```bash
+pip install newt
+```
+
+## 快速开始
+
+查看 [用户指南](user_guide.md) 了解详细使用说明。

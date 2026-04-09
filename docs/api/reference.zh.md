@@ -30,6 +30,11 @@
       members:
         - FeatureSelector
 
+::: newt.features.selection.stepwise
+    options:
+      members:
+        - StepwiseSelector
+
 ## WOE 编码
 
 ::: newt.features.analysis.woe_calculator

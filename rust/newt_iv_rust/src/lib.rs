@@ -1,8 +1,12 @@
-use numpy::PyReadonlyArray1;
+use numpy::{PyReadonlyArray1, PyReadonlyArray2};
 use pyo3::prelude::*;
+use pyo3::types::PyDict;
 use rayon::prelude::*;
-use std::cmp::{Ordering, Reverse};
+use std::cmp::Ordering;
 use std::collections::{BinaryHeap, HashMap};
+
+use faer::linalg::solvers::{Solve, DenseSolveCore};
+use statrs::distribution::{ContinuousCDF, Normal};
 
 
 
@@ -1192,6 +1196,235 @@ fn calculate_batch_chi_merge_numpy(
     })
 }
 
+/// Internal structure to hold logistic regression results
+struct LogitResult {
+    coefficients: faer::Mat<f64>,
+    p_values: Vec<f64>,
+    aic: f64,
+    bic: f64,
+    log_likelihood: f64,
+    converged: bool,
+}
+
+/// Internal IRLS solver for logistic regression
+fn _fit_logit_internal(
+    x_faer: faer::mat::MatRef<'_, f64>,
+    y_faer: faer::mat::MatRef<'_, f64>,
+    max_iter: usize,
+    tol: f64,
+) -> Result<LogitResult, String> {
+    let n = x_faer.nrows();
+    let k = x_faer.ncols();
+
+    let mut beta = faer::Mat::<f64>::zeros(k, 1);
+    let mut log_likelihood = f64::NEG_INFINITY;
+    let mut converged = false;
+
+    // Buffers to avoid allocations in loop
+    for _ in 0..max_iter {
+        let x_beta = x_faer * &beta;
+        let p = faer::Mat::<f64>::from_fn(n, 1, |r, _| {
+            let v = x_beta[(r, 0)];
+            1.0_f64 / (1.0_f64 + (-v).exp())
+        });
+
+        let mut current_ll = 0.0_f64;
+        for i in 0..n {
+            let pi = p[(i, 0)].clamp(1e-15, 1.0 - 1e-15);
+            current_ll += y_faer[(i, 0)] * pi.ln() + (1.0_f64 - y_faer[(i, 0)]) * (1.0_f64 - pi).ln();
+        }
+
+        let mut err = faer::Mat::<f64>::zeros(n, 1);
+        for i in 0..n {
+            err[(i, 0)] = y_faer[(i, 0)] - p[(i, 0)];
+        }
+        let gradient = x_faer.transpose() * &err;
+
+        // Optimized Hessian calculation: X^T * W * X
+        // Scaling rows of X by sqrt(W) and then X_weighted^T * X_weighted
+        let mut x_weighted = faer::Mat::<f64>::zeros(n, k);
+        for i in 0..n {
+            let pi = p[(i, 0)];
+            let w = pi * (1.0 - pi);
+            for j in 0..k {
+                x_weighted[(i, j)] = x_faer[(i, j)] * w;
+            }
+        }
+        let hessian = x_faer.transpose() * &x_weighted;
+
+        let solve_res = hessian.full_piv_lu().solve(&gradient);
+        beta += &solve_res;
+
+        if (current_ll - log_likelihood).abs() < tol {
+            log_likelihood = current_ll;
+            converged = true;
+            break;
+        }
+        log_likelihood = current_ll;
+    }
+
+    // Diagnostics
+    let x_beta = x_faer * &beta;
+    let p = faer::Mat::<f64>::from_fn(n, 1, |r, _| {
+        let v = x_beta[(r, 0)];
+        1.0_f64 / (1.0_f64 + (-v).exp())
+    });
+
+    let mut x_weighted = faer::Mat::<f64>::zeros(n, k);
+    for i in 0..n {
+        let pi = p[(i, 0)];
+        let w = pi * (1.0 - pi);
+        for j in 0..k {
+            x_weighted[(i, j)] = x_faer[(i, j)] * w;
+        }
+    }
+    let hessian = x_faer.transpose() * &x_weighted;
+    let inv_hessian = hessian.full_piv_lu().inverse();
+
+    let mut p_values = Vec::with_capacity(k);
+    let normal = Normal::new(0.0, 1.0).map_err(|e| e.to_string())?;
+
+    for i in 0..k {
+        let var = inv_hessian[(i, i)];
+        let p_val = if var > 0.0 {
+            let se = var.sqrt();
+            let b = beta[(i, 0)];
+            let z = b / se;
+            2.0 * (1.0 - normal.cdf(z.abs()))
+        } else {
+            f64::NAN
+        };
+        p_values.push(p_val);
+    }
+
+    let aic = 2.0 * (k as f64) - 2.0 * log_likelihood;
+    let bic = (n as f64).ln() * (k as f64) - 2.0 * log_likelihood;
+
+    Ok(LogitResult {
+        coefficients: beta,
+        p_values,
+        aic,
+        bic,
+        log_likelihood,
+        converged,
+    })
+}
+
+#[pyfunction]
+#[pyo3(signature = (x, y, max_iter=25, tol=1e-6))]
+fn fit_logistic_regression_numpy(
+    py: Python<'_>,
+    x: PyReadonlyArray2<f64>,
+    y: PyReadonlyArray1<f64>,
+    max_iter: usize,
+    tol: f64,
+) -> PyResult<PyObject> {
+    let x_view = x.as_array();
+    let y_view = y.as_array();
+
+    let n = x_view.nrows();
+    let k = x_view.ncols();
+
+    if n != y_view.len() {
+        return Err(pyo3::exceptions::PyValueError::new_err(
+            "X and y must have same number of rows.",
+        ));
+    }
+
+    let x_faer = faer::Mat::<f64>::from_fn(n, k, |r, c| x_view[(r, c)]);
+    let y_faer = faer::Mat::<f64>::from_fn(n, 1, |r, _| y_view[r]);
+
+    match _fit_logit_internal(x_faer.as_ref(), y_faer.as_ref(), max_iter, tol) {
+        Ok(res) => {
+            let dict = PyDict::new(py);
+            let mut beta_flat = Vec::with_capacity(k);
+            for i in 0..k {
+                beta_flat.push(res.coefficients[(i, 0)]);
+            }
+
+            dict.set_item("coefficients", beta_flat.into_pyobject(py)?)?;
+            dict.set_item("p_values", res.p_values)?;
+            dict.set_item("aic", res.aic)?;
+            dict.set_item("bic", res.bic)?;
+            dict.set_item("log_likelihood", res.log_likelihood)?;
+            dict.set_item("converged", res.converged)?;
+
+            Ok(dict.into_any().unbind())
+        }
+        Err(e) => Err(pyo3::exceptions::PyRuntimeError::new_err(e)),
+    }
+}
+
+#[pyfunction]
+#[pyo3(signature = (fixed_x, candidate_features, y, max_iter=25, tol=1e-6))]
+fn batch_fit_logistic_regression_numpy(
+    py: Python<'_>,
+    fixed_x: PyReadonlyArray2<f64>,
+    candidate_features: Vec<PyReadonlyArray1<f64>>,
+    y: PyReadonlyArray1<f64>,
+    max_iter: usize,
+    tol: f64,
+) -> PyResult<Vec<PyObject>> {
+    let fixed_x_view = fixed_x.as_array();
+    let y_view = y.as_array();
+    let n = fixed_x_view.nrows();
+    let k_fixed = fixed_x_view.ncols();
+
+    // 1. Prepare shared data
+    let y_faer = faer::Mat::<f64>::from_fn(n, 1, |r, _| y_view[r]);
+
+    // Copy candidate data to Vec<Vec<f64>> to move across threads easily
+    let candidate_vecs: Vec<Vec<f64>> = candidate_features
+        .iter()
+        .map(|f| {
+            f.as_slice()
+                .map(|s| s.to_vec())
+                .map_err(|e| pyo3::exceptions::PyValueError::new_err(format!("Candidate not contiguous: {}", e)))
+        })
+        .collect::<PyResult<Vec<_>>>()?;
+
+    // 2. Parallel processing
+    let results: Vec<LogitResult> = py.allow_threads(|| {
+        candidate_vecs.par_iter().map(|cand_vec| {
+            // Build temporary X: [fixed_x | cand]
+            let x_combined = faer::Mat::<f64>::from_fn(n, k_fixed + 1, |r, c| {
+                if c < k_fixed {
+                    fixed_x_view[(r, c)]
+                } else {
+                    cand_vec[r]
+                }
+            });
+
+            // Fit model
+            // We ignore errors here and return a "failed" result if needed
+            match _fit_logit_internal(x_combined.as_ref(), y_faer.as_ref(), max_iter, tol) {
+                Ok(res) => res,
+                Err(_) => LogitResult {
+                    coefficients: faer::Mat::zeros(k_fixed + 1, 1),
+                    p_values: vec![1.0; k_fixed + 1],
+                    aic: f64::INFINITY,
+                    bic: f64::INFINITY,
+                    log_likelihood: f64::NEG_INFINITY,
+                    converged: false,
+                }
+            }
+        }).collect()
+    });
+
+    // 3. Convert back to Python objects
+    let mut py_results = Vec::with_capacity(results.len());
+    for res in results {
+        let dict = PyDict::new(py);
+        dict.set_item("p_value", res.p_values.last().copied().unwrap_or(1.0))?;
+        dict.set_item("aic", res.aic)?;
+        dict.set_item("bic", res.bic)?;
+        dict.set_item("converged", res.converged)?;
+        py_results.push(dict.into_any().unbind());
+    }
+
+    Ok(py_results)
+}
+
 #[pymodule]
 fn _newt_iv_rust(_py: Python<'_>, module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_function(wrap_pyfunction!(calculate_batch_iv, module)?)?;
@@ -1212,5 +1445,7 @@ fn _newt_iv_rust(_py: Python<'_>, module: &Bound<'_, PyModule>) -> PyResult<()> 
         calculate_batch_chi_merge_numpy,
         module
     )?)?;
+    module.add_function(wrap_pyfunction!(fit_logistic_regression_numpy, module)?)?;
+    module.add_function(wrap_pyfunction!(batch_fit_logistic_regression_numpy, module)?)?;
     Ok(())
 }

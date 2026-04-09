@@ -313,40 +313,27 @@ fig = plot_psi_comparison(psi_dict, threshold=0.25)
 
 ## Benchmark
 
-Run the bundled benchmark on `examples/data/test_data/all_data.pq` from the benchmark environment:
+Run the benchmarks using the unified orchestrator script:
 
 ```bash
-python benchmarks/metric_vs_toad.py
+# 1. Validate metrics (AUC, KS, IV, PSI) against toad
+python scripts/benchmark.py metrics
+
+# 2. Measure PSI engine performance (Scalar vs Batch Python/Rust)
+python scripts/benchmark.py psi
+
+# 3. Measure ChiMerge engine performance (Python vs Rust)
+python scripts/benchmark.py chi
 ```
 
-This writes:
-
-- `out/benchmarks/metric_vs_toad.json`
-- `out/benchmarks/metric_vs_toad.md`
-
-The benchmark runs Newt and toad in the same benchmark environment. It does not create a separate worker virtual environment. In this repository, the default host environment for that command is `.venv-benchmark-3.10`.
-
-Run PSI engine performance benchmark:
-
+Each command supports additional options. Use `--help` to see them:
 ```bash
-python benchmarks/psi_performance.py
+python scripts/benchmark.py chi --help
 ```
 
-This writes:
-
-- `out/benchmarks/psi_performance.json`
-- `out/benchmarks/psi_performance.md`
-
-Run ChiMerge performance benchmark:
-
-```bash
-python benchmarks/chimerge_performance.py
-```
-
-This writes:
-
-- `out/benchmarks/chimerge_performance.json`
-- `out/benchmarks/chimerge_performance.md`
+Benchmark results are written to:
+- `out/benchmarks/*.json`
+- `out/benchmarks/*.md`
 
 ## Dependencies
 

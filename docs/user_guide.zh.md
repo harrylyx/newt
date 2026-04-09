@@ -230,24 +230,31 @@ print(f"选中的特征：{selector.selected_features_}")
 X_filtered = selector.transform(df)
 ```
 
-### 逐步选择
+### 逐步特征筛选
+
+`StepwiseSelector` 集成了基于 Rust 的**高性能并行引擎**。它能够利用 `Rayon` 技术在多个 CPU 核心上并行评估候选特征，相比传统的单线程实现（如 `statsmodels`），可获得 **20x-40x 的性能加速**。
 
 ```python
 from newt.features.selection import StepwiseSelector
 
-# 初始化逐步选择器
+# 使用高性能 Rust 并行引擎初始化（默认）
 stepwise = StepwiseSelector(
-    direction='both',    # 'forward'（向前）、'backward'（向后）或 'both'（双向）
-    criterion='aic',     # 'pvalue'、'aic' 或 'bic'
+    direction='both',    # 可选 'forward', 'backward', 或 'both'
+    criterion='aic',     # 可选 'pvalue', 'aic', 或 'bic'
     p_enter=0.05,
-    p_remove=0.10
+    p_remove=0.10,
+    engine='rust',       # 'rust'（高性能并行）或 'python'（传统 statsmodels）
+    verbose=True         # 显示 tqdm 进度条
 )
 
-# 拟合并转换（通常在 WOE 转换后的数据上）
+# 拟合并转换数据（通常在 WOE 转换后的数据上执行）
+# 每一轮特征筛选都会显示实时进度条
 X_selected = stepwise.fit_transform(X_woe, y)
 
-print(f"选中的特征：{stepwise.selected_features_}")
+print(f"Selected features: {stepwise.selected_features_}")
 ```
+
+关于性能提升的详细数据，请参阅 [逐步特征筛选性能基准](benchmarks/stepwise_performance.md)。
 
 ### 后过滤（基于模型）
 

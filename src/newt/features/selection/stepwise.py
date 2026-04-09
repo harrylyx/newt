@@ -9,9 +9,20 @@ from typing import Dict, List, Optional
 
 import numpy as np
 import pandas as pd
+from tqdm.auto import tqdm
 
 from newt.config import MODELING
 from newt.utils.decorators import requires_fit
+
+try:
+    from newt._newt_iv_rust import (
+        batch_fit_logistic_regression_numpy,
+        fit_logistic_regression_numpy,
+    )
+
+    HAS_RUST = True
+except ImportError:
+    HAS_RUST = False
 
 
 class StepwiseSelector:
@@ -40,6 +51,8 @@ class StepwiseSelector:
         max_iter: int = 100,
         fit_intercept: bool = True,
         exclude: Optional[List[str]] = None,
+        engine: str = "rust",
+        verbose: bool = True,
     ):
         """
         Initialize StepwiseSelector.
@@ -83,6 +96,8 @@ class StepwiseSelector:
         self.max_iter = max_iter
         self.fit_intercept = fit_intercept
         self.exclude = exclude or []
+        self.engine = engine if HAS_RUST else "python"
+        self.verbose = verbose
 
         # Fitted attributes
         self.selected_features_: List[str] = []
@@ -142,31 +157,81 @@ class StepwiseSelector:
         if not features:
             return None
 
-        X_subset = X[features]
-        if self.fit_intercept:
-            X_subset = sm.add_constant(X_subset, has_constant="add")
+        if self.engine == "rust":
+            X_subset = X[features].values
+            if self.fit_intercept:
+                X_subset = np.column_stack([np.ones(X_subset.shape[0]), X_subset])
 
-        try:
-            model = sm.Logit(y, X_subset)
-            result = model.fit(disp=False, maxiter=self.max_iter)
-            return result
-        except Exception:
-            return None
+            try:
+                # Rust engine returns a dict resembling sm result structure
+                # for AIC/BIC compatibility.
+                return fit_logistic_regression_numpy(
+                    X_subset, y.values.astype(float), max_iter=self.max_iter
+                )
+            except Exception:
+                return None
+        else:
+            X_subset = X[features]
+            if self.fit_intercept:
+                X_subset = sm.add_constant(X_subset, has_constant="add")
+
+            try:
+                model = sm.Logit(y, X_subset)
+                result = model.fit(disp=False, maxiter=self.max_iter)
+                return result
+            except Exception:
+                return None
 
     def _get_criterion_value(self, result, criterion: str) -> float:
         """Get criterion value for model comparison."""
         if result is None:
             return np.inf
 
-        if criterion == "aic":
-            return result.aic
-        elif criterion == "bic":
-            return result.bic
-        else:  # pvalue - return max p-value (for backward)
-            pvalues = result.pvalues
-            if self.fit_intercept and "const" in pvalues.index:
-                pvalues = pvalues.drop("const")
-            return pvalues.max() if len(pvalues) > 0 else 0.0
+        if isinstance(result, dict):
+            # Rust result
+            if criterion == "aic":
+                return result["aic"]
+            elif criterion == "bic":
+                return result["bic"]
+            else:
+                return max(result["p_values"])
+        else:
+            # Statsmodels result
+            if criterion == "aic":
+                return result.aic
+            elif criterion == "bic":
+                return result.bic
+            else:  # pvalue - return max p-value (for backward)
+                pvalues = result.pvalues
+                if self.fit_intercept and "const" in pvalues.index:
+                    pvalues = pvalues.drop("const")
+                return pvalues.max() if len(pvalues) > 0 else 0.0
+
+    def _get_pvalue(self, result, features: List[str], target_feature: str) -> float:
+        """Extract p-value for a specific feature from model result."""
+        if result is None:
+            return 1.0
+
+        if isinstance(result, dict):
+            # If result is from batch_fit, it might have a singular 'p_value'
+            # (which is the candidate feature's p-value)
+            if "p_value" in result:
+                return result["p_value"]
+
+            # Rust engine returns a dict with 'p_values' list
+            # Features are at index 1.. if intercept is present
+            try:
+                idx = features.index(target_feature)
+                offset = 1 if self.fit_intercept else 0
+                return result["p_values"][idx + offset]
+            except (ValueError, IndexError, KeyError):
+                return 1.0
+        else:
+            # Statsmodels result object
+            try:
+                return result.pvalues.get(target_feature, 1.0)
+            except AttributeError:
+                return 1.0
 
     def _forward_selection(
         self,
@@ -180,45 +245,98 @@ class StepwiseSelector:
         selected = list(exclude_set)
         remaining = [f for f in all_features if f not in selected]
 
+        # Initialize progress bar
+        pbar = tqdm(
+            total=len(all_features), desc="Forward Selection", disable=not self.verbose
+        )
+        pbar.update(len(selected))
+
         for iteration in range(self.max_iter):
             best_feature = None
             best_criterion = np.inf if self.criterion != "pvalue" else 1.0
             best_pvalue = 1.0
 
-            for feature in remaining:
-                candidate = selected + [feature]
-                result = self._fit_model(X, y, candidate, sm)
+            if self.engine == "rust" and len(remaining) > 0:
+                # Parallel Batch Testing with Rust
+                fixed_x = X[selected].values
+                if self.fit_intercept:
+                    fixed_x = np.column_stack([np.ones(fixed_x.shape[0]), fixed_x])
 
-                if result is None:
-                    continue
+                candidate_vecs = [X[f].values.astype(float) for f in remaining]
 
-                if self.criterion == "pvalue":
-                    # Get p-value of the new feature
-                    pvalue = result.pvalues.get(feature, 1.0)
-                    if pvalue < best_pvalue and pvalue < self.p_enter:
-                        best_pvalue = pvalue
-                        best_feature = feature
-                        best_criterion = pvalue
-                else:
-                    criterion_val = self._get_criterion_value(result, self.criterion)
-                    current_result = self._fit_model(X, y, selected, sm)
-                    current_criterion = self._get_criterion_value(
-                        current_result, self.criterion
-                    )
+                # Rust returns a list of result dicts
+                results = batch_fit_logistic_regression_numpy(
+                    fixed_x,
+                    candidate_vecs,
+                    y.values.astype(float),
+                    max_iter=self.max_iter,
+                )
 
-                    # Lower AIC/BIC is better
-                    if (
-                        criterion_val < current_criterion
-                        and criterion_val < best_criterion
-                    ):
-                        best_criterion = criterion_val
-                        best_feature = feature
+                current_model = self._fit_model(X, y, selected, sm)
+                current_criterion = self._get_criterion_value(
+                    current_model, self.criterion
+                )
+
+                for feature, res in zip(remaining, results):
+                    if not res["converged"]:
+                        continue
+
+                    if self.criterion == "pvalue":
+                        pvalue = res["p_value"]
+                        if pvalue < best_pvalue and pvalue < self.p_enter:
+                            best_pvalue = pvalue
+                            best_feature = feature
+                            best_criterion = pvalue
+                    else:
+                        criterion_val = res[self.criterion]
+                        if (
+                            criterion_val < current_criterion
+                            and criterion_val < best_criterion
+                        ):
+                            best_criterion = criterion_val
+                            best_feature = feature
+            else:
+                # Serial Testing (statsmodels or fallback)
+                for feature in remaining:
+                    candidate = selected + [feature]
+                    result = self._fit_model(X, y, candidate, sm)
+
+                    if result is None:
+                        continue
+
+                    if self.criterion == "pvalue":
+                        if isinstance(result, dict):
+                            pvalue = result["p_values"][-1]
+                        else:
+                            pvalue = result.pvalues.get(feature, 1.0)
+
+                        if pvalue < best_pvalue and pvalue < self.p_enter:
+                            best_pvalue = pvalue
+                            best_feature = feature
+                            best_criterion = pvalue
+                    else:
+                        criterion_val = self._get_criterion_value(
+                            result, self.criterion
+                        )
+                        current_result = self._fit_model(X, y, selected, sm)
+                        current_criterion = self._get_criterion_value(
+                            current_result, self.criterion
+                        )
+
+                        if (
+                            criterion_val < current_criterion
+                            and criterion_val < best_criterion
+                        ):
+                            best_criterion = criterion_val
+                            best_feature = feature
 
             if best_feature is None:
                 break
 
             selected.append(best_feature)
             remaining.remove(best_feature)
+            pbar.update(1)
+            pbar.set_postfix(added=best_feature)
 
             self.selection_history_.append(
                 {
@@ -230,6 +348,7 @@ class StepwiseSelector:
                 }
             )
 
+        pbar.close()
         return selected
 
     def _backward_elimination(
@@ -242,6 +361,11 @@ class StepwiseSelector:
     ) -> List[str]:
         """Backward elimination: start with all, remove features one by one."""
         selected = all_features.copy()
+        pbar = tqdm(
+            total=len(all_features),
+            desc="Backward Elimination",
+            disable=not self.verbose,
+        )
 
         for iteration in range(self.max_iter):
             result = self._fit_model(X, y, selected, sm)
@@ -258,9 +382,8 @@ class StepwiseSelector:
             worst_pvalue = 0.0
 
             if self.criterion == "pvalue":
-                pvalues = result.pvalues
                 for feature in removable:
-                    pvalue = pvalues.get(feature, 0.0)
+                    pvalue = self._get_pvalue(result, selected, feature)
                     if pvalue > worst_pvalue:
                         worst_pvalue = pvalue
                         worst_feature = feature
@@ -283,7 +406,7 @@ class StepwiseSelector:
                     if improvement > best_improvement:
                         best_improvement = improvement
                         worst_feature = feature
-                        worst_pvalue = result.pvalues.get(feature, 0.0)
+                        worst_pvalue = self._get_pvalue(result, selected, feature)
 
                 if best_improvement <= 0:
                     break
@@ -292,6 +415,8 @@ class StepwiseSelector:
                 break
 
             selected.remove(worst_feature)
+            pbar.update(1)
+            pbar.set_postfix(removed=worst_feature)
 
             self.selection_history_.append(
                 {
@@ -303,6 +428,7 @@ class StepwiseSelector:
                 }
             )
 
+        pbar.close()
         return selected
 
     def _bidirectional_selection(
@@ -324,31 +450,68 @@ class StepwiseSelector:
             best_feature = None
             best_criterion = np.inf if self.criterion != "pvalue" else 1.0
 
-            for feature in remaining:
-                candidate = selected + [feature]
-                result = self._fit_model(X, y, candidate, sm)
+            if self.engine == "rust" and len(remaining) > 0:
+                fixed_x = X[selected].values
+                if self.fit_intercept:
+                    fixed_x = np.column_stack([np.ones(fixed_x.shape[0]), fixed_x])
+                candidate_vecs = [X[f].values.astype(float) for f in remaining]
+                results = batch_fit_logistic_regression_numpy(
+                    fixed_x,
+                    candidate_vecs,
+                    y.values.astype(float),
+                    max_iter=self.max_iter,
+                )
 
-                if result is None:
-                    continue
+                current_model = self._fit_model(X, y, selected, sm)
+                current_criterion = self._get_criterion_value(
+                    current_model, self.criterion
+                )
 
-                if self.criterion == "pvalue":
-                    pvalue = result.pvalues.get(feature, 1.0)
-                    if pvalue < best_criterion and pvalue < self.p_enter:
-                        best_criterion = pvalue
-                        best_feature = feature
-                else:
-                    criterion_val = self._get_criterion_value(result, self.criterion)
-                    current_result = self._fit_model(X, y, selected, sm)
-                    current_criterion = self._get_criterion_value(
-                        current_result, self.criterion
-                    )
+                for feature, res in zip(remaining, results):
+                    if not res["converged"]:
+                        continue
 
-                    if (
-                        criterion_val < current_criterion
-                        and criterion_val < best_criterion
-                    ):
-                        best_criterion = criterion_val
-                        best_feature = feature
+                    if self.criterion == "pvalue":
+                        current_features = selected + [feature]
+                        pvalue = self._get_pvalue(res, current_features, feature)
+                        if pvalue < best_criterion and pvalue < self.p_enter:
+                            best_criterion = pvalue
+                            best_feature = feature
+                    else:
+                        criterion_val = res[self.criterion]
+                        if (
+                            criterion_val < current_criterion
+                            and criterion_val < best_criterion
+                        ):
+                            best_criterion = criterion_val
+                            best_feature = feature
+            else:
+                current_model = self._fit_model(X, y, selected, sm)
+                current_criterion = self._get_criterion_value(
+                    current_model, self.criterion
+                )
+                for feature in remaining:
+                    candidate = selected + [feature]
+                    result = self._fit_model(X, y, candidate, sm)
+
+                    if result is None:
+                        continue
+
+                    if self.criterion == "pvalue":
+                        pvalue = self._get_pvalue(result, candidate, feature)
+                        if pvalue < best_criterion and pvalue < self.p_enter:
+                            best_criterion = pvalue
+                            best_feature = feature
+                    else:
+                        criterion_val = self._get_criterion_value(
+                            result, self.criterion
+                        )
+                        if (
+                            criterion_val < current_criterion
+                            and criterion_val < best_criterion
+                        ):
+                            best_criterion = criterion_val
+                            best_feature = feature
 
             if best_feature is not None:
                 selected.append(best_feature)
@@ -375,9 +538,8 @@ class StepwiseSelector:
                     worst_pvalue = 0.0
 
                     if self.criterion == "pvalue":
-                        pvalues = result.pvalues
                         for feature in removable:
-                            pvalue = pvalues.get(feature, 0.0)
+                            pvalue = self._get_pvalue(result, selected, feature)
                             if pvalue > worst_pvalue and pvalue > self.p_remove:
                                 worst_pvalue = pvalue
                                 worst_feature = feature
@@ -393,7 +555,7 @@ class StepwiseSelector:
                             )
 
                             if test_criterion < current_criterion:
-                                pvalue = result.pvalues.get(feature, 0.0)
+                                pvalue = self._get_pvalue(result, selected, feature)
                                 if pvalue > worst_pvalue:
                                     worst_pvalue = pvalue
                                     worst_feature = feature

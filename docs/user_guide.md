@@ -238,22 +238,29 @@ X_filtered = selector.transform(df)
 
 ### Stepwise Selection
 
+`StepwiseSelector` features a high-performance **Rust parallel engine** powered by `Rayon`. It can test hundreds of candidate features in parallel across multiple CPU cores, achieving up to **20x-40x speedups** over traditional implementations.
+
 ```python
 from newt.features.selection import StepwiseSelector
 
-# Initialize stepwise selector
+# Initialize with the high-performance Rust parallel engine (default)
 stepwise = StepwiseSelector(
     direction='both',    # 'forward', 'backward', or 'both'
     criterion='aic',     # 'pvalue', 'aic', or 'bic'
     p_enter=0.05,
-    p_remove=0.10
+    p_remove=0.10,
+    engine='rust',       # 'rust' (parallel) or 'python' (statsmodels serial)
+    verbose=True         # Show tqdm progress bar
 )
 
 # Fit and transform (typically on WOE-transformed data)
+# This will show a real-time progress bar for each selection step
 X_selected = stepwise.fit_transform(X_woe, y)
 
 print(f"Selected features: {stepwise.selected_features_}")
 ```
+
+For more details on performance gains, see the [Stepwise Performance Benchmark](benchmarks/stepwise_performance.md).
 
 ### Post-Filtering (Model-based)
 

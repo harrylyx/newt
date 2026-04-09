@@ -21,3 +21,5 @@ pip install newt
 
 - [用户指南](user_guide.zh.md)
 - [API 参考](api/reference.md)
+- [PSI 计算性能](benchmarks/psi_performance.md)
+- [逐步特征筛选性能](benchmarks/stepwise_performance.md)

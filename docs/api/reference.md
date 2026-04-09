@@ -30,6 +30,11 @@ This page provides automated documentation for the core components of `newt`.
       members:
         - FeatureSelector
 
+::: newt.features.selection.stepwise
+    options:
+      members:
+        - StepwiseSelector
+
 ## WOE Encoding
 
 ::: newt.features.analysis.woe_calculator

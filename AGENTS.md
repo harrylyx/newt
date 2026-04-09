@@ -1,648 +1,96 @@
-# Newt - Agent Development Guide
+# Newt - Agent Development Guide (Compressed)
 
-## 1. Project Overview
+This guide defines the core rules, standards, and patterns for developing Newt. **Follow these strictly.**
 
-Newt is a lightweight Python toolkit for efficient feature analysis and statistical diagnostics in credit risk modeling.
+## 1. Development Environment (CRITICAL)
 
-- **Python Version**: >=3.8.5, <3.13
-- **Dependency Management**: uv
-- **Core Features**:
-  - 6 binning algorithms (ChiMerge, Decision Tree, K-Means, Equal Frequency, Equal Width, Optimal)
-  - Monotonic binning support (ascending, descending, auto-detect)
-  - WOE/IV analysis and encoding
-  - Feature selection (pre-filtering, post-filtering, stepwise regression)
-  - Logistic regression modeling
-  - Scorecard generation
-  - Pipeline-style workflow
-  - Visualization tools (binning plots, IV ranking, WOE patterns, PSI comparison)
-  - Excel model report generation (`Report`)
-  - Rust-first IV calculation for both single-feature and batch paths
+**Tooling**: Use `uv` exclusively for environment and dependency management.
 
-## 2. Development Environment
+- `.venv`: Python 3.8.5. Core dev, tests, linting.
+- `.venv-benchmark-3.10`: Python 3.10.19. Benchmarks and `toad` parity.
 
-**IMPORTANT:** Use `uv` for environment and dependency management.
+**Rules**:
+- **No extra venvs**: Keep only these two repo-local environments.
+- **Use `uv run`**: Avoid bare `python` or `pytest`.
+- **Sync Command**: `UV_PROJECT_ENVIRONMENT=.venv-benchmark-3.10 UV_PYTHON_INSTALL_DIR=.uv-python uv sync --python 3.10.19 --group dev --group benchmark --frozen`
 
-Default repo-local environments:
-
-- `.venv`: Python 3.8.5, for day-to-day development, unit tests, linting, and package edits.
-- `.venv-benchmark-3.10`: Python 3.10.19, for `newt-benchmark`, benchmark checks, and `toad`.
-
-Rules:
-
-- Keep only these two repo-local environments.
-- Do not create extra `.venv-*` directories in the repository unless you are debugging a specific issue, and remove them afterward.
-- Use `.venv` for normal development work.
-- Use `.venv-benchmark-3.10` for benchmark runs.
-- The benchmark environment includes `toad==0.1.5` and runs the comparison directly in that environment. Do not add another worker venv layer.
-- If you need a throwaway environment, create it under `/tmp`, not inside the repo.
-- Prefer `uv run` inside the selected environment for Python tooling commands.
-
-```bash
-# ❌ Do NOT use bare Python tooling commands
-pytest
-python -m pytest
-python -m pip install ...
-
-# ✅ Use uv-managed workflows
-UV_PROJECT_ENVIRONMENT=.venv UV_PYTHON_INSTALL_DIR=.uv-python uv sync --python 3.8.5 --group dev --frozen
-UV_PROJECT_ENVIRONMENT=.venv-benchmark-3.10 UV_PYTHON_INSTALL_DIR=.uv-python uv sync --python 3.10.19 --group dev --group benchmark --frozen
-uv run pytest
-uv run python -m pytest
-```
-
-## 3. Project Architecture
-
-### 3.1 Directory Structure
+## 2. Architecture & Directory Structure
 
 ```
 newt/
-├── src/newt/                      # Source code
-│   ├── features/
-│   │   ├── binning/              # Binning (Mixin pattern, monotonic support)
-│   │   │   ├── base.py          # BaseBinner (abstract, monotonic adjustment)
-│   │   │   ├── binner.py        # Binner (unified interface)
-│   │   │   ├── binner_mixins.py # Stats, IO, WOE mixins
-│   │   │   ├── binning_stats.py # Statistical calculations
-│   │   │   ├── woe_storage.py   # WOE encoder management
-│   │   │   ├── supervised.py    # ChiMerge, DecisionTree, OptBinning
-│   │   │   └── unsupervised.py  # EqualWidth, EqualFrequency, KMeans
-│   │   ├── selection/
-│   │   │   ├── selector.py      # FeatureSelector (EDA + filtering)
-│   │   │   ├── postfilter.py    # PostFilter (PSI, VIF)
-│   │   │   └── stepwise.py     # StepwiseSelector
-│   │   └── analysis/
-│   │       ├── woe_calculator.py # WOEEncoder
-│   │       ├── iv_calculator.py   # calculate_iv
-│   │       ├── batch_iv.py        # Batch IV with Rust-backed engine
-│   │       └── correlation.py    # Correlation matrix
-│   ├── modeling/
-│   │   ├── logistic.py          # LogisticModel (statsmodels wrapper)
-│   │   └── scorecard.py         # Scorecard generation
-│   ├── metrics/
-│   │   ├── auc.py              # calculate_auc
-│   │   ├── gini.py             # calculate_gini
-│   │   ├── ks.py               # calculate_ks
-│   │   ├── lift.py             # calculate_lift
-│   │   ├── psi.py              # calculate_psi
-│   │   ├── reporting.py        # Reusable report metric helpers
-│   │   └── vif.py              # calculate_vif
-│   ├── reporting/
-│   │   ├── report.py           # Public Report API
-│   │   ├── tables.py           # Report table assembly
-│   │   ├── excel_writer.py     # Excel workbook rendering
-│   │   ├── model_adapter.py    # LightGBM/XGBoost parameter & importance adapter
-│   │   └── score_prep.py       # Report-only score direction handling
-│   ├── results/
-│   │   ├── report.py           # Stable report result objects
-│   │   ├── scorecard.py        # Scorecard result objects
-│   │   ├── selection.py        # Feature selection result objects
-│   │   └── visualization.py    # Plot data objects
-│   ├── pipeline/
-│   │   └── pipeline.py         # ScorecardPipeline (fluent API)
-│   ├── utils/
-│   │   └── decorators.py       # @requires_fit decorator
-│   ├── visualization/
-│   │   ├── binning_viz.py     # Visualization functions
-│   │   └── binning.py          # Plotting utilities
-│   ├── config.py                # Configuration constants
-│   └── __init__.py              # Package exports
-├── tests/                         # Tests
-│   ├── unit/                    # Unit tests
-│   │   ├── features/
-│   │   │   ├── binning/
-│   │   │   ├── analysis/
-│   │   │   └── selection/
-│   │   ├── metrics/
-│   │   ├── modeling/
-│   │   ├── pipeline/
-│   │   ├── reporting/
-│   │   ├── results/
-│   │   ├── utils/
-│   │   └── visualization/
-│   ├── packaging/               # Packaging & wheel tests
-│   │   ├── test_install_from_wheel.py
-│   │   └── test_workflows.py
-│   ├── cross_val/                # Cross-validation tests
-│   │   └── compare_with_toad.py
-│   └── conftest.py              # Shared fixtures
-├── docs/                         # Documentation
-│   ├── user_guide.md           # English user guide
-│   ├── user_guide_zh.md        # Chinese user guide
-│   ├── release_notes.md        # Recent release notes (English)
-│   ├── release_notes_zh.md     # Recent release notes (Chinese)
-│   └── benchmarks/
-│       └── metric_vs_toad.md   # Benchmark guide and parity notes
-├── examples/                      # Example notebooks
-│   ├── 01-basic-usage.ipynb
-│   ├── 02-advanced-analysis.ipynb
-│   ├── 03-production-pipeline.ipynb
-│   └── data/                   # Sample datasets
-│       ├── statlog+german+credit+data/
-│       └── test_data/          # Sample report dataset/model
-├── rust/
-│   └── newt_iv_rust/           # Rust extension for single + batch IV
-├── pyproject.toml                # maturin/PEP 621 configuration
-├── README.md                     # Package README
-└── AGENTS.md                    # This file
+├── src/newt/              # Core Source
+│   ├── features/          # Binning (Mixin pattern), Selection, Analysis (WOE/IV)
+│   ├── modeling/          # LogisticModel, Scorecard (Statsmodels wrappers)
+│   ├── metrics/           # AUC, KS, Gini, PSI, VIF
+│   ├── reporting/         # Excel Report Engine (xlsxwriter)
+│   ├── results/           # Stable result objects for downstream
+│   ├── visualization/     # Matplotlib/Seaborn plots
+│   └── config.py          # Central constants (dataclasses)
+├── benchmarks/            # Performance scripts (Root directory)
+├── tests/                 # Unit, Integration, Packaging tests
+└── rust/newt_iv_rust/     # Rust-backed IV engine (Core performance)
 ```
 
-### 3.2 Core Modules
+**Key API Patterns**:
+- **Binner**: Uses a Mixin pattern (`BinnerStatsMixin`, etc.) and `__getitem__` for `binner['feat']` access.
+- **Rust First**: IV calculations (single/batch) default to Rust with Python fallback.
 
-#### features/binning/
-- `base.py`: BaseBinner (abstract class, defines binning interface)
-  - **Monotonic support**: `monotonic` parameter (True, False, "ascending", "descending", "auto")
-  - `_adjust_monotonicity()`: PAVA-based monotonic adjustment algorithm
-  - `MONOTONIC_TRENDS`: Valid monotonic trend constants
-- `binner.py`: Binner (unified interface, combines 3 mixins)
-  - `BinningResult`: Proxy object for accessing feature binning results
-  - Supports `__getitem__` for `binner['feature']` access
-- `binner_mixins.py`: BinnerStatsMixin, BinnerIOMixin, BinnerWOEMixin
-- `binning_stats.py`: Statistical calculation functions
-- `woe_storage.py`: WOE encoder management
-- `supervised.py`: ChiMergeBinner, DecisionTreeBinner, OptBinningBinner
-- `unsupervised.py`: EqualWidthBinner, EqualFrequencyBinner, KMeansBinner
+## 3. Standards
 
-#### features/selection/
-- `selector.py`: FeatureSelector (Unified EDA and filtering: IV, missing rate, correlation)
-  - Supports multiple metrics: IV, missing_rate, ks, correlation
-  - `corr_matrix`: Feature-to-feature correlation matrix property
-  - `select()`: Apply thresholds for feature filtering
-  - `report()`: Generate comprehensive analysis report
-- `postfilter.py`: PostFilter (PSI, VIF)
-- `stepwise.py`: StepwiseSelector (forward, backward, bidirectional)
+### 3.1 Naming & Types
+- **Classes**: `PascalCase`
+- **Functions/Methods**: `snake_case` (Private: `_prefix`)
+- **Constants**: `UPPER_CASE`
+- **Typing**: Mandatory return type annotations. Avoid `Any`.
+- **Formatting**: `black`, `isort`, `flake8`.
 
-#### features/analysis/
-- `woe_calculator.py`: WOEEncoder (WOE encoding and IV calculation)
-- `iv_calculator.py`: calculate_iv function
-- `batch_iv.py`: Batch IV calculation with a Rust-backed primary engine and Python fallback
-- `correlation.py`: Correlation matrix and high correlation pairs
-
-#### modeling/
-- `logistic.py`: LogisticModel (logistic regression wrapper)
-  - Uses statsmodels for detailed statistical output
-  - Provides scikit-learn-like interface
-  - `to_dict()`: Export model parameters (intercept, coefficients)
-  - `get_significant_features()`: Filter features by p-value
-- `scorecard.py`: Scorecard (scorecard generation)
-  - `from_model()`: Build from fitted model, binner, WOE encoder
-  - Supports multiple model types (sklearn, statsmodels, custom)
-  - `score()`: Calculate scores for new data
-
-#### metrics/
-- `auc.py`: calculate_auc (AUC metric)
-- `gini.py`: calculate_gini (Gini coefficient)
-- `ks.py`: calculate_ks (Kolmogorov-Smirnov statistic)
-- `lift.py`: calculate_lift (Lift metric)
-- `psi.py`: calculate_psi (Population Stability Index)
-- `reporting.py`: grouped metrics, PSI helpers, score correlation, portrait summaries, bin tables
-- `vif.py`: calculate_vif (Variance Inflation Factor)
-
-#### reporting/
-- `report.py`: `Report` orchestration API
-- `tables.py`: builds sheet-level DataFrames and block layout metadata
-- `excel_writer.py`: writes styled Excel workbooks and charts
-- `model_adapter.py`: extracts parameters and feature importance from LightGBM/XGBoost
-- `score_prep.py`: creates report-only score columns and applies direction normalization
-
-#### results/
-- `report.py`: `ModelReportResult`, `ReportSheet`, `ReportBlock`, `ReportChart`
-- Stores stable result objects used for testing and downstream consumption
-
-#### pipeline/
-- `pipeline.py`: ScorecardPipeline (fluent API for end-to-end workflow)
-  - Chainable methods: `.prefilter()`, `.bin()`, `.woe_transform()`, `.postfilter()`, `.stepwise()`, `.build_model()`, `.generate_scorecard()`
-  - Access to intermediate results via properties
-  - `summary()`: Get pipeline execution summary
-
-#### visualization/
-- `binning_viz.py`: Visualization functions
-  - `plot_binning_result()`: Binning histogram with bad rate line
-  - `plot_iv_ranking()`: IV ranking bar chart
-  - `plot_woe_pattern()`: WOE pattern visualization
-  - `plot_psi_comparison()`: PSI comparison chart
-- `binning.py`: Alternative binning plotting utilities
-
-#### utils/
-- `decorators.py`: @requires_fit decorator (unified fitted state check)
-
-#### config.py
-Configuration constants (dataclasses):
-- `BinningConfig`: DEFAULT_N_BINS, DEFAULT_BUCKETS, DEFAULT_EPSILON, MIN_SAMPLES_LEAF
-- `FilteringConfig`: DEFAULT_IV_THRESHOLD, DEFAULT_MISSING_THRESHOLD, DEFAULT_CORR_THRESHOLD, DEFAULT_PSI_THRESHOLD, DEFAULT_VIF_THRESHOLD
-- `ModelingConfig`: DEFAULT_P_ENTER, DEFAULT_P_REMOVE, DEFAULT_CLASSIFICATION_THRESHOLD
-- `ScorecardConfig`: DEFAULT_PDO, DEFAULT_BASE_SCORE, DEFAULT_BASE_ODDS
-
-## 4. Development Standards
-
-### 4.1 Naming Conventions
-
-**Strict conventions:**
-
-- **Class names**: PascalCase
-  ```python
-  class Binner:
-      pass
-
-  class WOEEncoder:
-      pass
-  ```
-
-- **Function/Method names**: snake_case
-  ```python
-  def calculate_iv():
-      pass
-
-  def fit_transform():
-      pass
-
-  def _update_all_stats():
-      pass
-  ```
-
-- **Constants**: UPPER_CASE
-  ```python
-  DEFAULT_N_BINS = 5
-  DEFAULT_IV_THRESHOLD = 0.02
-  MONOTONIC_TRENDS = frozenset(["ascending", "descending", "auto"])
-  ```
-
-- **Private members**: Prefix with underscore
-  ```python
-  self._X = X.copy()
-  self._fit_splits()
-  ```
-
-- **❌ Prohibited**: camelCase
-  ```python
-  # ❌ Incorrect
-  def calculateIV():
-      pass
-
-  # ✅ Correct
-  def calculate_iv():
-      pass
-  ```
-
-### 4.2 Type Annotations
-
-**Use typing module:**
-
-- **Must annotate return types**
-  ```python
-  def fit(self, X: pd.DataFrame, y: pd.Series) -> "Binner":
-      pass
-  ```
-
-- **Optional for optional parameters**
-  ```python
-  def fit(self, X: pd.Series, y: Optional[pd.Series] = None) -> "BaseBinner":
-      pass
-  ```
-
-- **Final for constants**
-  ```python
-  DEFAULT_N_BINS: Final[int] = 5
-  ```
-
-- **Avoid Any** unless absolutely necessary
-
-### 4.3 Docstrings
-
-**Use Google-style consistently:**
-
+### 3.2 Documentation
+Use **Google-style** docstrings consistently.
 ```python
-def calculate_iv(
-    df: pd.DataFrame,
-    target: str,
-    feature: str,
-    buckets: int = 10,
-    epsilon: float = 1e-8,
-) -> Dict[str, Union[float, pd.DataFrame]]:
-    """Calculate Information Value (IV) for a feature.
-
+def calculate_iv(df: pd.DataFrame, target: str, feature: str) -> Dict[str, Union[float, pd.DataFrame]]:
+    """Calculate IV for a feature.
     Args:
         df: Input DataFrame.
-        target: Target column name (binary 0/1).
-        feature: Feature column name.
-        buckets: Number of buckets for numerical features.
-        epsilon: Small constant to avoid division by zero or log(0).
-
     Returns:
-        Dict containing 'iv' (float) and 'woe_table' (pd.DataFrame).
+        Dict with 'iv' and 'woe_table'.
     """
 ```
 
-### 4.4 Code Formatting
+## 4. Fundamental Patterns
 
-- Use `black` for code formatting
-- Use `isort` for import sorting
-- Pass `flake8` checks
-- Pre-commit automation enabled
+### 4.1 Binning Monotonicity (PAVA)
+- **Parameter**: `monotonic` (bool, "ascending", "descending", "auto").
+- **Implementation**: `_adjust_monotonicity()` in `BaseBinner`. Greedy merging logic.
 
-### 4.5 Configuration Usage
+### 4.2 Scorecard Model Support
+- Supports `LogisticModel`, `sklearn` models, `statsmodels` results, and raw `dict` formats (`{'intercept': float, 'coefficients': {feat: coef}}`).
 
-**Use constants from config.py to avoid magic numbers:**
-
+### 4.3 Results Access
 ```python
-# ✅ Recommended
-from newt.config import BINNING, FILTERING, MODELING, SCORECARD
-
-def __init__(self, n_bins: int = BINNING.DEFAULT_N_BINS):
-    self.n_bins = n_bins
-
-# ❌ Avoid
-def __init__(self, n_bins: int = 5):
-    self.n_bins = n_bins
+binner = Binner().fit(X, y)
+res = binner['age']  # BinningResult
+res.stats            # pd.DataFrame
+res.plot()           # Visualization
 ```
 
-## 5. Testing Standards
+## 5. Development Workflow
 
-### 5.1 Test Structure
-
-```
-tests/
-├── conftest.py                   # Shared fixtures
-├── unit/                         # Unit tests
-│   ├── features/
-│   │   ├── binning/
-│   │   ├── analysis/
-│   │   └── selection/
-│   ├── metrics/
-│   ├── modeling/
-│   ├── pipeline/
-│   ├── reporting/
-│   ├── results/
-│   ├── utils/
-│   └── visualization/
-├── packaging/                    # Packaging & wheel tests
-│   ├── test_install_from_wheel.py
-│   └── test_workflows.py
-├── cross_val/                    # Cross-validation tests
-│   └── compare_with_toad.py
-└── integration/                   # Integration tests (to be added)
-    ├── test_performance.py
-    └── test_pipeline.py
-```
-
-### 5.2 Test Naming
-
-- Use `test_<function>_<scenario>` format
-- Use parametrized tests with `@pytest.mark.parametrize`
-
-### 5.3 Coverage Target
-
-- **Target**: 70% coverage
-- New features must have tests with >60% coverage
-- Bug fixes must include regression tests
-
-## 6. Git Standards
-
-### 6.1 Branch Strategy
-
-- `main`: Primary branch
-- `feature/<name>`: Feature development branches
-- `bugfix/<num>`: Bugfix branches
-
-### 6.2 Commit Messages
-
-- Format: `<type>(<scope>): <subject>`
-- Types: `feat`, `fix`, `docs`, `refactor`, `test`
-- Examples:
-  - `feat(binning): add monotonic binning support`
-  - `fix(woe): handle missing values in transform`
-  - `docs: update AGENTS.md`
-
-### 6.3 PR Process
-
-1. Create branch from `main`
-2. Develop and test
-3. Pass CI checks
-4. Create Pull Request
-5. Code review
-6. Merge to `main`
-
-## 7. Common Commands
-
+### 5.1 Common Commands
 ```bash
-# Install dependencies
-uv sync --group dev
-
-# Format code
-uv run black .
-uv run isort .
-
-# Run linter
-uv run flake8 src tests
-
-# Run all tests
-uv run pytest
-
-# Run specific test
-uv run pytest tests/unit/features/binning/test_binning.py
-
-# Run report tests
-uv run pytest tests/unit/reporting
-
-# Run tests with coverage
-uv run pytest --cov=src/newt --cov-report=html
-
-# Run pre-commit checks
-uv run pre-commit run --all-files
+uv sync --group dev                # Install
+uv run black .                     # Format
+uv run flake8 src tests            # Lint
+uv run pytest                      # Test
+uv run pytest --cov=src/newt      # Coverage (Target: 70%)
 ```
 
-## 8. CI/CD
+### 5.2 Release & CI/CD
+- **Version**: Managed in `pyproject.toml`, `src/newt/__init__.py`, `uv.lock`.
+- **CI**: GitHub Actions runs on py3.8, 3.9, 3.10.
+- **Wheels**: Built for `cp38`-`cp312` across Windows, macOS (arm64), Linux (x86_64, aarch64).
 
-**GitHub Actions Workflows:**
-
-- `.github/workflows/ci.yml`:
-  - Runs on push to main/master or PR
-  - Tests Python 3.8, 3.9, 3.10
-  - Runs flake8 and pytest with coverage
-  - `packaging-check` job validates workflow configs and packaging tests
-
-- `.github/workflows/build-wheels.yml`:
-  - Builds multi-platform wheels using `cibuildwheel`
-  - Uses separate native Linux jobs:
-    - `ubuntu-latest` for Linux `x86_64`
-    - `ubuntu-24.04-arm` for Linux `aarch64`
-  - Targets macOS arm64 and Windows AMD64
-  - Builds wheels for CPython `cp38` through `cp312` only
-  - Does not use QEMU emulation in the current baseline
-  - Runs installed-wheel smoke tests
-
-- `.github/workflows/release.yml`:
-  - Runs on GitHub release creation
-  - Rebuilds all platform wheels and source distribution
-  - Uploads artifacts to GitHub Releases
-  - PyPI publishing deferred to later phase
-
-### 8.1 Release Baseline (Current)
-
-- Current package line: `v0.1.4`
-- Python compatibility contract: `>=3.8.5,<3.13`
-- Wheel build matrix: `cp38`, `cp39`, `cp310`, `cp311`, `cp312`
-- Release flow:
-  1. Update version files (`pyproject.toml`, `src/newt/__init__.py`, `uv.lock`)
-  2. Commit to `main`
-  3. Create and push tag (`vX.Y.Z`)
-  4. Create GitHub Release from the tag
-
-## 9. Key Design Patterns
-
-### 9.1 Binning Monotonicity
-
-**Monotonic Binning Support:**
-
-- **Parameter**: `monotonic` (bool or str: "ascending", "descending", "auto")
-- **Algorithm**: PAVA (Pool Adjacent Violators) with greedy merging
-- **Implementation**: `_adjust_monotonicity()` in `BaseBinner`
-- **Usage**:
-  ```python
-  binner = Binner()
-  binner.fit(X, y, method='chi', monotonic=True)              # Auto-detect
-  binner.fit(X, y, method='dt', monotonic='ascending')      # Force ascending
-  binner.fit(X, y, method='opt', monotonic='descending')    # Force descending
-  ```
-
-### 9.2 Scorecard Model Support
-
-**Multiple Model Types Supported:**
-
-- Custom `LogisticModel` wrapper (via `to_dict()`)
-- Dictionary format: `{'intercept': float, 'coefficients': {feature: coef}}`
-- scikit-learn models (LogisticRegression, SGDClassifier, etc.)
-- statsmodels results (Logit, GLM fit results)
-
-**Usage:**
-```python
-from sklearn.linear_model import LogisticRegression
-import statsmodels.api as sm
-
-# Sklearn model
-lr = LogisticRegression()
-lr.fit(X_woe, y)
-scorecard.from_model(lr, binner, woe_encoder)
-
-# Statsmodels model
-model = sm.Logit(y, X).fit()
-scorecard.from_model(model, binner, woe_encoder)
-
-# Dictionary format
-model_dict = {'intercept': -2.5, 'coefficients': {'age': 0.3}}
-scorecard.from_model(model_dict, binner, woe_encoder)
-```
-
-### 9.3 Binning Result Access Pattern
-
-**Convenient Feature Access:**
-
-```python
-binner = Binner()
-binner.fit(X, y)
-
-# Access via __getitem__
-result = binner['age']        # Returns BinningResult
-print(result.stats)           # View statistics
-result.plot()                 # Plot binning
-print(result.woe_map())      # Get WOE mapping
-
-# Loop through features
-for feat in binner:
-    print(feat)
-```
-
-### 9.4 Visualization Integration
-
-**Plotting Functions:**
-
-```python
-from newt.visualization import (
-    plot_binning_result,
-    plot_iv_ranking,
-    plot_woe_pattern,
-    plot_psi_comparison
-)
-
-# Binning plot
-fig = plot_binning_result(binner, X, y, 'age')
-
-# IV ranking
-iv_dict = selector.eda_summary_.set_index('feature')['iv'].to_dict()
-fig = plot_iv_ranking(iv_dict)
-
-# WOE pattern
-fig = plot_woe_pattern(woe_encoder['age'], 'age')
-```
-
-## 10. Development Guidelines
-
-### 10.1 When Adding New Features
-
-1. **Core functionality**: Add to `src/newt/` appropriate module
-2. **Exports**: Update `__init__.py` files to export new classes/functions
-3. **Configuration**: Add constants to `config.py` if needed
-4. **Documentation**: Update user guides in `docs/`
-5. **Tests**: Add unit tests to `tests/unit/` appropriate directory
-6. **AGENTS.md**: Update this file with new structure/info
-
-### 10.2 When Modifying Core Components
-
-1. **Maintain backward compatibility** for existing APIs
-2. **Update tests** to cover new functionality
-3. **Run linting**: `uv run flake8 src tests`
-4. **Run tests**: `uv run pytest --cov=src/newt`
-5. **Check coverage**: Ensure >70% coverage target maintained
-
-### 10.3 Documentation Updates
-
-When adding new features:
-1. Update `docs/user_guide.md` (English)
-2. Update `docs/user_guide_zh.md` (Chinese)
-3. Update `docs/release_notes.md` and `docs/release_notes_zh.md` if behavior or release process changed
-4. Update `docs/benchmarks/metric_vs_toad.md` if benchmark policy or runtime environment changed
-5. Update `README.md` if API or operational baseline changed
-6. Add example in `examples/` notebooks if applicable
-
-## 11. Dependencies
-
-**Key External Dependencies:**
-
-- **Core**: pandas, numpy
-- **Scientific**: scipy, scikit-learn, statsmodels
-- **Binning**: optbinning (optional, for optimal binning)
-- **Reporting**: xlsxwriter
-- **Build (Rust extension)**: maturin (build-time only), cibuildwheel (CI)
-- **Visualization**: matplotlib, seaborn
-- **Testing**: pytest, pytest-cov, coverage
-- **Code Quality**: black, isort, flake8
-
-**Report development / validation dependencies (`uv sync --group dev`):**
-
-- openpyxl
-- pyarrow
-- lightgbm
-
-**Note**: `optbinning` requires additional dependencies:
-- optbinning: `python_version < 3.12`
-- ortools: <9.12, `python_version < 3.12`
-- cvxpy: >=1.3,<1.5, `python_version < 3.12`
-
-## 12. Performance Considerations
-
-### 12.1 Memory Efficiency
-
-- **WOE storage**: Uses `WOEStorage` class to manage multiple encoders
-- **Binning**: Binner stores splits (lightweight) rather than full data
-- **Visualization**: Avoid storing large datasets in memory during plotting
-
-### 12.2 Computational Efficiency
-
-- **Monotonic adjustment**: Greedy merging with early termination
-- **Feature selection**: Vectorized operations in pandas
-- **Scorecard scoring**: Direct mapping for O(n) scoring on new data
-
-### 12.3 Scalability
-
-- **Large datasets**: Use `n_bins` to control complexity
-- **High-dimensional features**: Pre-filtering before expensive operations
-- **Parallel processing**: Not yet implemented (future enhancement)
+## 6. Guidelines
+1. **Adding Features**: Update `src/`, `__init__.py`, `config.py`, `tests/`, and `docs/`.
+2. **Backward Compatibility**: Ensure APIs remain stable.
+3. **Performance**: Avoid large copies in loops. Use Rust for batch paths.
+4. **Clean Code**: Remove scratch files and throwaway venvs after use.

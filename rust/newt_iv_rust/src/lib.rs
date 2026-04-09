@@ -1,8 +1,10 @@
 use numpy::PyReadonlyArray1;
 use pyo3::prelude::*;
 use rayon::prelude::*;
-use std::cmp::Ordering;
-use std::collections::HashMap;
+use std::cmp::{Ordering, Reverse};
+use std::collections::{BinaryHeap, HashMap};
+
+
 
 fn build_edges(values: &[f64], bins: usize) -> Vec<f64> {
     if values.is_empty() {
@@ -934,6 +936,262 @@ fn calculate_feature_psi_pairs_numpy(
     })
 }
 
+fn calculate_chi2_yates(n1: f64, e1: f64, n2: f64, e2: f64) -> f64 {
+    let total_n = n1 + n2;
+    let total_e = e1 + e2;
+    let total_ne = total_n - total_e;
+
+    if total_n == 0.0 {
+        return 0.0;
+    }
+
+    let e1_expected = (n1 * total_e / total_n).max(1e-9);
+    let e2_expected = (n2 * total_e / total_n).max(1e-9);
+    let ne1_expected = (n1 * total_ne / total_n).max(1e-9);
+    let ne2_expected = (n2 * total_ne / total_n).max(1e-9);
+
+    ((e1 - e1_expected).abs() - 0.5).powi(2) / e1_expected
+        + ((e2 - e2_expected).abs() - 0.5).powi(2) / e2_expected
+        + ((n1 - e1 - ne1_expected).abs() - 0.5).powi(2) / ne1_expected
+        + ((n2 - e2 - ne2_expected).abs() - 0.5).powi(2) / ne2_expected
+}
+
+#[derive(Debug, Clone)]
+struct BinNode {
+    val: f64, // max value of the bin
+    n: f64,   // count
+    e: f64,   // event count
+    prev: Option<usize>,
+    next: Option<usize>,
+    active: bool,
+}
+
+#[derive(PartialEq)]
+struct ChiSquareEntry {
+    chi2: f64,
+    index: usize, // id of the left bin
+}
+
+impl Eq for ChiSquareEntry {}
+
+impl PartialOrd for ChiSquareEntry {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl Ord for ChiSquareEntry {
+    fn cmp(&self, other: &Self) -> Ordering {
+        // Reverse for min-heap
+        other.chi2.partial_cmp(&self.chi2).unwrap_or(Ordering::Equal)
+    }
+}
+
+fn _calculate_single_chi_merge(
+    feature: &[f64],
+    target: &[i64],
+    n_bins: usize,
+    threshold: f64,
+) -> Vec<f64> {
+    if feature.is_empty() {
+        return vec![];
+    }
+
+    // 1. Initial binning using unique values
+    let mut data: Vec<(f64, i64)> = feature
+        .iter()
+        .zip(target.iter())
+        .map(|(&f, &t)| (f, t))
+        .collect();
+    data.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap_or(Ordering::Equal));
+
+    let mut nodes: Vec<BinNode> = Vec::new();
+    if !data.is_empty() {
+        let mut curr_val = data[0].0;
+        let mut curr_n = 0.0;
+        let mut curr_e = 0.0;
+
+        for (f, t) in data {
+            if f == curr_val {
+                curr_n += 1.0;
+                if t == 1 {
+                    curr_e += 1.0;
+                }
+            } else {
+                let idx = nodes.len();
+                nodes.push(BinNode {
+                    val: curr_val,
+                    n: curr_n,
+                    e: curr_e,
+                    prev: if idx > 0 { Some(idx - 1) } else { None },
+                    next: None,
+                    active: true,
+                });
+                if idx > 0 {
+                    nodes[idx - 1].next = Some(idx);
+                }
+                curr_val = f;
+                curr_n = 1.0;
+                curr_e = if t == 1 { 1.0 } else { 0.0 };
+            }
+        }
+        let idx = nodes.len();
+        nodes.push(BinNode {
+            val: curr_val,
+            n: curr_n,
+            e: curr_e,
+            prev: if idx > 0 { Some(idx - 1) } else { None },
+            next: None,
+            active: true,
+        });
+        if idx > 0 {
+            nodes[idx - 1].next = Some(idx);
+        }
+    }
+
+    if nodes.len() <= n_bins {
+        let splits: Vec<f64> = nodes.iter().map(|b| b.val).collect();
+        return if splits.is_empty() { vec![] } else { splits[0..splits.len()-1].to_vec() };
+    }
+
+    // 2. Initial chi-squares in a min-heap
+    let mut heap = BinaryHeap::new();
+    for i in 0..nodes.len() - 1 {
+        let chi2 = calculate_chi2_yates(nodes[i].n, nodes[i].e, nodes[i + 1].n, nodes[i + 1].e);
+        heap.push(ChiSquareEntry { chi2, index: i });
+    }
+
+    let mut active_count = nodes.len();
+
+    // 3. Merge Loop
+    while active_count > n_bins {
+        let min_entry = match heap.pop() {
+            Some(e) => e,
+            None => break,
+        };
+
+        if !nodes[min_entry.index].active {
+            continue;
+        }
+        let next_idx = match nodes[min_entry.index].next {
+            Some(idx) if nodes[idx].active => idx,
+            _ => continue,
+        };
+
+        if min_entry.chi2 >= threshold {
+            break;
+        }
+
+        // Merge next_idx into min_entry.index
+        nodes[min_entry.index].n += nodes[next_idx].n;
+        nodes[min_entry.index].e += nodes[next_idx].e;
+        nodes[min_entry.index].val = nodes[next_idx].val; // update max val
+        nodes[next_idx].active = false;
+        active_count -= 1;
+
+        // Update links
+        let after_next = nodes[next_idx].next;
+        nodes[min_entry.index].next = after_next;
+        if let Some(an) = after_next {
+            nodes[an].prev = Some(min_entry.index);
+            // Re-calculate chi2 for the new adjacency
+            let chi2 = calculate_chi2_yates(
+                nodes[min_entry.index].n,
+                nodes[min_entry.index].e,
+                nodes[an].n,
+                nodes[an].e,
+            );
+            heap.push(ChiSquareEntry {
+                chi2,
+                index: min_entry.index,
+            });
+        }
+
+        if let Some(prev_idx) = nodes[min_entry.index].prev {
+            let chi2 = calculate_chi2_yates(
+                nodes[prev_idx].n,
+                nodes[prev_idx].e,
+                nodes[min_entry.index].n,
+                nodes[min_entry.index].e,
+            );
+            heap.push(ChiSquareEntry {
+                chi2,
+                index: prev_idx,
+            });
+        }
+    }
+
+    // 4. Extract splits
+    let mut final_vals = Vec::new();
+    let mut curr = Some(0);
+    while let Some(idx) = curr {
+        if nodes[idx].active {
+            final_vals.push(nodes[idx].val);
+        }
+        curr = nodes[idx].next;
+    }
+
+    if final_vals.len() < 2 {
+        return vec![];
+    }
+
+    // Splits are points between bins. For ChiMerge, splits are max_val of bins except the last one.
+    final_vals[0..final_vals.len() - 1].to_vec()
+}
+
+#[pyfunction]
+fn calculate_chi_merge_numpy(
+    py: Python<'_>,
+    feature: PyReadonlyArray1<f64>,
+    target: PyReadonlyArray1<i64>,
+    n_bins: usize,
+    threshold: f64,
+) -> PyResult<Vec<f64>> {
+    let f_slice = feature.as_slice().map_err(|e| {
+        pyo3::exceptions::PyValueError::new_err(format!("feature not contiguous: {}", e))
+    })?;
+    let t_slice = target.as_slice().map_err(|e| {
+        pyo3::exceptions::PyValueError::new_err(format!("target not contiguous: {}", e))
+    })?;
+
+    if f_slice.len() != t_slice.len() {
+        return Err(pyo3::exceptions::PyValueError::new_err(
+            "Feature and target must have same length.",
+        ));
+    }
+
+    py.allow_threads(|| Ok(_calculate_single_chi_merge(f_slice, t_slice, n_bins, threshold)))
+}
+
+#[pyfunction]
+fn calculate_batch_chi_merge_numpy(
+    py: Python<'_>,
+    features: Vec<PyReadonlyArray1<f64>>,
+    target: PyReadonlyArray1<i64>,
+    n_bins: usize,
+    threshold: f64,
+) -> PyResult<Vec<Vec<f64>>> {
+    let t_slice = target.as_slice().map_err(|e| {
+        pyo3::exceptions::PyValueError::new_err(format!("target not contiguous: {}", e))
+    })?;
+    let t_vec: Vec<i64> = t_slice.to_vec();
+
+    let feature_vecs: Vec<Vec<f64>> = features
+        .iter()
+        .map(|f| f.as_slice().map(|s| s.to_vec()))
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|e| {
+            pyo3::exceptions::PyValueError::new_err(format!("feature not contiguous: {}", e))
+        })?;
+
+    py.allow_threads(|| {
+        Ok(feature_vecs
+            .into_par_iter()
+            .map(|f| _calculate_single_chi_merge(&f, &t_vec, n_bins, threshold))
+            .collect())
+    })
+}
+
 #[pymodule]
 fn _newt_iv_rust(_py: Python<'_>, module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_function(wrap_pyfunction!(calculate_batch_iv, module)?)?;
@@ -949,5 +1207,10 @@ fn _newt_iv_rust(_py: Python<'_>, module: &Bound<'_, PyModule>) -> PyResult<()> 
         module
     )?)?;
     module.add_function(wrap_pyfunction!(calculate_feature_psi_pairs_numpy, module)?)?;
+    module.add_function(wrap_pyfunction!(calculate_chi_merge_numpy, module)?)?;
+    module.add_function(wrap_pyfunction!(
+        calculate_batch_chi_merge_numpy,
+        module
+    )?)?;
     Ok(())
 }

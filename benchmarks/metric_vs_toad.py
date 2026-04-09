@@ -49,7 +49,7 @@ METADATA_COLUMNS = frozenset(
 
 def repo_root() -> Path:
     """Return the repository root."""
-    return Path(__file__).resolve().parents[3]
+    return Path(__file__).resolve().parents[1]
 
 
 def default_data_path() -> Path:
@@ -1178,3 +1178,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     print("Wrote benchmark Markdown to {}".format(markdown_path))
 
     return 0 if report["metadata"]["toad_status"] == "ok" else 1
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

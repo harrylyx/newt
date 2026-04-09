@@ -13,6 +13,19 @@ except ImportError:
 from .base import BaseBinner
 
 
+def _load_rust_engine():
+    """Import the compiled Rust extension."""
+    import importlib
+
+    candidates = ("newt._newt_iv_rust", "_newt_iv_rust")
+    for module_name in candidates:
+        try:
+            return importlib.import_module(module_name)
+        except ImportError:
+            continue
+    return None
+
+
 class DecisionTreeBinner(BaseBinner):
     """Discretizes continuous data using a Decision Tree to find optimal splits.
 
@@ -138,7 +151,23 @@ class ChiMergeBinner(BaseBinner):
 
         bins = list(zip(unique_vals, counts, event_counts))
 
-        # 4. Merge Iterations
+        # 4. Try Rust Engine
+        rust_module = _load_rust_engine()
+        if rust_module and hasattr(rust_module, "calculate_chi_merge_numpy"):
+            try:
+                threshold = stats.chi2.ppf(1 - self.alpha, 1)
+                splits = rust_module.calculate_chi_merge_numpy(
+                    X_arr.astype(np.float64),
+                    y_arr.astype(np.int64),
+                    self.n_bins,
+                    float(threshold),
+                )
+                return sorted(splits)
+            except Exception:
+                # Fallback to Python if Rust fails
+                pass
+
+        # 5. Merge Iterations (Python Fallback)
         chi_squares = self._compute_chi_squares(bins)
         max_bins = self.n_bins
 

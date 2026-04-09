@@ -19,5 +19,5 @@ pip install newt
 
 ## 快速开始
 
-- [用户指南](user_guide.md)
+- [用户指南](user_guide.zh.md)
 - [API 参考](api/reference.md)

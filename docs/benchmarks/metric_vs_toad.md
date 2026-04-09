@@ -30,7 +30,7 @@ The benchmark also records median runtimes for:
 Run the benchmark from the benchmark environment:
 
 ```bash
-./.venv-benchmark-3.10/bin/newt-benchmark
+python benchmarks/metric_vs_toad.py
 ```
 
 ## Output

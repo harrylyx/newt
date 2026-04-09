@@ -304,12 +304,11 @@ fig = plot_psi_comparison(psi_dict, threshold=0.25)
 ## Documentation
 
 - **[NEW] [Hosted Documentation (RTD)](https://newt.readthedocs.io)** - The primary place for full API reference and guides.
-- [User Guide (English)](docs/user_guide.en.md) - Comprehensive end-to-end workflow guide
+- [User Guide (English)](docs/user_guide.md) - Comprehensive end-to-end workflow guide
 - [用户指南 (中文)](docs/user_guide.zh.md) - Chinese version of the user guide
-- [Release Notes (English)](docs/release_notes.md) - Summary of fixes and enhancements up to `v0.1.8`
-- [最近版本更新说明 (中文)](docs/release_notes_zh.md) - `v0.1.8` 及早期版本汇总
 - [Benchmark Guide](docs/benchmarks/metric_vs_toad.md) - Compare Newt metrics against toad on the bundled sample dataset
 - [PSI Engine Benchmark](docs/benchmarks/psi_performance.md) - Compare scalar PSI with Python/Rust batch engines
+- [ChiMerge Performance Benchmark](docs/benchmarks/chimerge_performance.md) - Compare Python and Rust ChiMerge speed and accuracy
 - [Examples](examples/) - Jupyter notebook examples
 
 ## Benchmark
@@ -317,7 +316,7 @@ fig = plot_psi_comparison(psi_dict, threshold=0.25)
 Run the bundled benchmark on `examples/data/test_data/all_data.pq` from the benchmark environment:
 
 ```bash
-./.venv-benchmark-3.10/bin/newt-benchmark
+python benchmarks/metric_vs_toad.py
 ```
 
 This writes:
@@ -330,13 +329,24 @@ The benchmark runs Newt and toad in the same benchmark environment. It does not 
 Run PSI engine performance benchmark:
 
 ```bash
-./.venv-benchmark-3.10/bin/newt-benchmark-psi
+python benchmarks/psi_performance.py
 ```
 
 This writes:
 
 - `out/benchmarks/psi_performance.json`
 - `out/benchmarks/psi_performance.md`
+
+Run ChiMerge performance benchmark:
+
+```bash
+python benchmarks/chimerge_performance.py
+```
+
+This writes:
+
+- `out/benchmarks/chimerge_performance.json`
+- `out/benchmarks/chimerge_performance.md`
 
 ## Dependencies
 
@@ -396,6 +406,7 @@ newt/
 │   ├── visualization/            # Plotting functions
 │   ├── utils/                    # Utilities
 │   └── config.py                 # Configuration constants
+├── benchmarks/                  # Benchmark scripts
 ├── tests/                         # Tests
 │   ├── unit/                     # Unit tests
 │   └── cross_val/                # Cross-validation tests

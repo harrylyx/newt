@@ -4,7 +4,7 @@ import types
 import pandas as pd
 import pytest
 
-from newt.benchmarking.metric_vs_toad import (
+from benchmarks.metric_vs_toad import (
     METADATA_COLUMNS,
     apply_reference_bins,
     build_newt_psi_breakpoints,

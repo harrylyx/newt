@@ -14,11 +14,8 @@ dependencies = [
     "matplotlib>=3.7.0,<4.0.0",
     "statsmodels>=0.14.0,<0.15.0",
     "xlsxwriter>=3.2.0,<4.0.0",
+    "tqdm>=4.66.0",
 ]
-
-[project.scripts]
-newt-benchmark = "newt.benchmarking.metric_vs_toad:main"
-newt-benchmark-psi = "newt.benchmarking.psi_performance:main"
 
 [project.optional-dependencies]
 optbinning = [

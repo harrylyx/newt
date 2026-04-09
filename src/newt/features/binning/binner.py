@@ -13,7 +13,12 @@ from newt.config import BINNING
 
 from .base import BaseBinner
 from .binner_mixins import BinnerIOMixin, BinnerStatsMixin, BinnerWOEMixin
-from .supervised import ChiMergeBinner, DecisionTreeBinner, OptBinningBinner
+from .supervised import (
+    ChiMergeBinner,
+    DecisionTreeBinner,
+    OptBinningBinner,
+    _load_rust_engine,
+)
 from .unsupervised import EqualFrequencyBinner, EqualWidthBinner, KMeansBinner
 from .woe_storage import WOEStorage
 
@@ -157,6 +162,7 @@ class Binner(BinnerStatsMixin, BinnerIOMixin, BinnerWOEMixin):
         min_samples: Union[int, float, None] = None,
         cols: Optional[List[str]] = None,
         monotonic: Union[bool, str, None] = None,
+        show_progress: bool = True,
         **kwargs,
     ) -> "Binner":
         """Fit the binning model to multiple features.
@@ -174,6 +180,7 @@ class Binner(BinnerStatsMixin, BinnerIOMixin, BinnerWOEMixin):
             monotonic: Enforce monotonic bad rate trend.
                 - True/'auto': Enforce auto-detected trend.
                 - 'ascending'/'descending': Enforce specific trend.
+            show_progress: Whether to show a progress bar.
             **kwargs: Additional parameters passed to the underlying binner.
 
         Returns:
@@ -200,30 +207,113 @@ class Binner(BinnerStatsMixin, BinnerIOMixin, BinnerWOEMixin):
 
         self._features = numeric_cols
 
-        for col in numeric_cols:
-            binner_cls = self.method_map.get(method)
-            if binner_cls is None:
-                raise ValueError(f"Unknown method: {method}")
+        # tqdm for progress tracking
+        try:
+            from tqdm.auto import tqdm
 
-            kwargs_binner = {"n_bins": n_bins, "monotonic": monotonic}
+            has_tqdm = True
+        except ImportError:
+            has_tqdm = False
 
-            if method == "dt" and min_samples is not None:
-                kwargs_binner["min_samples_leaf"] = min_samples
+        # Determine if we can use parallel Rust
+        rust_module = _load_rust_engine()
+        use_parallel = (
+            method == "chi"
+            and rust_module
+            and hasattr(rust_module, "calculate_chi_merge_numpy")
+        )
 
-            kwargs_binner.update(kwargs)
+        if use_parallel:
+            from concurrent.futures import ThreadPoolExecutor
 
-            binner = binner_cls(**kwargs_binner)
+            from scipy import stats
 
-            # For fitting, drop missing values
-            col_data = X[col]
-            valid_mask = col_data.notna()
+            threshold = float(stats.chi2.ppf(1 - (kwargs.get("alpha", 0.05)), 1))
+            n_threads = min(len(numeric_cols), 8)  # Limit threads to 8 or num cols
 
-            if valid_mask.sum() == 0:
-                continue
+            def fit_single_col(col):
+                binner_cls = self.method_map.get(method)
+                kwargs_binner = {"n_bins": n_bins, "monotonic": monotonic}
+                kwargs_binner.update(kwargs)
+                binner = binner_cls(**kwargs_binner)
 
-            binner.fit(col_data[valid_mask], y_series[valid_mask])
-            self.binners_[col] = binner
-            self.rules_[col] = binner.splits_
+                col_data = X[col]
+                valid_mask = col_data.notna()
+                if valid_mask.sum() == 0:
+                    return col, None, None
+
+                # Directly call Rust if it's ChiMerge
+                try:
+                    splits = rust_module.calculate_chi_merge_numpy(
+                        col_data[valid_mask].astype(np.float64).to_numpy(),
+                        y_series[valid_mask].astype(np.int64).to_numpy(),
+                        n_bins,
+                        threshold,
+                    )
+                    splits = sorted(list(set(splits)))
+
+                    # Handle monotonicity if requested
+                    if binner.monotonic and y_series is not None:
+                        splits = binner._adjust_monotonicity(
+                            col_data[valid_mask], y_series[valid_mask], splits
+                        )
+
+                    binner.splits_ = splits
+                    binner.is_fitted_ = True
+                except Exception:
+                    # Fallback to standard fit
+                    binner.fit(col_data[valid_mask], y_series[valid_mask])
+
+                return col, binner, binner.splits_
+
+            with ThreadPoolExecutor(max_workers=n_threads) as executor:
+                if has_tqdm and show_progress:
+                    results = list(
+                        tqdm(
+                            executor.map(fit_single_col, numeric_cols),
+                            total=len(numeric_cols),
+                            desc="Binning features (Parallel)",
+                        )
+                    )
+                else:
+                    results = list(executor.map(fit_single_col, numeric_cols))
+
+            for col, binner, splits in results:
+                if binner is not None:
+                    self.binners_[col] = binner
+                    self.rules_[col] = splits
+
+        else:
+            # Sequential fallback
+            pbar = (
+                tqdm(numeric_cols, desc="Binning features", disable=not show_progress)
+                if has_tqdm
+                else numeric_cols
+            )
+            for col in pbar:
+                binner_cls = self.method_map.get(method)
+                if binner_cls is None:
+                    raise ValueError(f"Unknown method: {method}")
+
+                kwargs_binner = {"n_bins": n_bins, "monotonic": monotonic}
+
+                if method == "dt" and min_samples is not None:
+                    kwargs_binner["min_samples_leaf"] = min_samples
+
+                kwargs_binner.update(kwargs)
+
+                binner = binner_cls(**kwargs_binner)
+
+                # For fitting, drop missing values
+                col_data = X[col]
+                valid_mask = col_data.notna()
+
+                if valid_mask.sum() == 0:
+                    continue
+
+                binner.fit(col_data[valid_mask], y_series[valid_mask])
+                self.binners_[col] = binner
+                self.rules_[col] = binner.splits_
 
         # Calculate and store statistics
         self._update_all_stats()
@@ -234,16 +324,16 @@ class Binner(BinnerStatsMixin, BinnerIOMixin, BinnerWOEMixin):
         self,
         X: pd.DataFrame,
         labels: bool = False,
+        show_progress: bool = False,
     ) -> pd.DataFrame:
-        """Apply binning rules to a DataFrame.
-
-        Discretizes values based on splits discovered during fitting. Missing
+        """Discretizes values based on splits discovered during fitting. Missing
         values are automatically assigned to a 'Missing' bin.
 
         Args:
             X: Data to transform.
             labels: If True, return bin intervals (str).
                 If False, return bin indices (int).
+            show_progress: Whether to show a progress bar.
 
         Returns:
             pd.DataFrame: Binned data with original columns replaced by
@@ -251,7 +341,19 @@ class Binner(BinnerStatsMixin, BinnerIOMixin, BinnerWOEMixin):
         """
         X_new = X.copy()
 
-        for col, binner in self.binners_.items():
+        # tqdm for progress tracking
+        try:
+            from tqdm.auto import tqdm
+
+            pbar = tqdm(
+                self.binners_.items(),
+                desc="Transforming features",
+                disable=not show_progress,
+            )
+        except ImportError:
+            pbar = self.binners_.items()
+
+        for col, binner in pbar:
             if col not in X_new.columns:
                 continue
 

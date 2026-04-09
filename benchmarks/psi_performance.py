@@ -24,7 +24,7 @@ BENCHMARK_OUTPUT_MD = "psi_performance.md"
 
 def repo_root() -> Path:
     """Return the repository root."""
-    return Path(__file__).resolve().parents[3]
+    return Path(__file__).resolve().parents[1]
 
 
 def default_output_dir() -> Path:
@@ -286,7 +286,7 @@ def build_markdown_report(payload: Dict[str, object]) -> str:
     lines.append("## Reproduce")
     lines.append("")
     lines.append("```bash")
-    lines.append("newt-benchmark-psi")
+    lines.append("python benchmarks/psi_performance.py")
     lines.append("```")
     lines.append("")
     lines.append(

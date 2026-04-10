@@ -9,7 +9,7 @@ A lightweight Python toolkit for efficient feature analysis and statistical diag
 - **WOE/IV Analysis**: Robust WOE encoding and Information Value (IV) calculation.
 - **Feature Selection**: Pipeline-style feature selection (IV, PSI, VIF, Stepwise).
 - **Scorecard Generation**: End-to-end scorecard generation and scoring.
-- **High Performance**: Rust-backed engine for IV calculation.
+- **High Performance**: High-performance Rust engine for core performance paths (Binning, Selection, IV, PSI).
 
 ## Installation
 

@@ -28,12 +28,12 @@ newt/
 │   └── config.py          # Central constants (dataclasses)
 ├── benchmarks/            # Performance scripts (Root directory)
 ├── tests/                 # Unit, Integration, Packaging tests
-└── rust/newt_iv_rust/     # Rust-backed IV engine (Core performance)
+└── rust/newt_native/      # High-performance Native engine (Rust)
 ```
 
 **Key API Patterns**:
 - **Binner**: Uses a Mixin pattern (`BinnerStatsMixin`, etc.) and `__getitem__` for `binner['feat']` access.
-- **Rust First**: IV calculations (single/batch) default to Rust with Python fallback.
+- **Rust First**: Core performance paths (Binning, Selection, IV, PSI) default to Rust with Python fallback.
 
 ## 3. Standards
 

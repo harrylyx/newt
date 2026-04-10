@@ -82,23 +82,35 @@ def test_installed_wheel_can_import_rust_extension(tmp_path: Path):
             textwrap.dedent(
                 """\
                 import importlib
-                import newt._newt_native as ext
-                assert hasattr(ext, "calculate_batch_iv"), "missing calculate_batch_iv"
-                assert hasattr(
-                    ext, "calculate_categorical_iv"
-                ), "missing calculate_categorical_iv"
-                assert hasattr(
-                    ext, "calculate_binary_metrics_batch_numpy"
-                ), "missing calculate_binary_metrics_batch_numpy"
-                assert hasattr(
-                    ext, "calculate_feature_psi_pairs_numpy"
-                ), "missing calculate_feature_psi_pairs_numpy"
+                import sys
+
+                try:
+                    import newt._newt_native as ext
+                except ImportError as e:
+                    print(f"FAILED: Native import error: {e}", file=sys.stderr)
+                    sys.exit(1)
+
+                expected_attrs = [
+                    "calculate_batch_iv",
+                    "calculate_categorical_iv",
+                    "calculate_binary_metrics_batch_numpy",
+                    "calculate_feature_psi_pairs_numpy",
+                ]
+
+                for attr in expected_attrs:
+                    if not hasattr(ext, attr):
+                        msg = f"FAILED: Attribute '{attr}' missing"
+                        print(msg, file=sys.stderr)
+                        sys.exit(2)
+
                 try:
                     importlib.import_module("newt._newt_iv_rust")
+                    msg = "FAILED: Old path 'newt._newt_iv_rust' still importable"
+                    print(msg, file=sys.stderr)
+                    sys.exit(3)
                 except ImportError:
                     pass
-                else:
-                    raise AssertionError("old extension path should not be importable")
+
                 print("RUST_IMPORT_OK")
                 """
             ),

@@ -3,7 +3,6 @@
 A lightweight Python toolkit for efficient feature analysis and statistical diagnostics in credit risk modeling.
 
 [![Documentation Status](https://readthedocs.org/projects/newt/badge/?version=latest)](https://newt.readthedocs.io/en/latest/?badge=latest)
-[![PyPI version](https://badge.fury.io/py/newt.svg)](https://badge.fury.io/py/newt)
 
 ## Features
 
@@ -26,7 +25,7 @@ pip install newt
 
 ### Install from GitHub Release
 
-Prebuilt wheels with the Rust-backed IV engine are available from
+Prebuilt wheels with the high-performance Rust engine are available from
 [GitHub Releases](https://github.com/harrylyx/newt/releases). Download the
 wheel matching your platform and Python version, then install directly:
 
@@ -97,9 +96,9 @@ Build the native extension for development after syncing the environment:
 maturin develop --manifest-path rust/newt_native/Cargo.toml --release
 ```
 
-### IV Engine Defaults
+### Native Engine Defaults
 
-Single-feature and batch IV both use the Rust engine by default.
+Core performance paths (IV, PSI, Binning, Selection) use the Rust engine by default.
 
 ```python
 from newt.features.analysis import calculate_batch_iv, calculate_iv

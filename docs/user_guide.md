@@ -12,9 +12,9 @@ The project supports Python `>=3.8.5,<3.13` (Python `3.8.5` through `3.12.x`).
 pip install newt
 ```
 
-### From GitHub Release (recommended for Rust-backed IV)
+### From GitHub Release (recommended for Native Engine)
 
-Prebuilt wheels with the Rust-backed IV calculation engine are available from
+Prebuilt wheels with the high-performance Rust engine are available from
 [GitHub Releases](https://github.com/harrylyx/newt/releases). Download the
 wheel matching your platform and Python version:
 
@@ -32,10 +32,9 @@ Supported platforms for prebuilt wheels:
 
 No Rust toolchain is required when installing from an official wheel.
 
-### Rust-Backed IV (Single + Batch)
+### High-Performance Native Engine (Rust)
 
-Newt includes a high-performance Rust extension for both single-feature IV and
-batch IV calculation.
+Newt includes a high-performance Rust extension for various core performance paths, including single-feature IV, batch IV, PSI, ChiMerge, and Stepwise selection.
 When installed from an official wheel, it works immediately:
 
 ```python

@@ -12,9 +12,9 @@
 pip install newt
 ```
 
-### 从 GitHub Release 安装（推荐，可获得 Rust IV 引擎）
+### 从 GitHub Release 安装（推荐，可获得原生引擎）
 
-包含预编译 Rust IV 计算引擎的 wheel 文件可从
+包含预编译高性能 Rust 引擎的 wheel 文件可从
 [GitHub Releases](https://github.com/harrylyx/newt/releases) 下载。选择与您的操作系统和 Python 版本匹配的 wheel 文件：
 
 ```bash
@@ -31,9 +31,9 @@ pip install newt-<版本号>-<平台>.whl
 
 从官方 wheel 安装时无需安装 Rust 工具链。
 
-### 基于 Rust 的 IV 计算（单特征 + 批量）
+### 高性能原生引擎 (Rust)
 
-Newt 包含一个高性能的 Rust 扩展用于单特征 IV 和批量 IV 计算。从官方 wheel 安装后可直接使用：
+Newt 包含一个高性能的 Rust 扩展，用于加速核心计算路径，包括单特征 IV、批量 IV、PSI、ChiMerge 以及逐步回归特征选择。从官方 wheel 安装后可直接使用：
 
 ```python
 from newt.features.analysis import calculate_batch_iv, calculate_iv

@@ -8,8 +8,12 @@ import statsmodels.api as sm
 from newt.features.selection.stepwise import StepwiseSelector
 
 try:
-    from newt._newt_native import fit_logistic_regression_numpy
+    from newt._newt_native import (
+        batch_fit_logistic_regression_numpy,
+        fit_logistic_regression_numpy,
+    )
 except ImportError:
+    batch_fit_logistic_regression_numpy = None
     fit_logistic_regression_numpy = None
 
 
@@ -38,7 +42,10 @@ def stepwise_data():
 
 
 def _require_stepwise_rust():
-    if fit_logistic_regression_numpy is None:
+    if (
+        fit_logistic_regression_numpy is None
+        or batch_fit_logistic_regression_numpy is None
+    ):
         pytest.skip("Rust stepwise engine is not available in this environment")
 
 
@@ -255,6 +262,83 @@ class TestStepwiseSelectorFit:
         assert rust_result["aic"] == pytest.approx(statsmodels_result.aic, abs=1e-8)
         assert rust_result["bic"] == pytest.approx(statsmodels_result.bic, abs=1e-8)
         assert rust_result["converged"] is True
+
+    @pytest.mark.parametrize("direction", ["forward", "both"])
+    def test_rust_skips_invalid_candidates_during_selection(
+        self, stepwise_data, direction
+    ):
+        """Rust stepwise should skip invalid candidates instead of crashing."""
+        _require_stepwise_rust()
+        X, y = stepwise_data
+        X = X.copy()
+        X["const_bad"] = 1.0
+        X["dup_x1"] = X["x1"]
+        X["nan_bad"] = np.nan
+        X["inf_bad"] = np.inf
+
+        python_selector = StepwiseSelector(
+            direction=direction,
+            criterion="aic",
+            engine="python",
+            verbose=False,
+        )
+        rust_selector = StepwiseSelector(
+            direction=direction,
+            criterion="aic",
+            engine="rust",
+            verbose=False,
+        )
+
+        python_selector.fit(X, y)
+        rust_selector.fit(X, y)
+
+        assert rust_selector.selected_features_ == python_selector.selected_features_
+        assert "const_bad" not in rust_selector.selected_features_
+        assert "dup_x1" not in rust_selector.selected_features_
+        assert "nan_bad" not in rust_selector.selected_features_
+        assert "inf_bad" not in rust_selector.selected_features_
+
+    def test_rust_batch_logit_returns_failed_records_for_bad_candidates(self):
+        """Bad batch candidates should return sentinel failures, not panic."""
+        _require_stepwise_rust()
+        n_samples = 24
+        y = np.array([0, 1] * (n_samples // 2), dtype=float)
+        fixed_x = np.ones((n_samples, 1), dtype=float)
+        normal_candidate = np.linspace(-1.0, 1.0, n_samples, dtype=float)
+        constant_candidate = np.ones(n_samples, dtype=float)
+        nan_candidate = np.full(n_samples, np.nan, dtype=float)
+        inf_candidate = np.full(n_samples, np.inf, dtype=float)
+
+        results = batch_fit_logistic_regression_numpy(
+            fixed_x,
+            [
+                normal_candidate,
+                constant_candidate,
+                nan_candidate,
+                inf_candidate,
+            ],
+            y,
+            max_iter=25,
+        )
+
+        assert len(results) == 4
+        assert results[0]["converged"] is True
+
+        for failed_result in results[1:]:
+            assert failed_result["converged"] is False
+            assert failed_result["p_value"] == pytest.approx(1.0)
+            assert failed_result["aic"] == np.inf
+            assert failed_result["bic"] == np.inf
+
+    def test_rust_single_logit_singular_matrix_raises_runtime_error(self):
+        """Singular single-model fits should raise a normal Python error."""
+        _require_stepwise_rust()
+        n_samples = 24
+        y = np.array([0, 1] * (n_samples // 2), dtype=float)
+        singular_x = np.column_stack([np.ones(n_samples), np.ones(n_samples)])
+
+        with pytest.raises(RuntimeError):
+            fit_logistic_regression_numpy(singular_x, y, max_iter=25)
 
 
 class TestStepwiseSelectorTransform:

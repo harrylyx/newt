@@ -4,6 +4,7 @@ use pyo3::prelude::*;
 use pyo3::types::PyDict;
 use rayon::prelude::*;
 use statrs::distribution::{ContinuousCDF, Normal};
+use std::panic::{catch_unwind, AssertUnwindSafe};
 
 struct LogitResult {
     coefficients: faer::Mat<f64>,
@@ -14,6 +15,86 @@ struct LogitResult {
     converged: bool,
 }
 
+fn mat_all_finite(matrix: faer::mat::MatRef<'_, f64>) -> bool {
+    for row in 0..matrix.nrows() {
+        for col in 0..matrix.ncols() {
+            if !matrix[(row, col)].is_finite() {
+                return false;
+            }
+        }
+    }
+    true
+}
+
+fn lu_is_effectively_singular(lu: &faer::linalg::solvers::FullPivLu<f64>) -> bool {
+    let upper = lu.U();
+    let dim = upper.nrows().min(upper.ncols());
+    if dim == 0 {
+        return true;
+    }
+
+    let mut max_diag = 0.0_f64;
+    for idx in 0..dim {
+        let diag = upper[(idx, idx)].abs();
+        if !diag.is_finite() {
+            return true;
+        }
+        if diag > max_diag {
+            max_diag = diag;
+        }
+    }
+
+    if max_diag == 0.0 {
+        return true;
+    }
+
+    let tolerance = 1e-12_f64 * max_diag.max(1.0);
+    for idx in 0..dim {
+        if upper[(idx, idx)].abs() <= tolerance {
+            return true;
+        }
+    }
+
+    false
+}
+
+fn safe_full_piv_solve(
+    hessian: faer::mat::MatRef<'_, f64>,
+    gradient: faer::mat::MatRef<'_, f64>,
+) -> Result<faer::Mat<f64>, String> {
+    catch_unwind(AssertUnwindSafe(|| {
+        let lu = hessian.full_piv_lu();
+        if lu_is_effectively_singular(&lu) {
+            return Err("logistic regression hessian is singular".to_string());
+        }
+
+        let solution = lu.solve(gradient);
+        if !mat_all_finite(solution.as_ref()) {
+            return Err("logistic regression solve produced non-finite values".to_string());
+        }
+
+        Ok(solution)
+    }))
+    .map_err(|_| "logistic regression linear solve panicked".to_string())?
+}
+
+fn safe_full_piv_inverse(hessian: faer::mat::MatRef<'_, f64>) -> Result<faer::Mat<f64>, String> {
+    catch_unwind(AssertUnwindSafe(|| {
+        let lu = hessian.full_piv_lu();
+        if lu_is_effectively_singular(&lu) {
+            return Err("logistic regression hessian is singular".to_string());
+        }
+
+        let inverse = lu.inverse();
+        if !mat_all_finite(inverse.as_ref()) {
+            return Err("logistic regression inverse produced non-finite values".to_string());
+        }
+
+        Ok(inverse)
+    }))
+    .map_err(|_| "logistic regression inverse panicked".to_string())?
+}
+
 fn fit_logit_internal(
     x_faer: faer::mat::MatRef<'_, f64>,
     y_faer: faer::mat::MatRef<'_, f64>,
@@ -22,6 +103,10 @@ fn fit_logit_internal(
 ) -> Result<LogitResult, String> {
     let n = x_faer.nrows();
     let k = x_faer.ncols();
+
+    if !mat_all_finite(x_faer) || !mat_all_finite(y_faer) {
+        return Err("logistic regression input contains NaN or inf".to_string());
+    }
 
     let mut beta = faer::Mat::<f64>::zeros(k, 1);
     let mut log_likelihood = f64::NEG_INFINITY;
@@ -40,12 +125,18 @@ fn fit_logit_internal(
             current_ll += y_faer[(row, 0)] * probability.ln()
                 + (1.0_f64 - y_faer[(row, 0)]) * (1.0_f64 - probability).ln();
         }
+        if !current_ll.is_finite() {
+            return Err("logistic regression produced non-finite log-likelihood".to_string());
+        }
 
         let mut err = faer::Mat::<f64>::zeros(n, 1);
         for row in 0..n {
             err[(row, 0)] = y_faer[(row, 0)] - p[(row, 0)];
         }
         let gradient = x_faer.transpose() * &err;
+        if !mat_all_finite(gradient.as_ref()) {
+            return Err("logistic regression produced non-finite gradient".to_string());
+        }
 
         let mut x_weighted = faer::Mat::<f64>::zeros(n, k);
         for row in 0..n {
@@ -56,9 +147,15 @@ fn fit_logit_internal(
             }
         }
         let hessian = x_faer.transpose() * &x_weighted;
+        if !mat_all_finite(hessian.as_ref()) {
+            return Err("logistic regression produced non-finite hessian".to_string());
+        }
 
-        let solve_res = hessian.full_piv_lu().solve(&gradient);
+        let solve_res = safe_full_piv_solve(hessian.as_ref(), gradient.as_ref())?;
         beta += &solve_res;
+        if !mat_all_finite(beta.as_ref()) {
+            return Err("logistic regression produced non-finite coefficients".to_string());
+        }
 
         if (current_ll - log_likelihood).abs() < tol {
             log_likelihood = current_ll;
@@ -73,6 +170,9 @@ fn fit_logit_internal(
         let value = x_beta[(row, 0)];
         1.0_f64 / (1.0_f64 + (-value).exp())
     });
+    if !mat_all_finite(p.as_ref()) {
+        return Err("logistic regression produced non-finite probabilities".to_string());
+    }
 
     let mut x_weighted = faer::Mat::<f64>::zeros(n, k);
     for row in 0..n {
@@ -83,26 +183,38 @@ fn fit_logit_internal(
         }
     }
     let hessian = x_faer.transpose() * &x_weighted;
-    let inv_hessian = hessian.full_piv_lu().inverse();
+    if !mat_all_finite(hessian.as_ref()) {
+        return Err("logistic regression produced non-finite hessian".to_string());
+    }
+    let inv_hessian = safe_full_piv_inverse(hessian.as_ref())?;
 
     let mut p_values = Vec::with_capacity(k);
     let normal = Normal::new(0.0, 1.0).map_err(|err| err.to_string())?;
 
     for idx in 0..k {
         let variance = inv_hessian[(idx, idx)];
-        let p_value = if variance > 0.0 {
-            let standard_error = variance.sqrt();
-            let coefficient = beta[(idx, 0)];
-            let z_score = coefficient / standard_error;
-            2.0 * (1.0 - normal.cdf(z_score.abs()))
-        } else {
-            f64::NAN
-        };
+        if !variance.is_finite() || variance <= 0.0 {
+            return Err("logistic regression hessian inverse is not positive definite".to_string());
+        }
+
+        let standard_error = variance.sqrt();
+        let coefficient = beta[(idx, 0)];
+        if !coefficient.is_finite() || !standard_error.is_finite() {
+            return Err("logistic regression diagnostics are non-finite".to_string());
+        }
+        let z_score = coefficient / standard_error;
+        let p_value = 2.0 * (1.0 - normal.cdf(z_score.abs()));
+        if !p_value.is_finite() {
+            return Err("logistic regression produced non-finite p-values".to_string());
+        }
         p_values.push(p_value);
     }
 
     let aic = 2.0 * (k as f64) - 2.0 * log_likelihood;
     let bic = (n as f64).ln() * (k as f64) - 2.0 * log_likelihood;
+    if !aic.is_finite() || !bic.is_finite() || !log_likelihood.is_finite() {
+        return Err("logistic regression information criteria are non-finite".to_string());
+    }
 
     Ok(LogitResult {
         coefficients: beta,
@@ -235,7 +347,12 @@ fn batch_fit_logistic_regression_numpy(
     let mut py_results = Vec::with_capacity(results.len());
     for result in results {
         let dict = PyDict::new(py);
-        dict.set_item("p_value", result.p_values.last().copied().unwrap_or(1.0))?;
+        let p_value = if result.converged {
+            result.p_values.last().copied().unwrap_or(1.0)
+        } else {
+            1.0
+        };
+        dict.set_item("p_value", p_value)?;
         dict.set_item("aic", result.aic)?;
         dict.set_item("bic", result.bic)?;
         dict.set_item("converged", result.converged)?;

@@ -30,6 +30,14 @@ def _require_chimerge_rust():
         pytest.skip("Rust ChiMerge engine is not available in this environment")
 
 
+def _require_batch_chimerge_rust():
+    rust_module = supervised_module._load_rust_engine()
+    if rust_module is None or not hasattr(
+        rust_module, "calculate_batch_chi_merge_numpy"
+    ):
+        pytest.skip("Rust batch ChiMerge engine is not available in this environment")
+
+
 def test_equal_width(binning_data):
     X, _ = binning_data
     binner = EqualWidthBinner(n_bins=5)
@@ -130,6 +138,110 @@ def test_binner_chi_rust_matches_python_public_entrypoint(binning_data, monkeypa
         rust_binner.transform(frame, show_progress=False),
         python_binner.transform(frame, show_progress=False),
     )
+
+
+def test_binner_chi_rust_matches_python_with_monotonic_true(binning_data, monkeypatch):
+    _require_chimerge_rust()
+    X, y = binning_data
+    frame = pd.DataFrame({"score": X, "score_sq": X**2})
+
+    rust_binner = Binner()
+    rust_binner.fit(
+        frame,
+        y,
+        method="chi",
+        n_bins=5,
+        monotonic=True,
+        show_progress=False,
+    )
+
+    monkeypatch.setattr(supervised_module, "_load_rust_engine", lambda: None)
+    monkeypatch.setattr(binner_module, "_load_rust_engine", lambda: None)
+    python_binner = Binner()
+    python_binner.fit(
+        frame,
+        y,
+        method="chi",
+        n_bins=5,
+        monotonic=True,
+        show_progress=False,
+    )
+
+    for feature in frame.columns:
+        assert rust_binner.rules_[feature] == pytest.approx(
+            python_binner.rules_[feature], abs=1e-12
+        )
+
+    pd.testing.assert_frame_equal(
+        rust_binner.transform(frame, show_progress=False),
+        python_binner.transform(frame, show_progress=False),
+    )
+
+
+def test_binner_chi_rust_matches_python_with_missing_constant_and_repeated(
+    binning_data, monkeypatch
+):
+    _require_chimerge_rust()
+    X, y = binning_data
+    frame = pd.DataFrame(
+        {
+            "score": X,
+            "score_nan": X.mask(np.arange(len(X)) % 11 == 0),
+            "score_repeat": np.round(X, 2),
+            "score_const": 1.0,
+        }
+    )
+
+    rust_binner = Binner()
+    rust_binner.fit(frame, y, method="chi", n_bins=5, show_progress=False)
+
+    monkeypatch.setattr(supervised_module, "_load_rust_engine", lambda: None)
+    monkeypatch.setattr(binner_module, "_load_rust_engine", lambda: None)
+    python_binner = Binner()
+    python_binner.fit(frame, y, method="chi", n_bins=5, show_progress=False)
+
+    for feature in frame.columns:
+        assert rust_binner.rules_[feature] == pytest.approx(
+            python_binner.rules_[feature], abs=1e-12
+        )
+
+    pd.testing.assert_frame_equal(
+        rust_binner.transform(frame, show_progress=False),
+        python_binner.transform(frame, show_progress=False),
+    )
+
+
+def test_binner_chi_uses_batch_rust_api_for_multi_feature_fit(
+    binning_data, monkeypatch
+):
+    _require_batch_chimerge_rust()
+    rust_module = supervised_module._load_rust_engine()
+    X, y = binning_data
+    frame = pd.DataFrame({"score": X, "score_sq": X**2})
+
+    class RustProxy:
+        def __init__(self, module):
+            self._module = module
+            self.batch_calls = 0
+            self.single_calls = 0
+
+        def calculate_batch_chi_merge_numpy(self, *args, **kwargs):
+            self.batch_calls += 1
+            return self._module.calculate_batch_chi_merge_numpy(*args, **kwargs)
+
+        def calculate_chi_merge_numpy(self, *args, **kwargs):
+            self.single_calls += 1
+            return self._module.calculate_chi_merge_numpy(*args, **kwargs)
+
+    proxy = RustProxy(rust_module)
+    monkeypatch.setattr(binner_module, "_load_rust_engine", lambda: proxy)
+    monkeypatch.setattr(supervised_module, "_load_rust_engine", lambda: proxy)
+
+    binner = Binner()
+    binner.fit(frame, y, method="chi", n_bins=5, show_progress=False)
+
+    assert proxy.batch_calls == 1
+    assert proxy.single_calls == 0
 
 
 def test_monotonicity_adjustment(binning_data):

@@ -215,73 +215,122 @@ class Binner(BinnerStatsMixin, BinnerIOMixin, BinnerWOEMixin):
         except ImportError:
             has_tqdm = False
 
-        # Determine if we can use parallel Rust
+        # Determine if we can use batch Rust ChiMerge
         rust_module = _load_rust_engine()
-        use_parallel = (
+        use_batch_rust = (
             method == "chi"
+            and y_series is not None
             and rust_module
-            and hasattr(rust_module, "calculate_chi_merge_numpy")
+            and hasattr(rust_module, "calculate_batch_chi_merge_numpy")
         )
 
-        if use_parallel:
-            from concurrent.futures import ThreadPoolExecutor
-
+        if use_batch_rust:
             from scipy import stats
 
             threshold = float(stats.chi2.ppf(1 - (kwargs.get("alpha", 0.05)), 1))
-            n_threads = min(len(numeric_cols), 8)  # Limit threads to 8 or num cols
+            binner_cls = self.method_map.get(method)
+            if binner_cls is None:
+                raise ValueError(f"Unknown method: {method}")
 
-            def fit_single_col(col):
-                binner_cls = self.method_map.get(method)
-                kwargs_binner = {"n_bins": n_bins, "monotonic": monotonic}
-                kwargs_binner.update(kwargs)
+            kwargs_binner = {"n_bins": n_bins, "monotonic": monotonic}
+            kwargs_binner.update(kwargs)
+
+            pbar = (
+                tqdm(
+                    total=len(numeric_cols),
+                    desc="Binning features (Rust Batch)",
+                    disable=not show_progress,
+                )
+                if has_tqdm
+                else None
+            )
+
+            # Group columns by missing-mask so each batch call can share the same y.
+            grouped_cols: Dict[bytes, Dict[str, Any]] = {}
+            feature_meta: Dict[str, Dict[str, Any]] = {}
+            for col in numeric_cols:
                 binner = binner_cls(**kwargs_binner)
-
                 col_data = X[col]
                 valid_mask = col_data.notna()
                 if valid_mask.sum() == 0:
-                    return col, None, None
+                    if pbar is not None:
+                        pbar.update(1)
+                    continue
 
-                # Directly call Rust if it's ChiMerge
+                feature_meta[col] = {
+                    "binner": binner,
+                    "col_data": col_data,
+                    "valid_mask": valid_mask,
+                }
+
+                mask_key = valid_mask.to_numpy(dtype=np.bool_, copy=False).tobytes()
+                if mask_key not in grouped_cols:
+                    grouped_cols[mask_key] = {"mask": valid_mask, "cols": []}
+                grouped_cols[mask_key]["cols"].append(col)
+
+            def _fit_single_column_fallback(col: str):
+                meta = feature_meta[col]
+                binner = meta["binner"]
+                col_data = meta["col_data"]
+                valid_mask = meta["valid_mask"]
+                binner.fit(col_data[valid_mask], y_series[valid_mask])
+                self.binners_[col] = binner
+                self.rules_[col] = binner.splits_
+                if pbar is not None:
+                    pbar.update(1)
+
+            for group in grouped_cols.values():
+                valid_mask = group["mask"]
+                cols_in_group = group["cols"]
+                y_arr = y_series[valid_mask].astype(np.int64).to_numpy()
+                feature_arrays = [
+                    X[col][valid_mask].astype(np.float64).to_numpy()
+                    for col in cols_in_group
+                ]
+
                 try:
-                    splits = rust_module.calculate_chi_merge_numpy(
-                        col_data[valid_mask].astype(np.float64).to_numpy(),
-                        y_series[valid_mask].astype(np.int64).to_numpy(),
+                    batch_splits = rust_module.calculate_batch_chi_merge_numpy(
+                        feature_arrays,
+                        y_arr,
                         n_bins,
                         threshold,
                     )
-                    splits = sorted(list(set(splits)))
-
-                    # Handle monotonicity if requested
-                    if binner.monotonic and y_series is not None:
-                        splits = binner._adjust_monotonicity(
-                            col_data[valid_mask], y_series[valid_mask], splits
-                        )
-
-                    binner.splits_ = splits
-                    binner.is_fitted_ = True
                 except Exception:
-                    # Fallback to standard fit
-                    binner.fit(col_data[valid_mask], y_series[valid_mask])
+                    for col in cols_in_group:
+                        _fit_single_column_fallback(col)
+                    continue
 
-                return col, binner, binner.splits_
+                if len(batch_splits) != len(cols_in_group):
+                    for col in cols_in_group:
+                        _fit_single_column_fallback(col)
+                    continue
 
-            with ThreadPoolExecutor(max_workers=n_threads) as executor:
-                if has_tqdm and show_progress:
-                    results = list(
-                        tqdm(
-                            executor.map(fit_single_col, numeric_cols),
-                            total=len(numeric_cols),
-                            desc="Binning features (Parallel)",
-                        )
-                    )
-                else:
-                    results = list(executor.map(fit_single_col, numeric_cols))
+                for col, splits in zip(cols_in_group, batch_splits):
+                    meta = feature_meta[col]
+                    binner = meta["binner"]
+                    col_data = meta["col_data"]
+                    valid_mask = meta["valid_mask"]
 
-            for col, binner, splits in results:
-                if binner is not None:
-                    self.binners_[col] = binner
-                    self.rules_[col] = splits
+                    try:
+                        split_list = sorted(list(set(splits)))
+                        if binner.monotonic:
+                            split_list = binner._adjust_monotonicity(
+                                col_data[valid_mask], y_series[valid_mask], split_list
+                            )
+
+                        binner.splits_ = split_list
+                        binner.is_fitted_ = True
+                        self.binners_[col] = binner
+                        self.rules_[col] = binner.splits_
+                    except Exception:
+                        _fit_single_column_fallback(col)
+                        continue
+
+                    if pbar is not None:
+                        pbar.update(1)
+
+            if pbar is not None:
+                pbar.close()
 
         else:
             # Sequential fallback

@@ -15,6 +15,7 @@ import numpy as np
 import pandas as pd
 from scipy import stats
 
+from newt._native import load_native_module
 from newt.features.binning import Binner
 from newt.features.binning.supervised import ChiMergeBinner
 
@@ -167,7 +168,7 @@ def benchmark_python_pure(X: pd.DataFrame, y: pd.Series, n_bins: int) -> float:
 
 
 def benchmark_rust_sequential(X: pd.DataFrame, y: pd.Series, n_bins: int) -> float:
-    """Run ChiMerge using Rust engine via single-threaded sequential fit."""
+    """Run single-column ChiMerge binner repeatedly."""
     start = time.perf_counter()
     for col in X.columns:
         binner = ChiMergeBinner(n_bins=n_bins)
@@ -175,10 +176,29 @@ def benchmark_rust_sequential(X: pd.DataFrame, y: pd.Series, n_bins: int) -> flo
     return (time.perf_counter() - start) * 1000.0
 
 
-def benchmark_rust_parallel(
+def benchmark_rust_native_batch_splits(
+    X: pd.DataFrame, y: pd.Series, n_bins: int, alpha: float = 0.05
+) -> float:
+    """Run native batch ChiMerge only (split discovery without Binner stats)."""
+    rust_module = load_native_module()
+    if rust_module is None or not hasattr(
+        rust_module, "calculate_batch_chi_merge_numpy"
+    ):
+        raise RuntimeError("Rust batch ChiMerge is not available in this environment.")
+
+    threshold = float(stats.chi2.ppf(1 - alpha, 1))
+    features = [X[col].astype(np.float64).to_numpy() for col in X.columns]
+    target = y.astype(np.int64).to_numpy()
+
+    start = time.perf_counter()
+    rust_module.calculate_batch_chi_merge_numpy(features, target, n_bins, threshold)
+    return (time.perf_counter() - start) * 1000.0
+
+
+def benchmark_full_binner_fit(
     X: pd.DataFrame, y: pd.Series, n_bins: int, show_progress: bool = False
 ) -> float:
-    """Run ChiMerge using the new Rust parallel engine via Binner.fit."""
+    """Run full Binner.fit including stats/WOE/IV computation."""
     binner = Binner()
     start = time.perf_counter()
     binner.fit(X, y, method="chi", n_bins=n_bins, show_progress=show_progress)
@@ -191,8 +211,8 @@ def build_markdown_report(payload: Dict[str, Any]) -> str:
     lines = [
         "# ChiMerge Engine Benchmark",
         "",
-        "Comparing Pure Python implementation vs Rust sequential "
-        "and Rust parallel engines.",
+        "Comparing pure Python baseline, native split discovery, "
+        "single-column ChiMerge, and full Binner.fit.",
         "",
         "## Environment",
         "",
@@ -203,17 +223,27 @@ def build_markdown_report(payload: Dict[str, Any]) -> str:
         "",
         "## Performance Metrics",
         "",
-        "| rows | features | n_bins | python_pure_ms | rust_seq_ms | "
-        "rust_par_ms | rust_vs_py_speedup |",
-        "| ---: | ---: | ---: | ---: | ---: | ---: | ---: |",
+        "| rows | features | n_bins | python_pure_ms | native_batch_splits_ms | "
+        "single_chimerge_ms | full_binner_fit_ms | batch_vs_single | full_vs_single |",
+        "| ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |",
     ]
 
     for s in payload["scenarios"]:
-        speedup = s["python_ms"] / s["rust_ms"] if s["rust_ms"] > 0 else 0
+        batch_vs_single = (
+            s["single_chimerge_ms"] / s["native_batch_splits_ms"]
+            if s["native_batch_splits_ms"] > 0
+            else 0
+        )
+        full_vs_single = (
+            s["single_chimerge_ms"] / s["full_binner_fit_ms"]
+            if s["full_binner_fit_ms"] > 0
+            else 0
+        )
         lines.append(
             f"| {s['rows']} | {s['features']} | {s['n_bins']} | "
-            f"{s['python_ms']:.2f} | {s['rust_ms']:.2f} | "
-            f"{s['rust_par_ms']:.2f} | {speedup:.2f}x |"
+            f"{s['python_ms']:.2f} | {s['native_batch_splits_ms']:.2f} | "
+            f"{s['single_chimerge_ms']:.2f} | {s['full_binner_fit_ms']:.2f} | "
+            f"{batch_vs_single:.2f}x | {full_vs_single:.2f}x |"
         )
 
     lines.append("")
@@ -337,13 +367,16 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             else:
                 py_ms = 0.0
 
-            # Rust Sequential
-            print("  Running Rust Sequential...")
-            rs_seq_ms = benchmark_rust_sequential(X, y_series, args.n_bins)
+            print("  Running Native Batch Splits...")
+            native_batch_ms = benchmark_rust_native_batch_splits(
+                X, y_series, args.n_bins
+            )
 
-            # Rust Parallel
-            print("  Running Rust Parallel...")
-            rs_par_ms = benchmark_rust_parallel(X, y_series, args.n_bins)
+            print("  Running Single-column ChiMerge...")
+            single_chimerge_ms = benchmark_rust_sequential(X, y_series, args.n_bins)
+
+            print("  Running Full Binner.fit...")
+            full_fit_ms = benchmark_full_binner_fit(X, y_series, args.n_bins)
 
             scenarios.append(
                 {
@@ -351,8 +384,9 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
                     "features": len(X.columns),
                     "n_bins": args.n_bins,
                     "python_ms": py_ms,
-                    "rust_ms": rs_seq_ms,
-                    "rust_par_ms": rs_par_ms,
+                    "native_batch_splits_ms": native_batch_ms,
+                    "single_chimerge_ms": single_chimerge_ms,
+                    "full_binner_fit_ms": full_fit_ms,
                     "peak_rss_mb": get_peak_rss_mb(),
                 }
             )

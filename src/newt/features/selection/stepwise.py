@@ -28,6 +28,41 @@ else:
     HAS_RUST = False
 
 
+def _failed_rust_batch_result() -> Dict[str, float]:
+    return {
+        "p_value": 1.0,
+        "aic": np.inf,
+        "bic": np.inf,
+        "converged": False,
+    }
+
+
+def _normalize_rust_batch_result(result: object) -> Dict[str, float]:
+    failed = _failed_rust_batch_result()
+    if not isinstance(result, dict):
+        return failed
+
+    converged = bool(result.get("converged", False))
+    p_value = float(result.get("p_value", 1.0))
+    aic = float(result.get("aic", np.inf))
+    bic = float(result.get("bic", np.inf))
+
+    if (
+        not converged
+        or not np.isfinite(p_value)
+        or not np.isfinite(aic)
+        or not np.isfinite(bic)
+    ):
+        return failed
+
+    return {
+        "p_value": p_value,
+        "aic": aic,
+        "bic": bic,
+        "converged": True,
+    }
+
+
 class StepwiseSelector:
     """
     Stepwise regression feature selector.
@@ -175,9 +210,16 @@ class StepwiseSelector:
             try:
                 # Rust engine returns a dict resembling sm result structure
                 # for AIC/BIC compatibility.
-                return fit_logistic_regression_numpy(
+                result = fit_logistic_regression_numpy(
                     X_subset, y.values.astype(float), max_iter=self.max_iter
                 )
+                if not isinstance(result, dict):
+                    return None
+                if not np.isfinite(float(result.get("aic", np.inf))):
+                    return None
+                if not np.isfinite(float(result.get("bic", np.inf))):
+                    return None
+                return result
             except Exception:
                 return None
         else:
@@ -243,6 +285,58 @@ class StepwiseSelector:
             except AttributeError:
                 return 1.0
 
+    def _is_invalid_rust_candidate(
+        self, candidate_values: np.ndarray, fixed_x: np.ndarray
+    ) -> bool:
+        if not np.isfinite(candidate_values).all():
+            return True
+
+        if np.unique(candidate_values).size <= 1:
+            return True
+
+        if fixed_x.ndim == 2 and fixed_x.shape[1] > 0:
+            for col_idx in range(fixed_x.shape[1]):
+                if np.array_equal(candidate_values, fixed_x[:, col_idx]):
+                    return True
+
+        return False
+
+    def _evaluate_rust_candidates(
+        self,
+        X: pd.DataFrame,
+        y: pd.Series,
+        fixed_x: np.ndarray,
+        remaining: List[str],
+    ) -> List[Dict[str, float]]:
+        results = [_failed_rust_batch_result() for _ in remaining]
+        valid_candidate_vecs: List[np.ndarray] = []
+        valid_indices: List[int] = []
+
+        for idx, feature in enumerate(remaining):
+            candidate_values = X[feature].values.astype(float)
+            if self._is_invalid_rust_candidate(candidate_values, fixed_x):
+                continue
+            valid_candidate_vecs.append(candidate_values)
+            valid_indices.append(idx)
+
+        if not valid_candidate_vecs:
+            return results
+
+        try:
+            rust_results = batch_fit_logistic_regression_numpy(
+                fixed_x,
+                valid_candidate_vecs,
+                y.values.astype(float),
+                max_iter=self.max_iter,
+            )
+        except Exception:
+            return results
+
+        for idx, rust_result in zip(valid_indices, rust_results):
+            results[idx] = _normalize_rust_batch_result(rust_result)
+
+        return results
+
     def _forward_selection(
         self,
         X: pd.DataFrame,
@@ -272,15 +366,7 @@ class StepwiseSelector:
                 if self.fit_intercept:
                     fixed_x = np.column_stack([np.ones(fixed_x.shape[0]), fixed_x])
 
-                candidate_vecs = [X[f].values.astype(float) for f in remaining]
-
-                # Rust returns a list of result dicts
-                results = batch_fit_logistic_regression_numpy(
-                    fixed_x,
-                    candidate_vecs,
-                    y.values.astype(float),
-                    max_iter=self.max_iter,
-                )
+                results = self._evaluate_rust_candidates(X, y, fixed_x, remaining)
 
                 current_model = self._fit_model(X, y, selected, sm)
                 current_criterion = self._get_criterion_value(
@@ -464,13 +550,7 @@ class StepwiseSelector:
                 fixed_x = X[selected].values
                 if self.fit_intercept:
                     fixed_x = np.column_stack([np.ones(fixed_x.shape[0]), fixed_x])
-                candidate_vecs = [X[f].values.astype(float) for f in remaining]
-                results = batch_fit_logistic_regression_numpy(
-                    fixed_x,
-                    candidate_vecs,
-                    y.values.astype(float),
-                    max_iter=self.max_iter,
-                )
+                results = self._evaluate_rust_candidates(X, y, fixed_x, remaining)
 
                 current_model = self._fit_model(X, y, selected, sm)
                 current_criterion = self._get_criterion_value(

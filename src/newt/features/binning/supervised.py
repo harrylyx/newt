@@ -129,21 +129,35 @@ class ChiMergeBinner(BaseBinner):
 
         # 1. Prepare data
         df = pd.DataFrame({"X": X, "y": y}).dropna()
-        X_arr = df["X"].values
-        y_arr = df["y"].values
+        X_arr = df["X"].to_numpy(dtype=np.float64)
+        y_arr = df["y"].to_numpy(dtype=np.int64)
 
         if len(X_arr) == 0:
             return []
 
-        # 2. Sort
+        threshold = float(stats.chi2.ppf(1 - self.alpha, 1))
+
+        # 2. Try Rust engine first
+        rust_module = _load_rust_engine()
+        if rust_module and hasattr(rust_module, "calculate_chi_merge_numpy"):
+            try:
+                splits = rust_module.calculate_chi_merge_numpy(
+                    X_arr,
+                    y_arr,
+                    self.n_bins,
+                    threshold,
+                )
+                return sorted(splits)
+            except Exception:
+                # Fallback to Python if Rust fails
+                pass
+
+        # 3. Initial binning for Python fallback
         sort_idx = np.argsort(X_arr)
         X_sorted = X_arr[sort_idx]
         y_sorted = y_arr[sort_idx]
-
-        # 3. Initial binning using unique values
         unique_vals, counts = np.unique(X_sorted, return_counts=True)
 
-        # Calculate event counts for each unique value
         event_counts = []
         start = 0
         for count in counts:
@@ -153,105 +167,23 @@ class ChiMergeBinner(BaseBinner):
 
         bins = list(zip(unique_vals, counts, event_counts))
 
-        # 4. Try Rust Engine
-        rust_module = _load_rust_engine()
-        if rust_module and hasattr(rust_module, "calculate_chi_merge_numpy"):
-            try:
-                threshold = stats.chi2.ppf(1 - self.alpha, 1)
-                splits = rust_module.calculate_chi_merge_numpy(
-                    X_arr.astype(np.float64),
-                    y_arr.astype(np.int64),
-                    self.n_bins,
-                    float(threshold),
-                )
-                return sorted(splits)
-            except Exception:
-                # Fallback to Python if Rust fails
-                pass
-
-        # 5. Merge Iterations (Python Fallback)
+        # 4. Merge iterations (Python fallback)
         chi_squares = self._compute_chi_squares(bins)
         max_bins = self.n_bins
-
-        # Threshold from user code logic:
-        # while len(bins) > max_bins AND min_chi < threshold
-        threshold = stats.chi2.ppf(1 - self.alpha, 1)
 
         while len(bins) > max_bins:
             if len(chi_squares) == 0:
                 break
 
             min_chi2 = np.min(chi_squares)
-
-            # User Code: len(bins) > max and min_chi < threshold
-            # This allows returning more bins than max_bins if they are all significant.
-
             if min_chi2 >= threshold:
-                # If all adjacent bins are significantly different
-                if len(bins) <= max_bins:
-                    break
-                # If still too many bins, force merge the most similar one?
-                # Standard ChiMerge implementations often stop here.
-                # I'll stick to user logic: stop if significant.
-                if len(chi_squares) > 0 and min_chi2 >= threshold:
-                    # Force merge if strictly required? User code stops.
-                    break
+                break
 
             min_idx = np.argmin(chi_squares)
             bins = self._merge_bins(bins, min_idx)
             chi_squares = self._compute_chi_squares(bins)
 
         # 5. Extract splits
-        # bins[i][0] is the value.
-        # If we merged, the value is the representative (first one).
-        # We need the cut points.
-        # For unique values v1, v2... cut point is usually (v1+v2)/2 or just v1.
-        # User code: `self.cut_points_ = np.array([b[0] for b in bins[:-1]])`
-        # This uses the value itself as cut point.
-        # np.digitize(x, cuts) means: if x < cut[0] -> bin 0.
-        # So cuts should be upper bounds? or lower bounds?
-        # digitize: bins[i-1] <= x < bins[i] (if right=False default).
-        # user `np.digitize(X, cuts)`
-        # If cuts = [10, 20], x=5 -> 0. x=10 -> 1.
-        # So bins define the lower bound of the next bin.
-        # This implies splits are "Start of Bin 1, Start of Bin 2..."
-        # BaseBinner expects splits to be Upper Bounds of bins (for pd.cut).
-        # pd.cut(x, [-inf, s1, s2, inf]).
-        # If user code returns [b[0] for b in bins[:-1]], these are values in the bins.
-        # E.g. bins val: 10, 20, 30.
-        # splits: 10, 20.
-        # digitize puts <10 in 0. 10..19 in 1. >=20 in 2.
-        # So splits are Lower bounds of bin 1, bin 2...
-
-        # We need Upper bounds for bin 0, bin 1...
-        # Upper bound of bin 0 is Lower bound of bin 1.
-        # So we can use the same values.
-
-        # Taking [b[0] for b in bins[1:]] gives the start of next bin.
-        # This serves as Upper Bound for current bin (conceptually).
-
-        # User code used `bins[:-1]` which is strange for digitize usually.
-        # If bins are [10, 20, 30]. digitize with [10, 20].
-        # x=5 (<10) -> 0.
-        # x=15 (>=10, <20) -> 1.
-        # x=25 (>=20) -> 2.
-        # So bin 0 is x < 10. Split 10 is upper bound of bin 0.
-        # Bin 0 representative was 10? No, 10 is rep of bin 1?
-        # User initialization: `bins = list(zip(unique_vals...))`
-        # Bin 0 has val unique_vals[0].
-        # If we return bins[:-1], we include unique_vals[0] as a split.
-        # If min val is 10. Split is 10.
-        # x=5 -> 0.
-        # x=10 -> 1.
-        # So <10 is bin 0. but min val is 10. So bin 0 is empty?
-        # Correct logic for BaseBinner:
-        # We want splits s1, s2... such that (-inf, s1], (s1, s2]...
-        # If unique vals are 10, 20, 30.
-        # Ideal splits: 15, 25.
-        # User logic seems to pick exact values.
-        # I will use (val_i + val_{i+1}) / 2 for cut points if possible,
-        # Or just use the start of the next bin as the split.
-
         return _calculate_cut_points_from_bins(bins)
 
     def _compute_chi_squares(self, bins):

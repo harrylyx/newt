@@ -5,6 +5,8 @@ import pandas as pd
 from scipy import stats
 from sklearn.tree import DecisionTreeClassifier
 
+from newt._native import load_native_module
+
 try:
     from optbinning import OptimalBinning
 except ImportError:
@@ -15,15 +17,15 @@ from .base import BaseBinner
 
 def _load_rust_engine():
     """Import the compiled Rust extension."""
-    import importlib
+    return load_native_module()
 
-    candidates = ("newt._newt_iv_rust", "_newt_iv_rust")
-    for module_name in candidates:
-        try:
-            return importlib.import_module(module_name)
-        except ImportError:
-            continue
-    return None
+
+def _calculate_cut_points_from_bins(bins) -> List[float]:
+    """Convert ordered bin start values into split points for ``pd.cut``."""
+    if len(bins) < 2:
+        return []
+
+    return [(bins[i][0] + bins[i + 1][0]) / 2 for i in range(len(bins) - 1)]
 
 
 class DecisionTreeBinner(BaseBinner):
@@ -250,19 +252,7 @@ class ChiMergeBinner(BaseBinner):
         # I will use (val_i + val_{i+1}) / 2 for cut points if possible,
         # Or just use the start of the next bin as the split.
 
-        if len(bins) < 2:
-            return []
-
-        final_splits = []
-        for i in range(len(bins) - 1):
-            # Split should be betweeen bin i and bin i+1
-            # bin i val: bins[i][0]
-            # bin i+1 val: bins[i+1][0]
-            # simple avg
-            split = (bins[i][0] + bins[i + 1][0]) / 2
-            final_splits.append(split)
-
-        return final_splits
+        return _calculate_cut_points_from_bins(bins)
 
     def _compute_chi_squares(self, bins):
         if len(bins) < 2:

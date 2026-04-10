@@ -2,6 +2,9 @@ import numpy as np
 import pandas as pd
 import pytest
 
+import newt.features.binning.binner as binner_module
+import newt.features.binning.supervised as supervised_module
+from newt.features.binning import Binner
 from newt.features.binning.supervised import ChiMergeBinner, DecisionTreeBinner
 from newt.features.binning.unsupervised import EqualFrequencyBinner, EqualWidthBinner
 
@@ -19,6 +22,12 @@ def binning_data():
     target[80:90] = 1 - target[80:90]
 
     return pd.Series(X), pd.Series(target)
+
+
+def _require_chimerge_rust():
+    rust_module = supervised_module._load_rust_engine()
+    if rust_module is None or not hasattr(rust_module, "calculate_chi_merge_numpy"):
+        pytest.skip("Rust ChiMerge engine is not available in this environment")
 
 
 def test_equal_width(binning_data):
@@ -66,6 +75,61 @@ def test_chimerge(binning_data):
 
     assert binner.is_fitted_
     assert len(binner.splits_) + 1 <= 5
+
+
+def test_chimerge_rust_matches_python_splits(binning_data, monkeypatch):
+    _require_chimerge_rust()
+    X, y = binning_data
+
+    rust_binner = ChiMergeBinner(n_bins=5)
+    rust_binner.fit(X, y)
+
+    monkeypatch.setattr(supervised_module, "_load_rust_engine", lambda: None)
+    python_binner = ChiMergeBinner(n_bins=5)
+    python_binner.fit(X, y)
+
+    assert rust_binner.splits_ == pytest.approx(python_binner.splits_, abs=1e-12)
+
+
+def test_chimerge_rust_matches_python_bin_assignments(binning_data, monkeypatch):
+    _require_chimerge_rust()
+    X, y = binning_data
+
+    rust_binner = ChiMergeBinner(n_bins=5)
+    rust_binner.fit(X, y)
+
+    monkeypatch.setattr(supervised_module, "_load_rust_engine", lambda: None)
+    python_binner = ChiMergeBinner(n_bins=5)
+    python_binner.fit(X, y)
+
+    np.testing.assert_array_equal(
+        rust_binner.transform(X).cat.codes.to_numpy(),
+        python_binner.transform(X).cat.codes.to_numpy(),
+    )
+
+
+def test_binner_chi_rust_matches_python_public_entrypoint(binning_data, monkeypatch):
+    _require_chimerge_rust()
+    X, y = binning_data
+    frame = pd.DataFrame({"score": X, "score_sq": X**2})
+
+    rust_binner = Binner()
+    rust_binner.fit(frame, y, method="chi", n_bins=5, show_progress=False)
+
+    monkeypatch.setattr(supervised_module, "_load_rust_engine", lambda: None)
+    monkeypatch.setattr(binner_module, "_load_rust_engine", lambda: None)
+    python_binner = Binner()
+    python_binner.fit(frame, y, method="chi", n_bins=5, show_progress=False)
+
+    for feature in frame.columns:
+        assert rust_binner.rules_[feature] == pytest.approx(
+            python_binner.rules_[feature], abs=1e-12
+        )
+
+    pd.testing.assert_frame_equal(
+        rust_binner.transform(frame, show_progress=False),
+        python_binner.transform(frame, show_progress=False),
+    )
 
 
 def test_monotonicity_adjustment(binning_data):

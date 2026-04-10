@@ -1,8 +1,8 @@
-import importlib
 from typing import Dict, Union
 
 import pandas as pd
 
+from newt._native import require_native_module
 from newt.config import BINNING
 
 from .iv_math import build_iv_summary, prepare_feature_for_iv
@@ -64,15 +64,4 @@ def calculate_iv(
 
 def _load_rust_extension():
     """Import the compiled Rust extension from the package."""
-    candidates = ("newt._newt_iv_rust", "_newt_iv_rust")
-    for module_name in candidates:
-        try:
-            return importlib.import_module(module_name)
-        except ImportError:
-            continue
-    raise ImportError(
-        "The compiled Rust IV extension (newt._newt_iv_rust or _newt_iv_rust) "
-        "is not available. Install Newt from an official wheel that includes "
-        "the prebuilt Rust extension, or build from source with "
-        "'maturin develop --manifest-path rust/newt_iv_rust/Cargo.toml'."
-    )
+    return require_native_module()

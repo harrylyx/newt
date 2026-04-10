@@ -10,11 +10,12 @@ Two computation modes:
 
 from __future__ import annotations
 
-import importlib
 from typing import Dict, List, Optional, Sequence, Tuple, Union
 
 import numpy as np
 import pandas as pd
+
+from newt._native import load_native_module
 
 PERCENT_LEVELS: Tuple[float, ...] = (0.10, 0.05, 0.02, 0.01)
 VALID_METRICS_MODES = frozenset(["exact", "binned"])
@@ -403,12 +404,7 @@ def _rust_binary_metrics_batch(
 
 
 def _load_rust_module():
-    for module_name in ("newt._newt_iv_rust", "_newt_iv_rust"):
-        try:
-            return importlib.import_module(module_name)
-        except Exception:
-            continue
-    return None
+    return load_native_module()
 
 
 __all__ = [

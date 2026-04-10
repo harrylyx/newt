@@ -1,10 +1,10 @@
 [package]
-name = "newt-iv-rust"
-version = "0.1.1"
+name = "newt-native"
+version = "0.2.0"
 edition = "2021"
 
 [lib]
-name = "_newt_iv_rust"
+name = "_newt_native"
 crate-type = ["cdylib"]
 
 [dependencies]
@@ -14,4 +14,3 @@ rayon = "1.10.0"
 ndarray = "0.16.1"
 faer = { version = "0.21.3", features = ["std"] }
 statrs = "0.18.0"
-itertools = "0.14.0"

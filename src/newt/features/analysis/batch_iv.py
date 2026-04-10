@@ -2,12 +2,12 @@
 
 from __future__ import annotations
 
-import importlib
 from typing import Optional, Sequence
 
 import numpy as np
 import pandas as pd
 
+from newt._native import require_native_module
 from newt.config import BINNING
 
 from .iv_math import calculate_iv_from_counts
@@ -148,19 +148,8 @@ def _load_rust_extension():
     """Import the compiled Rust extension from the package.
 
     In installed environments the extension is available as
-    ``newt._newt_iv_rust``.  If the extension is not present (e.g. when
+    ``newt._newt_native``. If the extension is not present (e.g. when
     installed from a pure-Python sdist without a Rust toolchain), a clear
     ``ImportError`` is raised.  No hidden local compilation is attempted.
     """
-    candidates = ("newt._newt_iv_rust", "_newt_iv_rust")
-    for module_name in candidates:
-        try:
-            return importlib.import_module(module_name)
-        except ImportError:
-            continue
-    raise ImportError(
-        "The compiled Rust IV extension (newt._newt_iv_rust or _newt_iv_rust) "
-        "is not available. Install Newt from an official wheel that includes "
-        "the prebuilt Rust extension, or build from source with "
-        "'maturin develop --manifest-path rust/newt_iv_rust/Cargo.toml'."
-    )
+    return require_native_module()

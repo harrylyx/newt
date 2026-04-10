@@ -3,8 +3,14 @@
 import numpy as np
 import pandas as pd
 import pytest
+import statsmodels.api as sm
 
 from newt.features.selection.stepwise import StepwiseSelector
+
+try:
+    from newt._newt_native import fit_logistic_regression_numpy
+except ImportError:
+    fit_logistic_regression_numpy = None
 
 
 @pytest.fixture
@@ -29,6 +35,11 @@ def stepwise_data():
     y = pd.Series(y, name="target")
 
     return X, y
+
+
+def _require_stepwise_rust():
+    if fit_logistic_regression_numpy is None:
+        pytest.skip("Rust stepwise engine is not available in this environment")
 
 
 class TestStepwiseSelectorInit:
@@ -67,6 +78,11 @@ class TestStepwiseSelectorInit:
         """Test invalid criterion raises error."""
         with pytest.raises(ValueError):
             StepwiseSelector(criterion="invalid")
+
+    def test_invalid_engine(self):
+        """Test invalid engine raises error."""
+        with pytest.raises(ValueError):
+            StepwiseSelector(engine="invalid")
 
 
 class TestStepwiseSelectorFit:
@@ -133,6 +149,112 @@ class TestStepwiseSelectorFit:
         assert selector.is_fitted_
         # x4 should be kept even if not significant
         assert "x4" in selector.selected_features_
+
+    @pytest.mark.parametrize("direction", ["forward", "backward", "both"])
+    @pytest.mark.parametrize("criterion", ["aic", "bic", "pvalue"])
+    def test_rust_matches_python_feature_selection(
+        self, stepwise_data, direction, criterion
+    ):
+        """Rust and Python engines should select the same features."""
+        _require_stepwise_rust()
+        X, y = stepwise_data
+
+        python_selector = StepwiseSelector(
+            direction=direction,
+            criterion=criterion,
+            engine="python",
+            verbose=False,
+        )
+        rust_selector = StepwiseSelector(
+            direction=direction,
+            criterion=criterion,
+            engine="rust",
+            verbose=False,
+        )
+
+        python_selector.fit(X, y)
+        rust_selector.fit(X, y)
+
+        assert rust_selector.selected_features_ == python_selector.selected_features_
+
+    def test_rust_matches_python_with_excluded_features(self, stepwise_data):
+        """Force-included features should match across engines."""
+        _require_stepwise_rust()
+        X, y = stepwise_data
+
+        python_selector = StepwiseSelector(
+            direction="backward",
+            criterion="aic",
+            exclude=["x4"],
+            engine="python",
+            verbose=False,
+        )
+        rust_selector = StepwiseSelector(
+            direction="backward",
+            criterion="aic",
+            exclude=["x4"],
+            engine="rust",
+            verbose=False,
+        )
+
+        python_selector.fit(X, y)
+        rust_selector.fit(X, y)
+
+        assert rust_selector.selected_features_ == python_selector.selected_features_
+
+    def test_rust_matches_python_without_intercept(self, stepwise_data):
+        """Selection should remain aligned without an intercept term."""
+        _require_stepwise_rust()
+        X, y = stepwise_data
+
+        python_selector = StepwiseSelector(
+            direction="both",
+            criterion="aic",
+            fit_intercept=False,
+            engine="python",
+            verbose=False,
+        )
+        rust_selector = StepwiseSelector(
+            direction="both",
+            criterion="aic",
+            fit_intercept=False,
+            engine="rust",
+            verbose=False,
+        )
+
+        python_selector.fit(X, y)
+        rust_selector.fit(X, y)
+
+        assert rust_selector.selected_features_ == python_selector.selected_features_
+
+    def test_rust_logit_matches_statsmodels(self):
+        """Rust logistic regression diagnostics should match statsmodels."""
+        _require_stepwise_rust()
+        rng = np.random.default_rng(123)
+        n_samples = 600
+        X = rng.normal(size=(n_samples, 4))
+        beta = np.array([0.2, 1.0, -0.8, 0.5])
+        logits = X @ beta
+        probabilities = 1 / (1 + np.exp(-logits))
+        y = (rng.random(n_samples) < probabilities).astype(float)
+        X_with_intercept = np.column_stack([np.ones(n_samples), X])
+
+        statsmodels_result = sm.Logit(y, X_with_intercept).fit(disp=False)
+        rust_result = fit_logistic_regression_numpy(X_with_intercept, y)
+
+        np.testing.assert_allclose(
+            np.array(rust_result["coefficients"]),
+            statsmodels_result.params,
+            atol=1e-10,
+        )
+        np.testing.assert_allclose(
+            np.array(rust_result["p_values"]),
+            statsmodels_result.pvalues,
+            atol=1e-8,
+        )
+        assert rust_result["aic"] == pytest.approx(statsmodels_result.aic, abs=1e-8)
+        assert rust_result["bic"] == pytest.approx(statsmodels_result.bic, abs=1e-8)
+        assert rust_result["converged"] is True
 
 
 class TestStepwiseSelectorTransform:

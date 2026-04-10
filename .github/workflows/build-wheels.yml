@@ -35,7 +35,7 @@ jobs:
           CIBW_BEFORE_ALL_LINUX: >
             curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
           CIBW_TEST_COMMAND: >
-            python -c "import newt._newt_iv_rust as ext; assert hasattr(ext, 'calculate_batch_iv'); assert hasattr(ext, 'calculate_categorical_iv'); print('smoke test passed')"
+            python -c "import newt._newt_native as ext; assert hasattr(ext, 'calculate_batch_iv'); assert hasattr(ext, 'calculate_categorical_iv'); print('smoke test passed')"
         run: python -m cibuildwheel --output-dir wheelhouse
 
       - name: Upload wheel artifacts
@@ -72,7 +72,7 @@ jobs:
           CIBW_BEFORE_ALL_LINUX: >
             curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
           CIBW_TEST_COMMAND: >
-            python -c "import newt._newt_iv_rust as ext; assert hasattr(ext, 'calculate_batch_iv'); assert hasattr(ext, 'calculate_categorical_iv'); print('smoke test passed')"
+            python -c "import newt._newt_native as ext; assert hasattr(ext, 'calculate_batch_iv'); assert hasattr(ext, 'calculate_categorical_iv'); print('smoke test passed')"
         run: python -m cibuildwheel --output-dir wheelhouse
 
       - name: Upload wheel artifacts
@@ -106,7 +106,7 @@ jobs:
           CIBW_ARCHS_WINDOWS: "AMD64"
           CIBW_ENVIRONMENT: 'PATH="$HOME/.cargo/bin:$PATH"'
           CIBW_TEST_COMMAND: >
-            python -c "import newt._newt_iv_rust as ext; assert hasattr(ext, 'calculate_batch_iv'); assert hasattr(ext, 'calculate_categorical_iv'); print('smoke test passed')"
+            python -c "import newt._newt_native as ext; assert hasattr(ext, 'calculate_batch_iv'); assert hasattr(ext, 'calculate_categorical_iv'); print('smoke test passed')"
         run: python -m cibuildwheel --output-dir wheelhouse
 
       - name: Upload wheel artifacts
@@ -140,7 +140,7 @@ jobs:
           CIBW_ARCHS_MACOS: "arm64"
           CIBW_ENVIRONMENT: 'PATH="$HOME/.cargo/bin:$PATH"'
           CIBW_TEST_COMMAND: >
-            python -c "import newt._newt_iv_rust as ext; assert hasattr(ext, 'calculate_batch_iv'); assert hasattr(ext, 'calculate_categorical_iv'); print('smoke test passed')"
+            python -c "import newt._newt_native as ext; assert hasattr(ext, 'calculate_batch_iv'); assert hasattr(ext, 'calculate_categorical_iv'); print('smoke test passed')"
         run: python -m cibuildwheel --output-dir wheelhouse
 
       - name: Upload wheel artifacts

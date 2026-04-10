@@ -2,13 +2,13 @@
 
 from __future__ import annotations
 
-import importlib
 from dataclasses import dataclass
 from typing import Iterable, List, Optional, Sequence, Tuple, Union
 
 import numpy as np
 import pandas as pd
 
+from newt._native import load_native_module
 from newt.config import BINNING
 
 NAN_STRATEGIES = frozenset(["separate", "exclude"])
@@ -672,12 +672,7 @@ def _to_optional_float_list(
 
 
 def _load_rust_module():
-    for module_name in ("newt._newt_iv_rust", "_newt_iv_rust"):
-        try:
-            return importlib.import_module(module_name)
-        except Exception:
-            continue
-    return None
+    return load_native_module()
 
 
 def _resolve_reference_value(

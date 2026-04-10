@@ -48,7 +48,7 @@ def test_ci_workflow_does_not_build_wheels():
 def test_build_wheels_workflow_has_smoke_test():
     """The build workflow must include a post-install smoke test."""
     content = (WORKFLOWS / "build-wheels.yml").read_text()
-    assert "newt._newt_iv_rust" in content or "smoke" in content.lower()
+    assert "newt._newt_native" in content or "smoke" in content.lower()
 
 
 def test_wheel_matrix_excludes_cp313():

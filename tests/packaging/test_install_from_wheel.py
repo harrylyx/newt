@@ -49,7 +49,7 @@ def _create_venv(tmp_path: Path) -> Path:
             "venv",
             str(venv_path),
             "--python",
-            f"{sys.version_info.major}.{sys.version_info.minor}",
+            sys.executable,
         ],
         timeout=60,
     )
@@ -81,7 +81,8 @@ def test_installed_wheel_can_import_rust_extension(tmp_path: Path):
             "-c",
             textwrap.dedent(
                 """\
-                import newt._newt_iv_rust as ext
+                import importlib
+                import newt._newt_native as ext
                 assert hasattr(ext, "calculate_batch_iv"), "missing calculate_batch_iv"
                 assert hasattr(
                     ext, "calculate_categorical_iv"
@@ -92,6 +93,12 @@ def test_installed_wheel_can_import_rust_extension(tmp_path: Path):
                 assert hasattr(
                     ext, "calculate_feature_psi_pairs_numpy"
                 ), "missing calculate_feature_psi_pairs_numpy"
+                try:
+                    importlib.import_module("newt._newt_iv_rust")
+                except ImportError:
+                    pass
+                else:
+                    raise AssertionError("old extension path should not be importable")
                 print("RUST_IMPORT_OK")
                 """
             ),

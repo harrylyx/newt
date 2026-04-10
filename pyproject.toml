@@ -1,6 +1,6 @@
 [project]
 name = "newt"
-version = "0.1.8"
+version = "0.2.0"
 description = "A lightweight Python toolkit for efficient feature analysis and statistical diagnostics in credit risk modeling"
 readme = "README.md"
 requires-python = ">=3.8.5,<3.13"
@@ -59,8 +59,8 @@ build-backend = "maturin"
 
 [tool.maturin]
 python-source = "src"
-module-name = "newt._newt_iv_rust"
-manifest-path = "rust/newt_iv_rust/Cargo.toml"
+module-name = "newt._newt_native"
+manifest-path = "rust/newt_native/Cargo.toml"
 features = ["pyo3/extension-module"]
 
 [tool.black]

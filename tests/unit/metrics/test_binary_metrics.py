@@ -102,7 +102,7 @@ def test_binary_metrics_batch_rust_falls_back_when_extension_missing():
     original_import = importlib.import_module
 
     def selective_import(name, *args, **kwargs):
-        if name in ("newt._newt_iv_rust", "_newt_iv_rust"):
+        if name in ("newt._newt_native", "_newt_native"):
             raise ImportError(f"mocked missing: {name}")
         return original_import(name, *args, **kwargs)
 

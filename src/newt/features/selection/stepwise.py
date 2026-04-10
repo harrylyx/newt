@@ -11,17 +11,20 @@ import numpy as np
 import pandas as pd
 from tqdm.auto import tqdm
 
+from newt._native import load_native_module
 from newt.config import MODELING
 from newt.utils.decorators import requires_fit
 
-try:
-    from newt._newt_iv_rust import (
-        batch_fit_logistic_regression_numpy,
-        fit_logistic_regression_numpy,
+_RUST_MODULE = load_native_module()
+if _RUST_MODULE is not None:
+    batch_fit_logistic_regression_numpy = (
+        _RUST_MODULE.batch_fit_logistic_regression_numpy
     )
-
+    fit_logistic_regression_numpy = _RUST_MODULE.fit_logistic_regression_numpy
     HAS_RUST = True
-except ImportError:
+else:
+    batch_fit_logistic_regression_numpy = None
+    fit_logistic_regression_numpy = None
     HAS_RUST = False
 
 
@@ -83,11 +86,18 @@ class StepwiseSelector:
             Whether to include intercept. Default True.
         exclude : List[str], optional
             Features to always keep in the model (force include).
+        engine : str
+            Computation engine: 'rust' or 'python'. Defaults to 'rust' and
+            falls back to 'python' if the Rust extension is unavailable.
+        verbose : bool
+            Whether to show progress bars during selection.
         """
         if direction not in ("forward", "backward", "both"):
             raise ValueError("direction must be 'forward', 'backward', or 'both'")
         if criterion not in ("pvalue", "aic", "bic"):
             raise ValueError("criterion must be 'pvalue', 'aic', or 'bic'")
+        if engine not in ("rust", "python"):
+            raise ValueError("engine must be 'rust' or 'python'")
 
         self.direction = direction
         self.criterion = criterion
@@ -96,7 +106,7 @@ class StepwiseSelector:
         self.max_iter = max_iter
         self.fit_intercept = fit_intercept
         self.exclude = exclude or []
-        self.engine = engine if HAS_RUST else "python"
+        self.engine = engine if (engine == "python" or HAS_RUST) else "python"
         self.verbose = verbose
 
         # Fitted attributes

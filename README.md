@@ -91,10 +91,10 @@ If you need a one-off interpreter check, use a temporary environment outside the
 
 For Excel report development and validation (including `openpyxl`, `pyarrow`, and `lightgbm`), use the default `.venv` environment.
 
-Build the Rust extension for development after syncing the environment:
+Build the native extension for development after syncing the environment:
 
 ```bash
-maturin develop --manifest-path rust/newt_iv_rust/Cargo.toml --release
+maturin develop --manifest-path rust/newt_native/Cargo.toml --release
 ```
 
 ### IV Engine Defaults

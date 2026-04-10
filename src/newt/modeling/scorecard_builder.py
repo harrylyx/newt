@@ -1,8 +1,9 @@
 """Build scorecard specifications from fitted model components."""
 
-from typing import Any, Dict, Tuple
+from typing import Any, Dict, Optional, Tuple
 
 import numpy as np
+import pandas as pd
 
 from newt.results import BinningRuleSpec, FeatureScoreSpec, ScorecardSpec
 
@@ -22,9 +23,13 @@ class ScorecardBuilder:
         model: Any,
         binner: Any,
         woe_encoder: Any,
-    ) -> Tuple[ScorecardSpec, Dict[str, float]]:
+    ) -> Tuple[
+        ScorecardSpec, Dict[str, float], Dict[str, Dict[str, float]], Dict[str, float]
+    ]:
         """Build a scorecard spec from fitted model components."""
         intercept, coefficients = self._extract_model_parameters(model)
+        feature_statistics = self._extract_feature_statistics(model, coefficients)
+        model_statistics = self._extract_model_statistics(model)
         intercept_points = self.offset - self.factor * intercept
 
         feature_scores = {}
@@ -68,8 +73,10 @@ class ScorecardBuilder:
             feature_names=feature_names,
             feature_scores=feature_scores,
             binning_rules=binning_rules,
+            feature_statistics=feature_statistics,
+            model_statistics=model_statistics,
         )
-        return spec, coefficients
+        return spec, coefficients, feature_statistics, model_statistics
 
     def _extract_model_parameters(self, model: Any) -> Tuple[float, Dict[str, float]]:
         """Extract intercept and feature coefficients from supported models."""
@@ -112,3 +119,84 @@ class ScorecardBuilder:
         if hasattr(woe_encoder, "woe_map_"):
             return dict(woe_encoder.woe_map_)
         return {}
+
+    def _extract_feature_statistics(
+        self,
+        model: Any,
+        coefficients: Dict[str, float],
+    ) -> Dict[str, Dict[str, float]]:
+        """Extract feature-level logistic statistics when available."""
+        coef_frame = getattr(model, "coefficients_", pd.DataFrame())
+        if not isinstance(coef_frame, pd.DataFrame) or coef_frame.empty:
+            return {}
+        if "feature" not in coef_frame.columns:
+            return {}
+
+        supported_columns = [
+            "coefficient",
+            "std_error",
+            "z_value",
+            "p_value",
+            "ci_lower",
+            "ci_upper",
+            "odds_ratio",
+        ]
+        available_columns = [
+            col for col in supported_columns if col in coef_frame.columns
+        ]
+        if not available_columns:
+            return {}
+
+        feature_frame = coef_frame.loc[
+            coef_frame["feature"].isin(coefficients.keys())
+        ].copy()
+        if feature_frame.empty:
+            return {}
+
+        stats: Dict[str, Dict[str, float]] = {}
+        for _, row in feature_frame.iterrows():
+            feature = str(row["feature"])
+            feature_stats: Dict[str, float] = {}
+            for column in available_columns:
+                value = row.get(column)
+                numeric = self._as_finite_float(value)
+                if numeric is None:
+                    continue
+                feature_stats[column] = numeric
+            if feature_stats:
+                stats[feature] = feature_stats
+        return stats
+
+    def _extract_model_statistics(self, model: Any) -> Dict[str, float]:
+        """Extract model-level logistic summary statistics when available."""
+        result = getattr(model, "result_", None)
+        if result is None:
+            return {}
+
+        mapping = {
+            "aic": "aic",
+            "bic": "bic",
+            "llf": "log_likelihood",
+            "prsquared": "pseudo_r2",
+            "nobs": "nobs",
+        }
+        output: Dict[str, float] = {}
+        for attr_name, output_name in mapping.items():
+            value = getattr(result, attr_name, None)
+            numeric = self._as_finite_float(value)
+            if numeric is None:
+                continue
+            output[output_name] = numeric
+        return output
+
+    def _as_finite_float(self, value: Any) -> Optional[float]:
+        """Normalize scalar numeric values and reject non-finite entries."""
+        if value is None:
+            return None
+        try:
+            numeric = float(value)
+        except (TypeError, ValueError):
+            return None
+        if not np.isfinite(numeric):
+            return None
+        return numeric

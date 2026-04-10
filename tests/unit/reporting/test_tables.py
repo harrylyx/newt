@@ -1,8 +1,10 @@
 """Unit tests for tables.py _build_group_metrics behavior."""
 
+import numpy as np
 import pandas as pd
 
-from newt.reporting.tables import _build_group_metrics
+from newt.reporting.table_context import FeatureComputationArtifacts
+from newt.reporting.tables import _build_group_metrics, build_variable_analysis_sheet
 
 
 def _make_frame(
@@ -255,3 +257,98 @@ class TestBuildGroupMetricsWithNaN:
         assert any(result["观察点月"] == "")
         # Non-empty groups with both classes should have valid metrics
         assert result["AUC"].notna().all()
+
+
+def test_scorecard_variable_analysis_does_not_truncate_to_top_30(monkeypatch):
+    features = [f"f{i}" for i in range(31)]
+    frame = pd.DataFrame(
+        {
+            "tag": ["train"] * 20 + ["oot"] * 20,
+            "month": ["202401"] * 20 + ["202402"] * 20,
+            "label": [0, 1] * 20,
+        }
+    )
+    for index, feature in enumerate(features):
+        frame[feature] = np.linspace(0, 1, len(frame)) + index
+
+    class _DummyScorecardAdapter:
+        model_family = "scorecard"
+
+        def get_importance_table(self):
+            return pd.DataFrame(
+                {
+                    "feature": features,
+                    "gain": np.linspace(31, 1, 31),
+                    "gain_per": np.full(31, 1 / 31),
+                    "weight": np.linspace(31, 1, 31),
+                    "weight_per": np.full(31, 1 / 31),
+                }
+            )
+
+        def get_lr_feature_summary_table(self):
+            return pd.DataFrame({"feature": features, "p_value": np.nan})
+
+        def get_lr_model_summary_table(self):
+            return pd.DataFrame()
+
+    def _fake_build_feature_analysis_table(**kwargs):
+        rows = []
+        for idx, feature in enumerate(features, start=1):
+            rows.append(
+                {
+                    "序号": idx,
+                    "vars": feature,
+                    "gain": float(32 - idx),
+                    "gain_per": float(1 / 31),
+                    "weight": float(32 - idx),
+                    "weight_per": float(1 / 31),
+                    "缺失率_train": 0.0,
+                    "缺失率_oot": 0.0,
+                    "iv_train": 0.1,
+                    "iv_oot": 0.1,
+                    "ks_train": 0.1,
+                    "ks_oot": 0.1,
+                    "psi": 0.0,
+                    "指标表英文名": feature,
+                }
+            )
+        return pd.DataFrame(rows), FeatureComputationArtifacts()
+
+    monkeypatch.setattr(
+        "newt.reporting.tables._build_feature_analysis_table",
+        _fake_build_feature_analysis_table,
+    )
+    monkeypatch.setattr(
+        "newt.reporting.tables._build_feature_bin_stats",
+        lambda *args, **kwargs: pd.DataFrame(
+            {
+                "bin": ["(-inf, inf]"],
+                "min": [0.0],
+                "max": [1.0],
+                "total_prop": [1.0],
+                "bad_rate": [0.5],
+                "iv": [0.0],
+                "woe": [0.0],
+            }
+        ),
+    )
+    monkeypatch.setattr(
+        "newt.reporting.tables._build_feature_monthly_metrics",
+        lambda *args, **kwargs: pd.DataFrame(
+            {"month": ["202401"], "AUC": [0.5], "KS": [0.0], "PSI": [0.0]}
+        ),
+    )
+
+    sheet = build_variable_analysis_sheet(
+        data=frame,
+        tag_col="tag",
+        month_col="month",
+        primary_label="label",
+        feature_cols=features,
+        feature_dict=pd.DataFrame(),
+        model_adapter=_DummyScorecardAdapter(),
+        build_context=None,
+    )
+
+    feature_bin_blocks = [b for b in sheet.blocks if b.title.endswith(" 分箱表")]
+    assert len(feature_bin_blocks) == 31

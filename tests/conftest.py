@@ -1,4 +1,5 @@
 import os
+from unittest.mock import MagicMock
 
 import numpy as np
 import pandas as pd
@@ -174,3 +175,79 @@ class FakeXGBoostModel:
 @pytest.fixture
 def fake_xgboost_model():
     return FakeXGBoostModel()
+
+
+@pytest.fixture
+def fake_scorecard_model():
+    from newt.modeling.scorecard import Scorecard
+
+    binner = MagicMock()
+    binner.rules_ = {
+        "feature_a": [10.0],
+        "feature_b": [95.0],
+    }
+    binner._missing_label = "Missing"
+    binner.get_splits.side_effect = lambda feature: binner.rules_[feature]
+
+    woe_a = MagicMock()
+    woe_a.woe_map_ = {"(-inf, 10.0]": -0.4, "(10.0, inf]": 0.6, "Missing": 0.0}
+    woe_b = MagicMock()
+    woe_b.woe_map_ = {"(-inf, 95.0]": -0.2, "(95.0, inf]": 0.3, "Missing": 0.0}
+    woe_encoder = {"feature_a": woe_a, "feature_b": woe_b}
+
+    class _FakeResult:
+        aic = 123.45
+        bic = 130.89
+        llf = -58.22
+        prsquared = 0.318
+        nobs = 512
+
+    class _FakeLogisticModel:
+        def __init__(self):
+            self.coefficients_ = pd.DataFrame(
+                [
+                    {
+                        "feature": "const",
+                        "coefficient": -1.1,
+                        "std_error": 0.2,
+                        "z_value": -5.5,
+                        "p_value": 3.0e-8,
+                        "ci_lower": -1.5,
+                        "ci_upper": -0.7,
+                        "odds_ratio": float(np.exp(-1.1)),
+                    },
+                    {
+                        "feature": "feature_a",
+                        "coefficient": 0.8,
+                        "std_error": 0.1,
+                        "z_value": 8.0,
+                        "p_value": 1.2e-6,
+                        "ci_lower": 0.61,
+                        "ci_upper": 0.99,
+                        "odds_ratio": float(np.exp(0.8)),
+                    },
+                    {
+                        "feature": "feature_b",
+                        "coefficient": -0.5,
+                        "std_error": 0.15,
+                        "z_value": -3.33,
+                        "p_value": 0.00086,
+                        "ci_lower": -0.79,
+                        "ci_upper": -0.21,
+                        "odds_ratio": float(np.exp(-0.5)),
+                    },
+                ]
+            )
+            self.result_ = _FakeResult()
+
+        def to_dict(self):
+            return {
+                "intercept": -1.1,
+                "coefficients": {
+                    "feature_a": 0.8,
+                    "feature_b": -0.5,
+                },
+            }
+
+    model = _FakeLogisticModel()
+    return Scorecard().from_model(model, binner, woe_encoder)

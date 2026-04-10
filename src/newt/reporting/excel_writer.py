@@ -275,8 +275,25 @@ class ExcelReportWriter:
     def _choose_body_format(self, column_name: str, formats: Dict[str, object]):
         name = str(column_name)
         lower = name.lower()
+        if lower in {"p_value", "pvalue"}:
+            return formats["iv_decimal"]
         if lower == "iv" or lower.startswith("iv_") or lower.endswith("_iv"):
             return formats["iv_decimal"]
+        if lower in {
+            "coefficient",
+            "std_error",
+            "z_value",
+            "ci_lower",
+            "ci_upper",
+            "odds_ratio",
+            "aic",
+            "bic",
+            "log_likelihood",
+            "pseudo_r2",
+        }:
+            return formats["decimal"]
+        if lower in {"nobs"}:
+            return formats["integer"]
         if (
             lower.startswith("缺失率_")
             or lower.endswith("_per")

@@ -1,3 +1,5 @@
+import pandas as pd
+
 from newt.reporting.model_adapter import ModelAdapter
 
 
@@ -112,3 +114,68 @@ def test_model_adapter_returns_fixed_parameter_rows_with_alias_fallback():
     assert values["reg_alpha"] == 3
     assert values["reg_lambda"] == 4
     assert values["num_leaves"] == ""
+
+
+def test_model_adapter_extracts_scorecard_metadata(fake_scorecard_model):
+    adapter = ModelAdapter(fake_scorecard_model)
+
+    assert adapter.model_family == "scorecard"
+    assert adapter.get_feature_names() == ["feature_a", "feature_b"]
+
+    importance = adapter.get_importance_table()
+    assert list(importance["feature"]) == ["feature_a", "feature_b"]
+    assert importance["gain"].gt(0).all()
+
+    params = adapter.get_param_table()
+    assert set(params["参数名称"]) == {
+        "base_score",
+        "pdo",
+        "base_odds",
+        "factor",
+        "offset",
+        "intercept_points",
+    }
+
+    feature_summary = adapter.get_lr_feature_summary_table()
+    assert {
+        "feature",
+        "coefficient",
+        "std_error",
+        "z_value",
+        "p_value",
+        "ci_lower",
+        "ci_upper",
+        "odds_ratio",
+    }.issubset(feature_summary.columns)
+    assert feature_summary.set_index("feature").loc["feature_a", "p_value"] > 0
+
+    model_summary = adapter.get_lr_model_summary_table()
+    assert list(model_summary["统计项"]) == [
+        "AIC",
+        "BIC",
+        "Log Likelihood",
+        "Pseudo R²",
+        "Nobs",
+    ]
+    assert model_summary.loc[model_summary["统计项"] == "AIC", "数值"].notna().all()
+
+    assert not adapter.get_scorecard_base_table().empty
+    assert not adapter.get_scorecard_points_table().empty
+
+
+def test_model_adapter_scorecard_missing_stats_is_safe(fake_scorecard_model):
+    from newt.modeling.scorecard import Scorecard
+
+    payload = fake_scorecard_model.to_dict()
+    payload.pop("feature_statistics", None)
+    payload.pop("model_statistics", None)
+    restored = Scorecard().from_dict(payload)
+    adapter = ModelAdapter(restored)
+
+    feature_summary = adapter.get_lr_feature_summary_table()
+    assert list(feature_summary["feature"]) == ["feature_a", "feature_b"]
+    assert feature_summary["p_value"].isna().all()
+
+    model_summary = adapter.get_lr_model_summary_table()
+    assert isinstance(model_summary, pd.DataFrame)
+    assert model_summary["数值"].isna().all()

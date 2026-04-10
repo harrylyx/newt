@@ -57,6 +57,8 @@ class Scorecard:
         self._binner = None
         self._woe_encoder = None
         self._model_coefs: Dict[str, float] = {}
+        self.feature_statistics_: pd.DataFrame = pd.DataFrame()
+        self.model_statistics_: Dict[str, float] = {}
 
     def from_model(
         self,
@@ -83,11 +85,19 @@ class Scorecard:
             pdo=self.pdo,
             base_odds=self.base_odds,
         )
-        spec, model_coefs = builder.build(model, binner, woe_encoder)
+        spec, model_coefs, feature_statistics, model_statistics = builder.build(
+            model, binner, woe_encoder
+        )
 
         self._binner = binner
         self._woe_encoder = woe_encoder
         self._model_coefs = model_coefs
+        self.feature_statistics_ = (
+            pd.DataFrame.from_dict(feature_statistics, orient="index")
+            .reset_index()
+            .rename(columns={"index": "feature"})
+        )
+        self.model_statistics_ = dict(model_statistics)
 
         return self._load_spec(spec)
 
@@ -118,6 +128,15 @@ class Scorecard:
             feature: feature_spec.to_frame()
             for feature, feature_spec in spec.feature_scores.items()
         }
+        if spec.feature_statistics:
+            self.feature_statistics_ = (
+                pd.DataFrame.from_dict(spec.feature_statistics, orient="index")
+                .reset_index()
+                .rename(columns={"index": "feature"})
+            )
+        else:
+            self.feature_statistics_ = pd.DataFrame()
+        self.model_statistics_ = dict(spec.model_statistics)
         self.is_built_ = True
         return self
 

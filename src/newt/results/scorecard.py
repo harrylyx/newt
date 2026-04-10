@@ -7,6 +7,16 @@ import numpy as np
 import pandas as pd
 
 
+def _is_finite_number(value: Any) -> bool:
+    if value is None:
+        return False
+    try:
+        numeric = float(value)
+    except (TypeError, ValueError):
+        return False
+    return bool(np.isfinite(numeric))
+
+
 @dataclass
 class BinningRuleSpec:
     """Serializable description of how a feature is binned."""
@@ -100,6 +110,8 @@ class ScorecardSpec:
     feature_names: List[str] = field(default_factory=list)
     feature_scores: Dict[str, FeatureScoreSpec] = field(default_factory=dict)
     binning_rules: Dict[str, BinningRuleSpec] = field(default_factory=dict)
+    feature_statistics: Dict[str, Dict[str, float]] = field(default_factory=dict)
+    model_statistics: Dict[str, float] = field(default_factory=dict)
 
     def export(self) -> pd.DataFrame:
         """Export the complete scorecard to a dataframe."""
@@ -137,6 +149,19 @@ class ScorecardSpec:
             "binning_rules": {
                 feature: rule.to_dict() for feature, rule in self.binning_rules.items()
             },
+            "feature_statistics": {
+                feature: {
+                    metric: float(value)
+                    for metric, value in stats.items()
+                    if _is_finite_number(value)
+                }
+                for feature, stats in self.feature_statistics.items()
+            },
+            "model_statistics": {
+                metric: float(value)
+                for metric, value in self.model_statistics.items()
+                if _is_finite_number(value)
+            },
         }
 
     @classmethod
@@ -160,4 +185,19 @@ class ScorecardSpec:
             feature_names=list(payload.get("feature_names", [])),
             feature_scores=feature_scores,
             binning_rules=binning_rules,
+            feature_statistics={
+                str(feature): {
+                    str(metric): float(value)
+                    for metric, value in dict(stats).items()
+                    if _is_finite_number(value)
+                }
+                for feature, stats in dict(
+                    payload.get("feature_statistics", {})
+                ).items()
+            },
+            model_statistics={
+                str(metric): float(value)
+                for metric, value in dict(payload.get("model_statistics", {})).items()
+                if _is_finite_number(value)
+            },
         )

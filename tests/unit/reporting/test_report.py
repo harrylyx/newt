@@ -872,3 +872,82 @@ def test_report_metrics_mode_binned_is_exposed_and_usable(
     month_metrics = performance_sheet.get_block("三、按月模型效果").data
     assert tag_metrics["AUC"].notna().all()
     assert month_metrics["KS"].notna().all()
+
+
+def test_report_supports_scorecard_model_with_lr_summary_and_details_sheet(
+    tmp_path,
+    report_frame,
+    fake_scorecard_model,
+):
+    output_path = tmp_path / "scorecard_report.xlsx"
+    report = Report(
+        data=report_frame,
+        model=fake_scorecard_model,
+        tag="tag",
+        score_col="score_new",
+        date_col="obs_date",
+        label_list=["label_main"],
+        sheet_list=["变量分析", "评分卡计算明细"],
+        report_out_path=str(output_path),
+    )
+
+    report.generate()
+
+    assert report.result_.sheet_names == ["2.变量分析", "评分卡计算明细"]
+
+    variable_sheet = report.result_.get_sheet("2.变量分析")
+    feature_table = variable_sheet.get_block("二、变量分析").data
+    assert {
+        "coefficient",
+        "std_error",
+        "z_value",
+        "p_value",
+        "ci_lower",
+        "ci_upper",
+        "odds_ratio",
+    }.issubset(feature_table.columns)
+    assert feature_table["vars"].tolist() == ["feature_a", "feature_b"]
+    assert feature_table["p_value"].notna().all()
+
+    summary_block = variable_sheet.get_block("三、模型统计摘要").data
+    assert "AIC" in summary_block["统计项"].values
+    assert summary_block["数值"].notna().any()
+
+    details_sheet = report.result_.get_sheet("评分卡计算明细")
+    base_block = details_sheet.get_block("一、评分卡计算参数").data
+    points_block = details_sheet.get_block("二、评分卡分值拆解").data
+    assert {"base_score", "pdo", "intercept_points"}.issubset(base_block.columns)
+    assert {"变量", "分箱", "分值"}.issubset(points_block.columns)
+    assert "Intercept" in points_block["变量"].values
+
+
+def test_report_scorecard_missing_lr_stats_keeps_columns_and_does_not_fail(
+    tmp_path,
+    report_frame,
+    fake_scorecard_model,
+):
+    from newt.modeling.scorecard import Scorecard
+
+    payload = fake_scorecard_model.to_dict()
+    payload.pop("feature_statistics", None)
+    payload.pop("model_statistics", None)
+    restored_scorecard = Scorecard().from_dict(payload)
+
+    output_path = tmp_path / "scorecard_report_no_stats.xlsx"
+    report = Report(
+        data=report_frame,
+        model=restored_scorecard,
+        tag="tag",
+        score_col="score_new",
+        date_col="obs_date",
+        label_list=["label_main"],
+        sheet_list=["变量分析"],
+        report_out_path=str(output_path),
+    )
+
+    report.generate()
+
+    variable_sheet = report.result_.get_sheet("2.变量分析")
+    feature_table = variable_sheet.get_block("二、变量分析").data
+    assert "p_value" in feature_table.columns
+    assert feature_table["p_value"].isna().all()

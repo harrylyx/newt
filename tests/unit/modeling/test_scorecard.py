@@ -47,6 +47,62 @@ def test_from_model(mock_components):
     assert "points" in sc.scorecard_["feature1"].columns
 
 
+def test_scorecard_from_model_preserves_logistic_summary_stats(mock_components):
+    _, binner, woe_encoder = mock_components
+
+    class _FakeResult:
+        aic = 10.5
+        bic = 12.1
+        llf = -4.8
+        prsquared = 0.21
+        nobs = 100
+
+    class _FakeLogisticModel:
+        def __init__(self):
+            self.coefficients_ = pd.DataFrame(
+                [
+                    {
+                        "feature": "const",
+                        "coefficient": 0.1,
+                        "std_error": 0.2,
+                        "z_value": 0.5,
+                        "p_value": 0.61,
+                        "ci_lower": -0.3,
+                        "ci_upper": 0.5,
+                        "odds_ratio": float(np.exp(0.1)),
+                    },
+                    {
+                        "feature": "feature1",
+                        "coefficient": 1.5,
+                        "std_error": 0.4,
+                        "z_value": 3.75,
+                        "p_value": 0.0002,
+                        "ci_lower": 0.7,
+                        "ci_upper": 2.3,
+                        "odds_ratio": float(np.exp(1.5)),
+                    },
+                ]
+            )
+            self.result_ = _FakeResult()
+
+        def to_dict(self):
+            return {"intercept": 0.1, "coefficients": {"feature1": 1.5}}
+
+    sc = Scorecard().from_model(_FakeLogisticModel(), binner, woe_encoder)
+
+    assert not sc.feature_statistics_.empty
+    assert "p_value" in sc.feature_statistics_.columns
+    assert sc.feature_statistics_.set_index("feature").loc[
+        "feature1", "p_value"
+    ] == pytest.approx(0.0002)
+    assert sc.model_statistics_["aic"] == pytest.approx(10.5)
+    assert sc.model_statistics_["pseudo_r2"] == pytest.approx(0.21)
+
+    restored = Scorecard().from_dict(sc.to_dict())
+    assert not restored.feature_statistics_.empty
+    assert restored.model_statistics_["bic"] == pytest.approx(12.1)
+
+
 def test_scorecard_score(mock_components):
     model, binner, woe_encoder = mock_components
     sc = Scorecard()

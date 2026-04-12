@@ -10,6 +10,8 @@ The project supports Python `>=3.8.5,<3.13` (Python `3.8.5` through `3.12.x`).
 
 ```bash
 pip install newt
+# or with uv
+uv add newt
 ```
 
 ### From GitHub Release (recommended for Native Engine)
@@ -34,7 +36,7 @@ No Rust toolchain is required when installing from an official wheel.
 
 ### High-Performance Native Engine (Rust)
 
-Newt includes a high-performance Rust extension for various core performance paths, including single-feature IV, batch IV, PSI, ChiMerge, and Stepwise selection.
+Newt includes a high-performance Rust extension for various core performance paths, including single-feature IV, batch IV, PSI, ChiMerge, Stepwise selection, and optimized batch Logistic Regression fitting.
 When installed from an official wheel, it works immediately:
 
 ```python
@@ -965,7 +967,7 @@ Notes:
 - `engine` controls report compute engine: `rust` (default) or `python`
 - `max_workers` controls compute parallelism; default is `min(8, cpu_count)`
 - `parallel_sheets` enables concurrent sheet computation (Excel write remains sequential)
-- `memory_mode` controls runtime memory strategy: `compact` (default) or `standard`
+- `memory_mode` controls runtime memory strategy: `compact` (default) or `standard`. Compact mode significantly reduces memory usage for 10M+ rows by using downcasted types and optimized monthly transformations.
 - `metrics_mode` controls metric computation mode: `exact` (default) or `binned` (faster, approximate)
 - If you only need part of the report, pass just the sheet names or indexes you want
 - For report development and validation, use `uv sync --group dev`

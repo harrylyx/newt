@@ -10,6 +10,8 @@
 
 ```bash
 pip install newt
+# 或者使用 uv
+uv add newt
 ```
 
 ### 从 GitHub Release 安装（推荐，可获得原生引擎）
@@ -33,7 +35,7 @@ pip install newt-<版本号>-<平台>.whl
 
 ### 高性能原生引擎 (Rust)
 
-Newt 包含一个高性能的 Rust 扩展，用于加速核心计算路径，包括单特征 IV、批量 IV、PSI、ChiMerge 以及逐步回归特征选择。从官方 wheel 安装后可直接使用：
+Newt 包含一个高性能的 Rust 扩展，用于加速核心计算路径，包括单特征 IV、批量 IV、PSI、ChiMerge、逐步回归特征选择以及优化的批量逻辑回归拟合。从官方 wheel 安装后可直接使用：
 
 ```python
 from newt.features.analysis import calculate_batch_iv, calculate_iv
@@ -960,7 +962,7 @@ report.generate()
 - `engine` 控制报表计算引擎：`rust`（默认）或 `python`
 - `max_workers` 控制并行计算线程数；默认是 `min(8, cpu_count)`
 - `parallel_sheets` 控制是否并行计算各个 sheet（Excel 写入仍是串行）
-- `memory_mode` 控制内存策略：`compact`（默认）或 `standard`
+- `memory_mode` 控制内存策略：`compact`（默认）或 `standard`。Compact 模式通过使用下采样类型和优化的按月转换逻辑，显著降低处理千万级数据时的内存占用。
 - `metrics_mode` 控制指标计算模式：`exact`（默认）或 `binned`（更快、近似）
 - 如果你只想看某一部分报表，可以只传对应的 sheet 名称或编号
 - 跑报表开发和验收时，建议使用 `uv sync --group dev`

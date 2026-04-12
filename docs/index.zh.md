@@ -20,6 +20,9 @@ pip install newt
 ## 快速开始
 
 - [用户指南](user_guide.zh.md)
-- [API 参考](api/reference.md)
+- [API 参考](api/reference.zh.md)
+## 性能基准 (Benchmarks)
+- [与 Toad 性能对比](benchmarks/metric_vs_toad.md)
 - [PSI 计算性能](benchmarks/psi_performance.md)
 - [逐步特征筛选性能](benchmarks/stepwise_performance.md)
+- [ChiMerge 分箱性能](benchmarks/chimerge_performance.md)

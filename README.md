@@ -307,6 +307,7 @@ fig = plot_psi_comparison(psi_dict, threshold=0.25)
 - [用户指南 (中文)](docs/user_guide.zh.md) - Chinese version of the user guide
 - [Benchmark Guide](docs/benchmarks/metric_vs_toad.md) - Compare Newt metrics against toad on the bundled sample dataset
 - [PSI Engine Benchmark](docs/benchmarks/psi_performance.md) - Compare scalar PSI with Python/Rust batch engines
+- [Stepwise Selection Benchmark](docs/benchmarks/stepwise_performance.md) - High-performance parallel Rust selector benchmark
 - [ChiMerge Performance Benchmark](docs/benchmarks/chimerge_performance.md) - Compare Python and Rust ChiMerge speed and accuracy
 - [Examples](examples/) - Jupyter notebook examples
 

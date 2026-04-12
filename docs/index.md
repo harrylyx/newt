@@ -21,5 +21,8 @@ pip install newt
 
 - [User Guide](user_guide.md)
 - [API Reference](api/reference.md)
-- [PSI Engine Performance](benchmarks/psi_performance.md)
+## Benchmarks
+- [Performance vs Toad](benchmarks/metric_vs_toad.md)
+- [PSI Performance](benchmarks/psi_performance.md)
 - [Stepwise Selection Performance](benchmarks/stepwise_performance.md)
+- [ChiMerge Performance](benchmarks/chimerge_performance.md)

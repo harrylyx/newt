@@ -69,3 +69,4 @@ nav:
       - Performance vs Toad: benchmarks/metric_vs_toad.md
       - PSI Performance: benchmarks/psi_performance.md
       - ChiMerge Performance: benchmarks/chimerge_performance.md
+      - Stepwise Performance: benchmarks/stepwise_performance.md

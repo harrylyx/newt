@@ -20,6 +20,15 @@ def _load_rust_engine():
     return load_native_module()
 
 
+def _resolve_monotonic_mode(monotonic: Union[bool, str, None]) -> str:
+    """Normalize monotonic input into Rust engine mode string."""
+    if isinstance(monotonic, str):
+        if monotonic in ("ascending", "descending"):
+            return monotonic
+        return "auto"
+    return "auto"
+
+
 def _calculate_cut_points_from_bins(bins) -> List[float]:
     """Convert ordered bin start values into split points for ``pd.cut``."""
     if len(bins) < 2:
@@ -185,6 +194,34 @@ class ChiMergeBinner(BaseBinner):
 
         # 5. Extract splits
         return _calculate_cut_points_from_bins(bins)
+
+    def _adjust_monotonicity(
+        self, X: pd.Series, y: pd.Series, splits: List[float]
+    ) -> List[float]:
+        """Use native monotonic adjustment when available."""
+        split_list = sorted(list(set(splits)))
+        if not split_list:
+            return []
+
+        rust_module = _load_rust_engine()
+        if rust_module and hasattr(rust_module, "adjust_chi_merge_monotonic_numpy"):
+            try:
+                df = pd.DataFrame({"X": X, "y": y}).dropna()
+                if df.empty:
+                    return []
+
+                adjusted = rust_module.adjust_chi_merge_monotonic_numpy(
+                    df["X"].to_numpy(dtype=np.float64),
+                    df["y"].to_numpy(dtype=np.int64),
+                    split_list,
+                    _resolve_monotonic_mode(self.monotonic),
+                )
+                return sorted(list(set(adjusted)))
+            except Exception:
+                # Fall back to Python monotonic adjustment on any native failure.
+                pass
+
+        return super()._adjust_monotonicity(X, y, split_list)
 
     def _compute_chi_squares(self, bins):
         if len(bins) < 2:

@@ -24,12 +24,17 @@ class ScorecardBuilder:
         binner: Any,
         woe_encoder: Any,
     ) -> Tuple[
-        ScorecardSpec, Dict[str, float], Dict[str, Dict[str, float]], Dict[str, float]
+        ScorecardSpec,
+        Dict[str, float],
+        Dict[str, Dict[str, float]],
+        Dict[str, float],
+        Dict[str, Any],
     ]:
         """Build a scorecard spec from fitted model components."""
         intercept, coefficients = self._extract_model_parameters(model)
         feature_statistics = self._extract_feature_statistics(model, coefficients)
         model_statistics = self._extract_model_statistics(model)
+        lr_parameters = self._extract_lr_parameters(model)
         intercept_points = self.offset - self.factor * intercept
 
         feature_scores = {}
@@ -75,8 +80,9 @@ class ScorecardBuilder:
             binning_rules=binning_rules,
             feature_statistics=feature_statistics,
             model_statistics=model_statistics,
+            lr_parameters=lr_parameters,
         )
-        return spec, coefficients, feature_statistics, model_statistics
+        return spec, coefficients, feature_statistics, model_statistics, lr_parameters
 
     def _extract_model_parameters(self, model: Any) -> Tuple[float, Dict[str, float]]:
         """Extract intercept and feature coefficients from supported models."""
@@ -189,6 +195,32 @@ class ScorecardBuilder:
             output[output_name] = numeric
         return output
 
+    def _extract_lr_parameters(self, model: Any) -> Dict[str, Any]:
+        """Extract a compact, report-friendly LR parameter snapshot."""
+        preferred = ("fit_intercept", "method", "maxiter", "regularization", "alpha")
+        snapshot: Dict[str, Any] = {}
+
+        for name in preferred:
+            if not hasattr(model, name):
+                continue
+            value = self._as_supported_lr_param(getattr(model, name))
+            if value is None:
+                continue
+            snapshot[name] = value
+
+        extra_kwargs = getattr(model, "extra_kwargs", {})
+        if isinstance(extra_kwargs, dict):
+            for name, raw_value in extra_kwargs.items():
+                key = str(name)
+                if key in snapshot:
+                    continue
+                value = self._as_supported_lr_param(raw_value)
+                if value is None:
+                    continue
+                snapshot[key] = value
+
+        return snapshot
+
     def _as_finite_float(self, value: Any) -> Optional[float]:
         """Normalize scalar numeric values and reject non-finite entries."""
         if value is None:
@@ -200,3 +232,17 @@ class ScorecardBuilder:
         if not np.isfinite(numeric):
             return None
         return numeric
+
+    def _as_supported_lr_param(self, value: Any) -> Optional[Any]:
+        """Keep only scalar values that are safe to serialize in scorecard payloads."""
+        if isinstance(value, bool):
+            return bool(value)
+        if isinstance(value, int):
+            return int(value)
+        if isinstance(value, float):
+            if not np.isfinite(value):
+                return None
+            return float(value)
+        if isinstance(value, str):
+            return value
+        return None

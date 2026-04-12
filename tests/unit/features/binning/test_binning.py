@@ -5,6 +5,7 @@ import pytest
 import newt.features.binning.binner as binner_module
 import newt.features.binning.supervised as supervised_module
 from newt.features.binning import Binner
+from newt.features.binning.base import BaseBinner
 from newt.features.binning.supervised import ChiMergeBinner, DecisionTreeBinner
 from newt.features.binning.unsupervised import EqualFrequencyBinner, EqualWidthBinner
 
@@ -211,6 +212,43 @@ def test_binner_chi_rust_matches_python_with_missing_constant_and_repeated(
     )
 
 
+def test_binner_chi_rust_monotonic_with_missing_constant_and_repeated(
+    binning_data, monkeypatch
+):
+    _require_chimerge_rust()
+    X, y = binning_data
+    frame = pd.DataFrame(
+        {
+            "score": X,
+            "score_nan": X.mask(np.arange(len(X)) % 11 == 0),
+            "score_repeat": np.round(X, 2),
+            "score_const": 1.0,
+        }
+    )
+
+    rust_binner = Binner()
+    rust_binner.fit(
+        frame, y, method="chi", n_bins=5, monotonic=True, show_progress=False
+    )
+
+    monkeypatch.setattr(supervised_module, "_load_rust_engine", lambda: None)
+    monkeypatch.setattr(binner_module, "_load_rust_engine", lambda: None)
+    python_binner = Binner()
+    python_binner.fit(
+        frame, y, method="chi", n_bins=5, monotonic=True, show_progress=False
+    )
+
+    for feature in frame.columns:
+        assert rust_binner.rules_[feature] == pytest.approx(
+            python_binner.rules_[feature], abs=1e-12
+        )
+
+    pd.testing.assert_frame_equal(
+        rust_binner.transform(frame, show_progress=False),
+        python_binner.transform(frame, show_progress=False),
+    )
+
+
 def test_binner_chi_uses_batch_rust_api_for_multi_feature_fit(
     binning_data, monkeypatch
 ):
@@ -242,6 +280,118 @@ def test_binner_chi_uses_batch_rust_api_for_multi_feature_fit(
 
     assert proxy.batch_calls == 1
     assert proxy.single_calls == 0
+
+
+def test_chimerge_rust_exposes_monotonic_apis():
+    _require_batch_chimerge_rust()
+    rust_module = supervised_module._load_rust_engine()
+
+    assert hasattr(rust_module, "adjust_chi_merge_monotonic_numpy")
+    assert hasattr(rust_module, "adjust_batch_chi_merge_monotonic_numpy")
+
+
+def test_chimerge_single_uses_rust_monotonic_api(binning_data, monkeypatch):
+    _require_chimerge_rust()
+    rust_module = supervised_module._load_rust_engine()
+    X, y = binning_data
+
+    class RustProxy:
+        def __init__(self, module):
+            self._module = module
+            self.single_monotonic_calls = 0
+
+        def calculate_chi_merge_numpy(self, *args, **kwargs):
+            return self._module.calculate_chi_merge_numpy(*args, **kwargs)
+
+        def adjust_chi_merge_monotonic_numpy(self, feature, target, splits, monotonic):
+            self.single_monotonic_calls += 1
+            return sorted(list(set(splits)))
+
+    proxy = RustProxy(rust_module)
+    monkeypatch.setattr(supervised_module, "_load_rust_engine", lambda: proxy)
+
+    binner = ChiMergeBinner(n_bins=5, monotonic=True)
+    binner.fit(X, y)
+
+    assert proxy.single_monotonic_calls == 1
+
+
+def test_binner_chi_uses_batch_rust_monotonic_api_for_multi_feature_fit(
+    binning_data, monkeypatch
+):
+    _require_batch_chimerge_rust()
+    rust_module = supervised_module._load_rust_engine()
+    X, y = binning_data
+    frame = pd.DataFrame({"score": X, "score_sq": X**2})
+
+    class RustProxy:
+        def __init__(self, module):
+            self._module = module
+            self.batch_monotonic_calls = 0
+
+        def calculate_batch_chi_merge_numpy(self, *args, **kwargs):
+            return self._module.calculate_batch_chi_merge_numpy(*args, **kwargs)
+
+        def calculate_chi_merge_numpy(self, *args, **kwargs):
+            return self._module.calculate_chi_merge_numpy(*args, **kwargs)
+
+        def adjust_batch_chi_merge_monotonic_numpy(
+            self, features, target, splits_list, monotonic
+        ):
+            self.batch_monotonic_calls += 1
+            return splits_list, [True] * len(splits_list)
+
+    proxy = RustProxy(rust_module)
+    monkeypatch.setattr(binner_module, "_load_rust_engine", lambda: proxy)
+    monkeypatch.setattr(supervised_module, "_load_rust_engine", lambda: proxy)
+
+    binner = Binner()
+    binner.fit(frame, y, method="chi", n_bins=5, monotonic=True, show_progress=False)
+
+    assert proxy.batch_monotonic_calls == 1
+
+
+def test_binner_chi_batch_rust_monotonic_failure_falls_back_per_column(
+    binning_data, monkeypatch
+):
+    _require_batch_chimerge_rust()
+    rust_module = supervised_module._load_rust_engine()
+    X, y = binning_data
+    frame = pd.DataFrame({"score": X, "score_sq": X**2})
+
+    class RustProxy:
+        def __init__(self, module):
+            self._module = module
+
+        def calculate_batch_chi_merge_numpy(self, *args, **kwargs):
+            return self._module.calculate_batch_chi_merge_numpy(*args, **kwargs)
+
+        def calculate_chi_merge_numpy(self, *args, **kwargs):
+            return self._module.calculate_chi_merge_numpy(*args, **kwargs)
+
+        def adjust_batch_chi_merge_monotonic_numpy(
+            self, features, target, splits_list, monotonic
+        ):
+            if len(splits_list) < 2:
+                return splits_list, [False] * len(splits_list)
+            return [splits_list[0], sorted(list(set(splits_list[1])))], [False, True]
+
+    fallback_calls = []
+    original_adjust = BaseBinner._adjust_monotonicity
+
+    def spy_adjust(self, X, y, splits):
+        fallback_calls.append(self)
+        return original_adjust(self, X, y, splits)
+
+    proxy = RustProxy(rust_module)
+    monkeypatch.setattr(binner_module, "_load_rust_engine", lambda: proxy)
+    monkeypatch.setattr(supervised_module, "_load_rust_engine", lambda: proxy)
+    monkeypatch.setattr(BaseBinner, "_adjust_monotonicity", spy_adjust)
+
+    binner = Binner()
+    binner.fit(frame, y, method="chi", n_bins=5, monotonic=True, show_progress=False)
+
+    assert len(fallback_calls) == 1
 
 
 def test_monotonicity_adjustment(binning_data):

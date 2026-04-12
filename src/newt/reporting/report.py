@@ -219,10 +219,11 @@ class Report:
 
     def _prepare_data(self) -> pd.DataFrame:
         self._validate_columns()
+        normalized_tag = _normalize_report_tag_values(self.data[self.tag])
         prepared = self.data.copy(deep=False)
         prepared = prepared.assign(
             **{
-                self.tag: self.data[self.tag].astype("object"),
+                self.tag: normalized_tag,
                 "_report_month": _vectorized_normalize_month(self.data[self.date_col]),
             }
         )
@@ -330,6 +331,14 @@ def _downcast_float_columns(frame: pd.DataFrame, columns: Sequence[str]) -> None
             continue
         numeric = pd.to_numeric(frame[column], errors="coerce")
         frame[column] = pd.to_numeric(numeric, downcast="float")
+
+
+def _normalize_report_tag_values(values: pd.Series) -> pd.Series:
+    normalized = values.astype("object").copy()
+    text = normalized.astype(str).str.strip()
+    missing_mask = normalized.isna() | text.eq("")
+    normalized.loc[missing_mask] = "None"
+    return normalized
 
 
 def _peak_rss_mb() -> Optional[float]:

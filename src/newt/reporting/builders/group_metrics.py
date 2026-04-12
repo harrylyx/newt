@@ -25,6 +25,19 @@ from newt.reporting.table_context import ReportBuildContext
 
 LOGGER = logging.getLogger("newt.reporting.tables")
 
+CORE_METRIC_COLUMNS: Tuple[str, ...] = (
+    "总",
+    "好",
+    "坏",
+    "坏占比",
+    "KS",
+    "AUC",
+    "10%lift",
+    "5%lift",
+    "2%lift",
+    "1%lift",
+)
+
 
 def _build_split_metrics_tables(
     data: pd.DataFrame,
@@ -251,18 +264,18 @@ def _build_group_metrics(
         )
     ordered = data.loc[:, required_columns].copy()
     for group_col in group_cols:
-        col = ordered[group_col]
-        has_na = col.isna().any()
-        if not isinstance(col.dtype, pd.CategoricalDtype):
-            unique_vals = pd.unique(col)
-            cats = list(unique_vals)
-            if has_na and "" not in cats:
-                cats.append("")
-            ordered[group_col] = pd.Categorical(col, categories=cats, ordered=False)
-        elif has_na and "" not in ordered[group_col].cat.categories:
-            ordered[group_col] = ordered[group_col].cat.add_categories("")
-        if has_na:
-            ordered[group_col] = ordered[group_col].fillna("")
+        normalized = _normalize_group_column(
+            ordered[group_col],
+            is_tag_column=(group_col == tag_col),
+        )
+        categories = [value for value in pd.unique(normalized) if pd.notna(value)]
+        if not categories:
+            categories = ["None" if group_col == tag_col else ""]
+        ordered[group_col] = pd.Categorical(
+            normalized,
+            categories=categories,
+            ordered=False,
+        )
 
     psi_values: List[float] = []
     grouped_frames = list(
@@ -335,26 +348,12 @@ def _build_group_metrics(
     result = pd.DataFrame(records)
     if not result.empty:
         leading = ["样本标签", "模型", "样本集", "观察点月"]
-        metrics_cols = [
-            "总",
-            "好",
-            "坏",
-            "坏占比",
-            "KS",
-            "AUC",
-            "10%lift",
-            "5%lift",
-            "2%lift",
-            "1%lift",
-        ]
         psi_cols = ["train和各集合的PSI", "近期月对比各集合PSI"]
-
-        final_columns = []
-        for col in leading + metrics_cols + psi_cols:
-            if col in result.columns:
-                final_columns.append(col)
-        remaining = [c for c in result.columns if c not in final_columns]
-        result = result.reindex(columns=final_columns + remaining)
+        result = _reorder_metric_columns(
+            result,
+            leading_columns=leading,
+            trailing_columns=psi_cols,
+        )
 
     result = _sort_report_table(result, tag_column="样本集", month_column="观察点月")
     if build_context is not None:
@@ -497,24 +496,7 @@ def _build_dimensional_comparison(
     result = pd.DataFrame(rows)
     if not result.empty:
         leading = ["维度列", "维度值", "样本标签", "模型"]
-        metrics_cols = [
-            "总",
-            "好",
-            "坏",
-            "坏占比",
-            "KS",
-            "AUC",
-            "10%lift",
-            "5%lift",
-            "2%lift",
-            "1%lift",
-        ]
-        final_columns = []
-        for col in leading + metrics_cols:
-            if col in result.columns:
-                final_columns.append(col)
-        remaining = [c for c in result.columns if c not in final_columns]
-        result = result.reindex(columns=final_columns + remaining)
+        result = _reorder_metric_columns(result, leading_columns=leading)
     return result
 
 
@@ -545,6 +527,17 @@ def _resolve_observation_window(
         first = group_frame[month_col].iloc[0] if not group_frame.empty else ""
         return "" if pd.isna(first) else str(first)
     return ""
+
+
+def _normalize_group_column(values: pd.Series, is_tag_column: bool) -> pd.Series:
+    normalized = values.astype("object").copy()
+    if is_tag_column:
+        text = normalized.astype(str).str.strip()
+        missing_mask = normalized.isna() | text.eq("")
+        normalized.loc[missing_mask] = "None"
+        return normalized
+    normalized.loc[normalized.isna()] = ""
+    return normalized
 
 
 def _format_date_range(values: pd.Series) -> str:
@@ -605,6 +598,28 @@ def _sort_report_table(
         month_column=month_column,
         leading_columns=leading_columns,
     )
+
+
+def _reorder_metric_columns(
+    frame: pd.DataFrame,
+    leading_columns: Optional[Sequence[str]] = None,
+    trailing_columns: Optional[Sequence[str]] = None,
+) -> pd.DataFrame:
+    """Reorder report metric columns with a stable core metric order."""
+    if frame.empty:
+        return frame
+
+    preferred = [
+        *(leading_columns or ()),
+        *CORE_METRIC_COLUMNS,
+        *(trailing_columns or ()),
+    ]
+    ordered: List[str] = []
+    for column in preferred:
+        if column in frame.columns and column not in ordered:
+            ordered.append(column)
+    remaining = [column for column in frame.columns if column not in ordered]
+    return frame.reindex(columns=ordered + remaining)
 
 
 def _ordered_month_values(values: pd.Series) -> List[object]:

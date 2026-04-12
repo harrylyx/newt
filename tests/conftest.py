@@ -204,6 +204,12 @@ def fake_scorecard_model():
 
     class _FakeLogisticModel:
         def __init__(self):
+            self.fit_intercept = True
+            self.method = "bfgs"
+            self.maxiter = 120
+            self.regularization = None
+            self.alpha = 0.0
+            self.extra_kwargs = {"tol": 1e-6}
             self.coefficients_ = pd.DataFrame(
                 [
                     {

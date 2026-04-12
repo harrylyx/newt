@@ -59,6 +59,8 @@ class Scorecard:
         self._model_coefs: Dict[str, float] = {}
         self.feature_statistics_: pd.DataFrame = pd.DataFrame()
         self.model_statistics_: Dict[str, float] = {}
+        self.lr_model_: Optional[Any] = None
+        self.lr_parameters_: Dict[str, Any] = {}
 
     def from_model(
         self,
@@ -85,13 +87,19 @@ class Scorecard:
             pdo=self.pdo,
             base_odds=self.base_odds,
         )
-        spec, model_coefs, feature_statistics, model_statistics = builder.build(
-            model, binner, woe_encoder
-        )
+        (
+            spec,
+            model_coefs,
+            feature_statistics,
+            model_statistics,
+            lr_parameters,
+        ) = builder.build(model, binner, woe_encoder)
 
         self._binner = binner
         self._woe_encoder = woe_encoder
         self._model_coefs = model_coefs
+        self.lr_model_ = model if not isinstance(model, dict) else None
+        self.lr_parameters_ = dict(lr_parameters)
         self.feature_statistics_ = (
             pd.DataFrame.from_dict(feature_statistics, orient="index")
             .reset_index()
@@ -111,6 +119,7 @@ class Scorecard:
             Scorecard: The restored Scorecard instance.
         """
         spec = ScorecardSpec.from_dict(payload)
+        self.lr_model_ = None
         return self._load_spec(spec)
 
     def _load_spec(self, spec: ScorecardSpec) -> "Scorecard":
@@ -137,6 +146,7 @@ class Scorecard:
         else:
             self.feature_statistics_ = pd.DataFrame()
         self.model_statistics_ = dict(spec.model_statistics)
+        self.lr_parameters_ = dict(spec.lr_parameters)
         self.is_built_ = True
         return self
 

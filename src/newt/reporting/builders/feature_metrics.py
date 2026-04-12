@@ -33,6 +33,7 @@ def _build_feature_analysis_table(
     feature_cols: Sequence[str],
     feature_dict: pd.DataFrame,
     importance: pd.DataFrame,
+    feature_bin_edges: Optional[Dict[str, Sequence[float]]] = None,
     lr_feature_summary: Optional[pd.DataFrame] = None,
     build_context: Optional[ReportBuildContext] = None,
 ) -> Tuple[pd.DataFrame, FeatureComputationArtifacts]:
@@ -107,6 +108,7 @@ def _build_feature_analysis_table(
     )
 
     total_features = len(feature_cols)
+    resolved_feature_edges = feature_bin_edges or {}
     worker_count = 1
     if (
         build_context is not None
@@ -121,13 +123,17 @@ def _build_feature_analysis_table(
 
     def _build_feature_row(
         index_feature: Tuple[int, str]
-    ) -> Tuple[Dict[str, object], np.ndarray, pd.DataFrame, pd.DataFrame]:
+    ) -> Tuple[Dict[str, object], np.ndarray, pd.DataFrame, pd.DataFrame, bool]:
         index, feature = index_feature
         meta = _lookup_feature_meta(feature_dict, feature)
-        train_edges = np.asarray(
-            build_reference_quantile_bins(train_frame[feature], bins=10),
-            dtype=float,
-        )
+        configured_edges = resolved_feature_edges.get(feature)
+        train_edges = _normalize_feature_edges(configured_edges)
+        use_feature_edges_for_psi = train_edges is not None
+        if train_edges is None:
+            train_edges = np.asarray(
+                build_reference_quantile_bins(train_frame[feature], bins=10),
+                dtype=float,
+            )
         train_stats = _build_feature_bin_stats(
             train_frame,
             feature=feature,
@@ -140,9 +146,20 @@ def _build_feature_analysis_table(
             label_col=label_col,
             edges=train_edges,
         )
+        if use_feature_edges_for_psi:
+            iv_train = _sum_iv_from_bin_stats(train_stats)
+            iv_oot = _sum_iv_from_bin_stats(oot_stats)
+            psi_value = _calculate_feature_psi_with_edges(
+                expected=train_frame[feature],
+                actual=oot_frame[feature],
+                edges=train_edges,
+            )
+        else:
+            iv_train = float(train_iv_lookup.get(feature, np.nan))
+            iv_oot = float(oot_iv_lookup.get(feature, np.nan))
+            psi_value = feature_psi_lookup.get(feature, float("nan"))
         ks_train = float(train_stats["ks"].max()) if not train_stats.empty else np.nan
         ks_oot = float(oot_stats["ks"].max()) if not oot_stats.empty else np.nan
-        psi_value = feature_psi_lookup.get(feature, float("nan"))
         row = {
             "序号": index,
             "vars": feature,
@@ -153,8 +170,8 @@ def _build_feature_analysis_table(
             "缺失率_oot": float(
                 oot_missing_rate.get(feature, np.nan) if not oot_frame.empty else np.nan
             ),
-            "iv_train": float(train_iv_lookup.get(feature, np.nan)),
-            "iv_oot": float(oot_iv_lookup.get(feature, np.nan)),
+            "iv_train": iv_train,
+            "iv_oot": iv_oot,
             "ks_train": ks_train,
             "ks_oot": ks_oot,
             "gain": _lookup_importance(importance_lookup, feature, "gain"),
@@ -173,7 +190,7 @@ def _build_feature_analysis_table(
                 time.perf_counter() - loop_start,
                 feature,
             )
-        return row, train_edges, train_stats, oot_stats
+        return row, train_edges, train_stats, oot_stats, use_feature_edges_for_psi
 
     indexed_features = list(enumerate(feature_cols, start=1))
     if worker_count > 1:
@@ -188,13 +205,22 @@ def _build_feature_analysis_table(
 
     rows = [item[0] for item in feature_results]
     artifacts = FeatureComputationArtifacts()
-    for (_, feature), (_, edges, train_stats, oot_stats) in zip(
+    for (_, feature), (
+        _,
+        edges,
+        train_stats,
+        oot_stats,
+        use_feature_edges_for_psi,
+    ) in zip(
         indexed_features,
         feature_results,
     ):
         artifacts.edges_by_feature[feature] = edges
         artifacts.train_bin_stats_by_feature[feature] = train_stats
         artifacts.oot_bin_stats_by_feature[feature] = oot_stats
+        artifacts.use_feature_edges_for_psi_by_feature[
+            feature
+        ] = use_feature_edges_for_psi
 
     result = pd.DataFrame(rows)
     if result.empty:
@@ -392,6 +418,7 @@ def _build_feature_monthly_metrics(
     edges: Sequence[float],
     engine: str = "python",
     metrics_mode: str = "exact",
+    use_fixed_edges_for_psi: bool = False,
 ) -> pd.DataFrame:
     if all_data.empty:
         return pd.DataFrame()
@@ -430,17 +457,28 @@ def _build_feature_monthly_metrics(
             continue
         month_data_list.append((month_value, month_vals, month_labs))
 
+    psi_values: List[float] = []
     if month_data_list:
-        psi_values = calculate_psi_batch(
-            expected=pd.Series(train_values),
-            actual_groups=[
-                pd.Series(month_vals) for _, month_vals, _ in month_data_list
-            ],
-            buckets=10,
-            engine=engine,
-        )
-    else:
-        psi_values = []
+        if use_fixed_edges_for_psi:
+            for _, month_vals, _ in month_data_list:
+                psi_values.append(
+                    _calculate_feature_psi_with_edges(
+                        expected=pd.Series(train_values),
+                        actual=pd.Series(month_vals),
+                        edges=edges_array,
+                    )
+                )
+        else:
+            psi_values = list(
+                calculate_psi_batch(
+                    expected=pd.Series(train_values),
+                    actual_groups=[
+                        pd.Series(month_vals) for _, month_vals, _ in month_data_list
+                    ],
+                    buckets=10,
+                    engine=engine,
+                )
+            )
 
     metric_groups: List[Tuple[np.ndarray, np.ndarray]] = []
     month_payload: List[Tuple[object, np.ndarray, np.ndarray]] = []
@@ -471,7 +509,12 @@ def _build_feature_monthly_metrics(
                 ),
             }
         )
-    return group_metrics._sort_report_table(pd.DataFrame(rows), month_column="month")
+    result = group_metrics._sort_report_table(pd.DataFrame(rows), month_column="month")
+    return group_metrics._reorder_metric_columns(
+        result,
+        leading_columns=["month"],
+        trailing_columns=["PSI"],
+    )
 
 
 def _extract_feature_arrays(
@@ -508,6 +551,64 @@ def _assign_bin_indices(values: np.ndarray, edges: np.ndarray) -> np.ndarray:
             side="right",
         ).astype(np.int32)
     return indices
+
+
+def _normalize_feature_edges(edges: Optional[Sequence[float]]) -> Optional[np.ndarray]:
+    if edges is None:
+        return None
+    numeric = np.asarray(edges, dtype=float)
+    if numeric.size < 2:
+        return None
+    numeric = np.unique(numeric)
+    if numeric.size < 2:
+        return None
+    numeric[0] = -np.inf
+    numeric[-1] = np.inf
+    return numeric
+
+
+def _sum_iv_from_bin_stats(stats: pd.DataFrame) -> float:
+    if stats.empty or "iv" not in stats.columns:
+        return float("nan")
+    values = pd.to_numeric(stats["iv"], errors="coerce")
+    if values.isna().all():
+        return float("nan")
+    return float(values.sum(skipna=True))
+
+
+def _calculate_feature_psi_with_edges(
+    expected: pd.Series,
+    actual: pd.Series,
+    edges: Sequence[float],
+) -> float:
+    if expected.empty or actual.empty:
+        return float("nan")
+    edges_array = np.asarray(edges, dtype=float)
+    if edges_array.size < 2:
+        return float("nan")
+
+    expected_values = pd.to_numeric(expected, errors="coerce").to_numpy(dtype=float)
+    actual_values = pd.to_numeric(actual, errors="coerce").to_numpy(dtype=float)
+    if expected_values.size == 0 or actual_values.size == 0:
+        return float("nan")
+
+    expected_bins = _assign_bin_indices(expected_values, edges_array)
+    actual_bins = _assign_bin_indices(actual_values, edges_array)
+    non_missing_bins = len(edges_array) - 1
+    all_bins = non_missing_bins + 1
+    expected_counts = np.bincount(expected_bins, minlength=all_bins).astype(float)
+    actual_counts = np.bincount(actual_bins, minlength=all_bins).astype(float)
+
+    if expected_counts.sum() <= 0 or actual_counts.sum() <= 0:
+        return float("nan")
+
+    expected_prop = expected_counts / expected_counts.sum()
+    actual_prop = actual_counts / actual_counts.sum()
+    expected_prop = np.clip(expected_prop, 1e-8, None)
+    actual_prop = np.clip(actual_prop, 1e-8, None)
+    return float(
+        np.sum((actual_prop - expected_prop) * np.log(actual_prop / expected_prop))
+    )
 
 
 def _calculate_feature_metric_score(

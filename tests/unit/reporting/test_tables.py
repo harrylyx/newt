@@ -2,9 +2,14 @@
 
 import numpy as np
 import pandas as pd
+import pytest
 
 from newt.reporting.table_context import FeatureComputationArtifacts
-from newt.reporting.tables import _build_group_metrics, build_variable_analysis_sheet
+from newt.reporting.tables import (
+    _build_feature_monthly_metrics,
+    _build_group_metrics,
+    build_variable_analysis_sheet,
+)
 
 
 def _make_frame(
@@ -259,6 +264,39 @@ class TestBuildGroupMetricsWithNaN:
         assert result["AUC"].notna().all()
 
 
+def test_group_metrics_tag_group_with_nulls_is_labeled_none():
+    df = pd.DataFrame(
+        {
+            "tag": ["train", "train", "oot", "oot", None, None],
+            "month": ["202401", "202401", "202401", "202401", "202401", "202401"],
+            "label": [0, 1, 0, 1, 0, 1],
+            "score": [0.1, 0.9, 0.2, 0.8, 0.3, 0.7],
+            "raw_date": [
+                "2024-01-01",
+                "2024-01-15",
+                "2024-01-20",
+                "2024-01-25",
+                "2024-01-11",
+                "2024-01-12",
+            ],
+        }
+    )
+    result = _build_group_metrics(
+        data=df,
+        group_cols=["tag"],
+        label_col="label",
+        score_col="score",
+        tag_col="tag",
+        month_col="month",
+        raw_date_col="raw_date",
+        model_name="test_model",
+        metrics_mode="exact",
+        build_context=None,
+    )
+    assert "None" in result["样本集"].tolist()
+    assert result["AUC"].notna().all()
+
+
 def test_scorecard_variable_analysis_does_not_truncate_to_top_30(monkeypatch):
     features = [f"f{i}" for i in range(31)]
     frame = pd.DataFrame(
@@ -352,3 +390,42 @@ def test_scorecard_variable_analysis_does_not_truncate_to_top_30(monkeypatch):
 
     feature_bin_blocks = [b for b in sheet.blocks if b.title.endswith(" 分箱表")]
     assert len(feature_bin_blocks) == 31
+
+
+@pytest.mark.parametrize("engine", ["python", "rust"])
+def test_feature_monthly_metrics_columns_keep_stable_metric_order(engine):
+    all_data = pd.DataFrame(
+        {
+            "month": ["202401", "202401", "202402", "202402", "202403", "202403"],
+            "feature_a": [0.1, 0.9, 0.2, 0.8, 0.3, 0.7],
+            "label": [0, 1, 0, 1, 0, 1],
+        }
+    )
+    train_frame = all_data.loc[all_data["month"].isin(["202401", "202402"])].copy()
+    edges = np.asarray([-np.inf, 0.5, np.inf], dtype=float)
+
+    monthly = _build_feature_monthly_metrics(
+        all_data=all_data,
+        train_frame=train_frame,
+        feature="feature_a",
+        label_col="label",
+        month_col="month",
+        edges=edges,
+        engine=engine,
+        metrics_mode="exact",
+    )
+
+    assert monthly.columns.tolist() == [
+        "month",
+        "总",
+        "好",
+        "坏",
+        "坏占比",
+        "KS",
+        "AUC",
+        "10%lift",
+        "5%lift",
+        "2%lift",
+        "1%lift",
+        "PSI",
+    ]

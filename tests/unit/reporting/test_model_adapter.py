@@ -127,14 +127,15 @@ def test_model_adapter_extracts_scorecard_metadata(fake_scorecard_model):
     assert importance["gain"].gt(0).all()
 
     params = adapter.get_param_table()
-    assert set(params["参数名称"]) == {
+    assert {
         "base_score",
         "pdo",
         "base_odds",
         "factor",
         "offset",
         "intercept_points",
-    }
+    }.issubset(set(params["参数名称"]))
+    assert {"fit_intercept", "method", "maxiter", "alpha"}.issubset(set(params["参数名称"]))
 
     feature_summary = adapter.get_lr_feature_summary_table()
     assert {
@@ -161,6 +162,11 @@ def test_model_adapter_extracts_scorecard_metadata(fake_scorecard_model):
 
     assert not adapter.get_scorecard_base_table().empty
     assert not adapter.get_scorecard_points_table().empty
+    feature_a_edges = adapter.get_feature_bin_edges("feature_a")
+    assert feature_a_edges is not None
+    assert feature_a_edges[0] == float("-inf")
+    assert feature_a_edges[-1] == float("inf")
+    assert feature_a_edges[1] == 10.0
 
 
 def test_model_adapter_scorecard_missing_stats_is_safe(fake_scorecard_model):

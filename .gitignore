@@ -7,6 +7,8 @@ __pycache__/
 *.py[cod]
 *.pyd
 *.so
+*.log
+*.xlsx
 
 # Build and packaging artifacts
 build/
@@ -16,9 +18,9 @@ dist/
 rust/**/target/
 
 # Virtual environments and local env files
-.venv/
-.venv-benchmark-3.10/
+.venv*/
 venv/
+.python-version
 .env
 .env.*
 
@@ -44,7 +46,7 @@ htmlcov/
 .ipynb_checkpoints/
 
 # Local example/generated artifacts
-examples/
+examples/data
 out/
 .claude/
 site/

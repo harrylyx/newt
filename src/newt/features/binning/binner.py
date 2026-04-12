@@ -18,6 +18,7 @@ from .supervised import (
     DecisionTreeBinner,
     OptBinningBinner,
     _load_rust_engine,
+    _resolve_monotonic_mode,
 )
 from .unsupervised import EqualFrequencyBinner, EqualWidthBinner, KMeansBinner
 from .woe_storage import WOEStorage
@@ -305,18 +306,65 @@ class Binner(BinnerStatsMixin, BinnerIOMixin, BinnerWOEMixin):
                         _fit_single_column_fallback(col)
                     continue
 
-                for col, splits in zip(cols_in_group, batch_splits):
+                split_lists = [sorted(list(set(splits))) for splits in batch_splits]
+                adjusted_split_lists = split_lists
+                monotonic_success = [False] * len(cols_in_group)
+
+                if monotonic:
+                    if hasattr(rust_module, "adjust_batch_chi_merge_monotonic_numpy"):
+                        try:
+                            native_result = (
+                                rust_module.adjust_batch_chi_merge_monotonic_numpy(
+                                    feature_arrays,
+                                    y_arr,
+                                    split_lists,
+                                    _resolve_monotonic_mode(monotonic),
+                                )
+                            )
+                            if (
+                                isinstance(native_result, tuple)
+                                and len(native_result) == 2
+                            ):
+                                candidate_splits, success_flags = native_result
+                                if len(candidate_splits) == len(cols_in_group) and len(
+                                    success_flags
+                                ) == len(cols_in_group):
+                                    adjusted_split_lists = [
+                                        sorted(list(set(splits)))
+                                        for splits in candidate_splits
+                                    ]
+                                    monotonic_success = [
+                                        bool(success) for success in success_flags
+                                    ]
+                            elif len(native_result) == len(cols_in_group):
+                                adjusted_split_lists = [
+                                    sorted(list(set(splits)))
+                                    for splits in native_result
+                                ]
+                                monotonic_success = [True] * len(cols_in_group)
+                        except Exception:
+                            monotonic_success = [False] * len(cols_in_group)
+                else:
+                    monotonic_success = [True] * len(cols_in_group)
+
+                for split_idx, col in enumerate(cols_in_group):
                     meta = feature_meta[col]
                     binner = meta["binner"]
                     col_data = meta["col_data"]
                     valid_mask = meta["valid_mask"]
 
                     try:
-                        split_list = sorted(list(set(splits)))
+                        split_list = split_lists[split_idx]
                         if binner.monotonic:
-                            split_list = binner._adjust_monotonicity(
-                                col_data[valid_mask], y_series[valid_mask], split_list
-                            )
+                            if monotonic_success[split_idx]:
+                                split_list = adjusted_split_lists[split_idx]
+                            else:
+                                split_list = BaseBinner._adjust_monotonicity(
+                                    binner,
+                                    col_data[valid_mask],
+                                    y_series[valid_mask],
+                                    split_list,
+                                )
 
                         binner.splits_ = split_list
                         binner.is_fitted_ = True

@@ -115,3 +115,4 @@ class FeatureComputationArtifacts:
     edges_by_feature: Dict[str, np.ndarray] = field(default_factory=dict)
     train_bin_stats_by_feature: Dict[str, pd.DataFrame] = field(default_factory=dict)
     oot_bin_stats_by_feature: Dict[str, pd.DataFrame] = field(default_factory=dict)
+    use_feature_edges_for_psi_by_feature: Dict[str, bool] = field(default_factory=dict)

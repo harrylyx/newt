@@ -45,6 +45,26 @@ class ModelAdapter:
 
         return []
 
+    def get_feature_bin_edges(self, feature: str) -> Optional[np.ndarray]:
+        """Return fixed bin edges for a feature when the model provides them."""
+        if self.model_family != "scorecard":
+            return None
+        rules = {}
+        spec = self.model.spec_ if hasattr(self.model, "spec_") else None
+        if spec is not None and hasattr(spec, "binning_rules"):
+            rules = spec.binning_rules
+        rule = rules.get(feature)
+        if rule is None or not hasattr(rule, "splits"):
+            return None
+        splits = [float(split) for split in list(rule.splits)]
+        edges = np.asarray([-np.inf, *splits, np.inf], dtype=float)
+        edges = np.unique(edges)
+        if edges.size < 2:
+            return None
+        edges[0] = -np.inf
+        edges[-1] = np.inf
+        return edges
+
     def get_importance_table(self) -> pd.DataFrame:
         """Return feature importance with gain and weight percentages."""
         if self.model_family == "scorecard":
@@ -178,22 +198,28 @@ class ModelAdapter:
         return pd.DataFrame(
             [
                 {
-                    "base_score": self.model.base_score
-                    if hasattr(self.model, "base_score")
-                    else np.nan,
+                    "base_score": (
+                        self.model.base_score
+                        if hasattr(self.model, "base_score")
+                        else np.nan
+                    ),
                     "pdo": self.model.pdo if hasattr(self.model, "pdo") else np.nan,
-                    "base_odds": self.model.base_odds
-                    if hasattr(self.model, "base_odds")
-                    else np.nan,
-                    "factor": self.model.factor
-                    if hasattr(self.model, "factor")
-                    else np.nan,
-                    "offset": self.model.offset
-                    if hasattr(self.model, "offset")
-                    else np.nan,
-                    "intercept_points": self.model.intercept_points_
-                    if hasattr(self.model, "intercept_points_")
-                    else np.nan,
+                    "base_odds": (
+                        self.model.base_odds
+                        if hasattr(self.model, "base_odds")
+                        else np.nan
+                    ),
+                    "factor": (
+                        self.model.factor if hasattr(self.model, "factor") else np.nan
+                    ),
+                    "offset": (
+                        self.model.offset if hasattr(self.model, "offset") else np.nan
+                    ),
+                    "intercept_points": (
+                        self.model.intercept_points_
+                        if hasattr(self.model, "intercept_points_")
+                        else np.nan
+                    ),
                 }
             ]
         )
@@ -337,7 +363,7 @@ class ModelAdapter:
         return np.asarray(values, dtype=float)
 
     def _build_scorecard_param_table(self) -> pd.DataFrame:
-        rows = [
+        rows: List[Dict[str, Any]] = [
             {
                 "参数名称": "base_score",
                 "数值": getattr(self.model, "base_score", ""),
@@ -369,7 +395,45 @@ class ModelAdapter:
                 "参数解释": "截距分值",
             },
         ]
+        lr_params = self._get_scorecard_lr_parameters()
+        if lr_params:
+            preferred_order = [
+                "fit_intercept",
+                "method",
+                "maxiter",
+                "regularization",
+                "alpha",
+            ]
+            ordered_names = [
+                *[name for name in preferred_order if name in lr_params],
+                *sorted(name for name in lr_params if name not in preferred_order),
+            ]
+            for name in ordered_names:
+                rows.append(
+                    {
+                        "参数名称": name,
+                        "数值": lr_params[name],
+                        "参数解释": LR_PARAMETER_DESCRIPTIONS.get(name, "LR附加参数"),
+                    }
+                )
         return pd.DataFrame(rows)
+
+    def _get_scorecard_lr_parameters(self) -> Dict[str, Any]:
+        """Get LR parameter snapshot from scorecard instance or serialized spec."""
+        lr_params = (
+            self.model.lr_parameters_ if hasattr(self.model, "lr_parameters_") else {}
+        )
+        if isinstance(lr_params, dict) and lr_params:
+            return dict(lr_params)
+        spec = self.model.spec_ if hasattr(self.model, "spec_") else None
+        spec_params = (
+            spec.lr_parameters
+            if spec is not None and hasattr(spec, "lr_parameters")
+            else {}
+        )
+        if isinstance(spec_params, dict):
+            return dict(spec_params)
+        return {}
 
     def _get_scorecard_feature_statistics_frame(self) -> pd.DataFrame:
         stats = (
@@ -446,3 +510,11 @@ PARAMETER_SPECS: Tuple[Tuple[str, Tuple[str, ...], str], ...] = (
     ("num_leaves", ("num_leaves",), "叶子节点数"),
     ("max_depth", ("max_depth",), "最大深度"),
 )
+
+LR_PARAMETER_DESCRIPTIONS: Dict[str, str] = {
+    "fit_intercept": "LR是否拟合截距",
+    "method": "LR优化方法",
+    "maxiter": "LR最大迭代次数",
+    "regularization": "LR正则化方式",
+    "alpha": "LR正则化强度",
+}

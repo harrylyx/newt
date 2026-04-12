@@ -921,6 +921,127 @@ def test_report_supports_scorecard_model_with_lr_summary_and_details_sheet(
     assert "Intercept" in points_block["变量"].values
 
 
+def test_report_scorecard_variable_analysis_uses_scorecard_bin_rules_for_iv_and_psi(
+    tmp_path,
+    report_frame,
+    fake_scorecard_model,
+):
+    output_path = tmp_path / "scorecard_variable_bins.xlsx"
+    report = Report(
+        data=report_frame,
+        model=fake_scorecard_model,
+        tag="tag",
+        score_col="score_new",
+        date_col="obs_date",
+        label_list=["label_main"],
+        sheet_list=["变量分析"],
+        report_out_path=str(output_path),
+    )
+
+    report.generate()
+
+    variable_sheet = report.result_.get_sheet("2.变量分析")
+    feature_table = variable_sheet.get_block("二、变量分析").data.set_index("vars")
+    feature_a_bin = variable_sheet.get_block("1.feature_a 分箱表").data
+    feature_a_non_missing = feature_a_bin.loc[feature_a_bin["bin"] != "Missing"]
+
+    # fake_scorecard_model uses split=10.0 for feature_a.
+    assert len(feature_a_non_missing) == 2
+    assert feature_a_non_missing["max"].dropna().min() == pytest.approx(10.0)
+    assert feature_table.loc["feature_a", "iv_train"] == pytest.approx(
+        float(feature_a_bin["iv"].sum())
+    )
+
+    train_feature = report_frame.loc[report_frame["tag"] == "train", "feature_a"]
+    oot_feature = report_frame.loc[report_frame["tag"] == "oot", "feature_a"]
+    edges = np.asarray([-np.inf, 10.0, np.inf], dtype=float)
+
+    def _bin_counts(values: pd.Series) -> np.ndarray:
+        numeric = pd.to_numeric(values, errors="coerce").to_numpy(dtype=float)
+        non_missing_bins = len(edges) - 1
+        indices = np.empty(numeric.shape[0], dtype=np.int64)
+        missing = np.isnan(numeric)
+        indices[missing] = non_missing_bins
+        if (~missing).any():
+            indices[~missing] = np.searchsorted(
+                edges[1:-1],
+                numeric[~missing],
+                side="right",
+            )
+        return np.bincount(indices, minlength=non_missing_bins + 1).astype(float)
+
+    expected_counts = _bin_counts(train_feature)
+    actual_counts = _bin_counts(oot_feature)
+    expected_prop = expected_counts / max(expected_counts.sum(), 1.0)
+    actual_prop = actual_counts / max(actual_counts.sum(), 1.0)
+    expected_prop = np.clip(expected_prop, 1e-8, None)
+    actual_prop = np.clip(actual_prop, 1e-8, None)
+    expected_psi = float(
+        np.sum((actual_prop - expected_prop) * np.log(actual_prop / expected_prop))
+    )
+    assert feature_table.loc["feature_a", "psi"] == pytest.approx(expected_psi)
+
+
+def test_report_scorecard_model_performance_includes_lr_params(
+    tmp_path,
+    report_frame,
+    fake_scorecard_model,
+):
+    output_path = tmp_path / "scorecard_model_performance.xlsx"
+    report = Report(
+        data=report_frame,
+        model=fake_scorecard_model,
+        tag="tag",
+        score_col="score_new",
+        date_col="obs_date",
+        label_list=["label_main"],
+        sheet_list=["模型表现"],
+        report_out_path=str(output_path),
+    )
+
+    report.generate()
+
+    performance_sheet = report.result_.get_sheet("3.模型表现")
+    param_table = performance_sheet.get_block("一、建模方法选择").data
+    names = set(param_table["参数名称"].tolist())
+    assert {
+        "base_score",
+        "pdo",
+        "fit_intercept",
+        "method",
+        "maxiter",
+        "alpha",
+    }.issubset(names)
+
+
+def test_report_model_performance_treats_missing_tag_as_none_segment(
+    tmp_path,
+    report_frame,
+    fake_lightgbm_model,
+):
+    frame = report_frame.copy()
+    frame.loc[0, "tag"] = None
+    frame.loc[1, "tag"] = ""
+
+    output_path = tmp_path / "missing_tag_none_segment.xlsx"
+    report = Report(
+        data=frame,
+        model=fake_lightgbm_model,
+        tag="tag",
+        score_col="score_new",
+        date_col="obs_date",
+        label_list=["label_main"],
+        sheet_list=["模型表现"],
+        report_out_path=str(output_path),
+    )
+
+    report.generate()
+
+    performance_sheet = report.result_.get_sheet("3.模型表现")
+    tag_metrics = performance_sheet.get_block("二、按tag模型效果").data
+    assert "None" in tag_metrics["样本集"].astype(str).tolist()
+
+
 def test_report_scorecard_missing_lr_stats_keeps_columns_and_does_not_fail(
     tmp_path,
     report_frame,

@@ -162,6 +162,130 @@ fn extract_split_points(bins: &[BinNode]) -> Vec<f64> {
         .collect()
 }
 
+fn normalize_splits(splits: &[f64]) -> Vec<f64> {
+    if splits.is_empty() {
+        return vec![];
+    }
+
+    let mut normalized = splits.to_vec();
+    normalized.sort_by(|left, right| left.partial_cmp(right).unwrap_or(Ordering::Equal));
+    normalized.dedup_by(|left, right| *left == *right);
+    normalized
+}
+
+fn build_sorted_pairs(feature: &[f64], target: &[i64]) -> Vec<(f64, i64)> {
+    let mut pairs: Vec<(f64, i64)> = feature
+        .iter()
+        .zip(target.iter())
+        .filter_map(|(&feature_value, &target_value)| {
+            if feature_value.is_nan() {
+                None
+            } else {
+                Some((feature_value, target_value))
+            }
+        })
+        .collect();
+    pairs.sort_by(|left, right| left.0.partial_cmp(&right.0).unwrap_or(Ordering::Equal));
+    pairs
+}
+
+fn compute_bin_rates(sorted_pairs: &[(f64, i64)], splits: &[f64]) -> Vec<f64> {
+    if sorted_pairs.is_empty() {
+        return vec![];
+    }
+
+    let mut counts = vec![0usize; splits.len() + 1];
+    let mut target_sums = vec![0.0f64; splits.len() + 1];
+    let mut split_idx = 0usize;
+
+    for (feature_value, target_value) in sorted_pairs.iter() {
+        while split_idx < splits.len() && *feature_value > splits[split_idx] {
+            split_idx += 1;
+        }
+        counts[split_idx] += 1;
+        target_sums[split_idx] += *target_value as f64;
+    }
+
+    counts
+        .into_iter()
+        .zip(target_sums.into_iter())
+        .filter_map(|(count, target_sum)| {
+            if count == 0 {
+                None
+            } else {
+                Some(target_sum / count as f64)
+            }
+        })
+        .collect()
+}
+
+fn resolve_monotonic_direction(monotonic: &str, rates: &[f64]) -> i8 {
+    match monotonic {
+        "ascending" => 1,
+        "descending" => -1,
+        _ => {
+            if rates[rates.len() - 1] > rates[0] {
+                1
+            } else {
+                -1
+            }
+        }
+    }
+}
+
+fn adjust_monotonic_splits_internal(
+    feature: &[f64],
+    target: &[i64],
+    splits: &[f64],
+    monotonic: &str,
+) -> Result<Vec<f64>, String> {
+    if feature.len() != target.len() {
+        return Err("Feature and target must have same length.".to_string());
+    }
+
+    if feature.is_empty() {
+        return Ok(vec![]);
+    }
+
+    let sorted_pairs = build_sorted_pairs(feature, target);
+    if sorted_pairs.is_empty() {
+        return Ok(vec![]);
+    }
+
+    let mut current_splits = normalize_splits(splits);
+    if current_splits.is_empty() {
+        return Ok(vec![]);
+    }
+
+    while !current_splits.is_empty() {
+        let rates = compute_bin_rates(&sorted_pairs, &current_splits);
+        if rates.len() < 2 {
+            break;
+        }
+
+        let is_increasing = rates.windows(2).all(|window| window[0] <= window[1]);
+        let is_decreasing = rates.windows(2).all(|window| window[0] >= window[1]);
+        if is_increasing || is_decreasing {
+            break;
+        }
+
+        let direction = resolve_monotonic_direction(monotonic, &rates);
+        let violation_idx = if direction > 0 {
+            rates.windows(2).position(|window| window[0] > window[1])
+        } else {
+            rates.windows(2).position(|window| window[0] < window[1])
+        };
+
+        if let Some(idx) = violation_idx {
+            current_splits.remove(idx);
+        } else {
+            break;
+        }
+    }
+
+    Ok(current_splits)
+}
+
 fn calculate_single_chi_merge(
     feature: &[f64],
     target: &[i64],
@@ -326,6 +450,82 @@ fn calculate_chi_merge_numpy(
 }
 
 #[pyfunction]
+#[pyo3(signature = (feature, target, splits, monotonic = "auto"))]
+fn adjust_chi_merge_monotonic_numpy(
+    py: Python<'_>,
+    feature: PyReadonlyArray1<f64>,
+    target: PyReadonlyArray1<i64>,
+    splits: Vec<f64>,
+    monotonic: &str,
+) -> PyResult<Vec<f64>> {
+    let feature_slice = feature.as_slice().map_err(|err| {
+        pyo3::exceptions::PyValueError::new_err(format!("feature not contiguous: {}", err))
+    })?;
+    let target_slice = target.as_slice().map_err(|err| {
+        pyo3::exceptions::PyValueError::new_err(format!("target not contiguous: {}", err))
+    })?;
+
+    py.allow_threads(|| {
+        adjust_monotonic_splits_internal(feature_slice, target_slice, &splits, monotonic).map_err(
+            |err| {
+                pyo3::exceptions::PyValueError::new_err(format!("monotonic adjust failed: {err}"))
+            },
+        )
+    })
+}
+
+#[pyfunction]
+#[pyo3(signature = (features, target, splits_list, monotonic = "auto"))]
+fn adjust_batch_chi_merge_monotonic_numpy(
+    py: Python<'_>,
+    features: Vec<PyReadonlyArray1<f64>>,
+    target: PyReadonlyArray1<i64>,
+    splits_list: Vec<Vec<f64>>,
+    monotonic: &str,
+) -> PyResult<(Vec<Vec<f64>>, Vec<bool>)> {
+    let target_slice = target.as_slice().map_err(|err| {
+        pyo3::exceptions::PyValueError::new_err(format!("target not contiguous: {}", err))
+    })?;
+    let target_vec = target_slice.to_vec();
+
+    let feature_vecs: Vec<Vec<f64>> = features
+        .iter()
+        .map(|feature| feature.as_slice().map(|slice| slice.to_vec()))
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|err| {
+            pyo3::exceptions::PyValueError::new_err(format!("feature not contiguous: {}", err))
+        })?;
+
+    py.allow_threads(|| {
+        let results: Vec<(Vec<f64>, bool)> = feature_vecs
+            .into_par_iter()
+            .enumerate()
+            .map(|(idx, feature_vec)| {
+                let original_splits = splits_list.get(idx).cloned().unwrap_or_default();
+
+                if feature_vec.len() != target_vec.len() {
+                    return (normalize_splits(&original_splits), false);
+                }
+
+                match adjust_monotonic_splits_internal(
+                    &feature_vec,
+                    &target_vec,
+                    &original_splits,
+                    monotonic,
+                ) {
+                    Ok(adjusted) => (adjusted, true),
+                    Err(_) => (normalize_splits(&original_splits), false),
+                }
+            })
+            .collect();
+
+        let adjusted_splits = results.iter().map(|(splits, _)| splits.clone()).collect();
+        let success_flags = results.iter().map(|(_, success)| *success).collect();
+        Ok((adjusted_splits, success_flags))
+    })
+}
+
+#[pyfunction]
 fn calculate_batch_chi_merge_numpy(
     py: Python<'_>,
     features: Vec<PyReadonlyArray1<f64>>,
@@ -366,6 +566,14 @@ fn calculate_batch_chi_merge_numpy(
 
 pub(crate) fn register(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_function(pyo3::wrap_pyfunction!(calculate_chi_merge_numpy, module)?)?;
+    module.add_function(pyo3::wrap_pyfunction!(
+        adjust_chi_merge_monotonic_numpy,
+        module
+    )?)?;
+    module.add_function(pyo3::wrap_pyfunction!(
+        adjust_batch_chi_merge_monotonic_numpy,
+        module
+    )?)?;
     module.add_function(pyo3::wrap_pyfunction!(
         calculate_batch_chi_merge_numpy,
         module

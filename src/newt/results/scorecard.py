@@ -17,6 +17,14 @@ def _is_finite_number(value: Any) -> bool:
     return bool(np.isfinite(numeric))
 
 
+def _is_supported_lr_param(value: Any) -> bool:
+    if isinstance(value, (bool, int, str)):
+        return True
+    if isinstance(value, float):
+        return bool(np.isfinite(value))
+    return False
+
+
 @dataclass
 class BinningRuleSpec:
     """Serializable description of how a feature is binned."""
@@ -112,6 +120,7 @@ class ScorecardSpec:
     binning_rules: Dict[str, BinningRuleSpec] = field(default_factory=dict)
     feature_statistics: Dict[str, Dict[str, float]] = field(default_factory=dict)
     model_statistics: Dict[str, float] = field(default_factory=dict)
+    lr_parameters: Dict[str, Any] = field(default_factory=dict)
 
     def export(self) -> pd.DataFrame:
         """Export the complete scorecard to a dataframe."""
@@ -162,6 +171,11 @@ class ScorecardSpec:
                 for metric, value in self.model_statistics.items()
                 if _is_finite_number(value)
             },
+            "lr_parameters": {
+                str(name): value
+                for name, value in self.lr_parameters.items()
+                if _is_supported_lr_param(value)
+            },
         }
 
     @classmethod
@@ -199,5 +213,10 @@ class ScorecardSpec:
                 str(metric): float(value)
                 for metric, value in dict(payload.get("model_statistics", {})).items()
                 if _is_finite_number(value)
+            },
+            lr_parameters={
+                str(name): value
+                for name, value in dict(payload.get("lr_parameters", {})).items()
+                if _is_supported_lr_param(value)
             },
         )

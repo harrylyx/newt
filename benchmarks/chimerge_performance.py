@@ -167,11 +167,13 @@ def benchmark_python_pure(X: pd.DataFrame, y: pd.Series, n_bins: int) -> float:
     return (time.perf_counter() - start) * 1000.0
 
 
-def benchmark_rust_sequential(X: pd.DataFrame, y: pd.Series, n_bins: int) -> float:
+def benchmark_rust_sequential(
+    X: pd.DataFrame, y: pd.Series, n_bins: int, monotonic: Optional[bool]
+) -> float:
     """Run single-column ChiMerge binner repeatedly."""
     start = time.perf_counter()
     for col in X.columns:
-        binner = ChiMergeBinner(n_bins=n_bins)
+        binner = ChiMergeBinner(n_bins=n_bins, monotonic=monotonic)
         binner.fit(X[col], y)
     return (time.perf_counter() - start) * 1000.0
 
@@ -196,12 +198,23 @@ def benchmark_rust_native_batch_splits(
 
 
 def benchmark_full_binner_fit(
-    X: pd.DataFrame, y: pd.Series, n_bins: int, show_progress: bool = False
+    X: pd.DataFrame,
+    y: pd.Series,
+    n_bins: int,
+    monotonic: Optional[bool],
+    show_progress: bool = False,
 ) -> float:
     """Run full Binner.fit including stats/WOE/IV computation."""
     binner = Binner()
     start = time.perf_counter()
-    binner.fit(X, y, method="chi", n_bins=n_bins, show_progress=show_progress)
+    binner.fit(
+        X,
+        y,
+        method="chi",
+        n_bins=n_bins,
+        monotonic=monotonic,
+        show_progress=show_progress,
+    )
     return (time.perf_counter() - start) * 1000.0
 
 
@@ -223,9 +236,12 @@ def build_markdown_report(payload: Dict[str, Any]) -> str:
         "",
         "## Performance Metrics",
         "",
-        "| rows | features | n_bins | python_pure_ms | native_batch_splits_ms | "
-        "single_chimerge_ms | full_binner_fit_ms | batch_vs_single | full_vs_single |",
-        "| ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |",
+        (
+            "| rows | features | n_bins | monotonic | python_pure_ms | "
+            "native_batch_splits_ms | single_chimerge_ms | full_binner_fit_ms | "
+            "batch_vs_single | full_vs_single |"
+        ),
+        "| ---: | ---: | ---: | :---: | ---: | ---: | ---: | ---: | ---: | ---: |",
     ]
 
     for s in payload["scenarios"]:
@@ -241,6 +257,7 @@ def build_markdown_report(payload: Dict[str, Any]) -> str:
         )
         lines.append(
             f"| {s['rows']} | {s['features']} | {s['n_bins']} | "
+            f"{s['monotonic']} | "
             f"{s['python_ms']:.2f} | {s['native_batch_splits_ms']:.2f} | "
             f"{s['single_chimerge_ms']:.2f} | {s['full_binner_fit_ms']:.2f} | "
             f"{batch_vs_single:.2f}x | {full_vs_single:.2f}x |"
@@ -318,6 +335,12 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         help="Comma-separated list of feature names to benchmark. "
         "Overrides --features count.",
     )
+    parser.add_argument(
+        "--monotonic-modes",
+        type=str,
+        default="none,true",
+        help="Comma-separated monotonic modes: none,true.",
+    )
     args = parser.parse_args(argv)
 
     rows_list = [int(r.strip()) for r in args.rows.split(",") if r.strip()]
@@ -328,6 +351,19 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     else:
         feat_list = [int(f.strip()) for f in args.features.split(",") if f.strip()]
         feature_names = None
+
+    monotonic_modes: List[Tuple[str, Optional[bool]]] = []
+    for raw_mode in [
+        m.strip().lower() for m in args.monotonic_modes.split(",") if m.strip()
+    ]:
+        if raw_mode in ("none", "null", "false"):
+            monotonic_modes.append(("none", None))
+        elif raw_mode in ("true", "auto"):
+            monotonic_modes.append(("true", True))
+        else:
+            raise ValueError(f"Unsupported monotonic mode: {raw_mode}")
+    if not monotonic_modes:
+        monotonic_modes = [("none", None), ("true", True)]
 
     output_dir = Path(args.output_dir).resolve()
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -372,24 +408,32 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
                 X, y_series, args.n_bins
             )
 
-            print("  Running Single-column ChiMerge...")
-            single_chimerge_ms = benchmark_rust_sequential(X, y_series, args.n_bins)
+            for monotonic_label, monotonic_value in monotonic_modes:
+                print(
+                    f"  Running Single-column ChiMerge (monotonic={monotonic_label})..."
+                )
+                single_chimerge_ms = benchmark_rust_sequential(
+                    X, y_series, args.n_bins, monotonic_value
+                )
 
-            print("  Running Full Binner.fit...")
-            full_fit_ms = benchmark_full_binner_fit(X, y_series, args.n_bins)
+                print(f"  Running Full Binner.fit (monotonic={monotonic_label})...")
+                full_fit_ms = benchmark_full_binner_fit(
+                    X, y_series, args.n_bins, monotonic_value
+                )
 
-            scenarios.append(
-                {
-                    "rows": rows,
-                    "features": len(X.columns),
-                    "n_bins": args.n_bins,
-                    "python_ms": py_ms,
-                    "native_batch_splits_ms": native_batch_ms,
-                    "single_chimerge_ms": single_chimerge_ms,
-                    "full_binner_fit_ms": full_fit_ms,
-                    "peak_rss_mb": get_peak_rss_mb(),
-                }
-            )
+                scenarios.append(
+                    {
+                        "rows": rows,
+                        "features": len(X.columns),
+                        "n_bins": args.n_bins,
+                        "monotonic": monotonic_label,
+                        "python_ms": py_ms,
+                        "native_batch_splits_ms": native_batch_ms,
+                        "single_chimerge_ms": single_chimerge_ms,
+                        "full_binner_fit_ms": full_fit_ms,
+                        "peak_rss_mb": get_peak_rss_mb(),
+                    }
+                )
 
     payload = {
         "metadata": {

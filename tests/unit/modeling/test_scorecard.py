@@ -1,3 +1,4 @@
+import pickle
 from unittest.mock import MagicMock
 
 import numpy as np
@@ -6,6 +7,21 @@ import pytest
 
 from newt.features.binning import Binner
 from newt.modeling.scorecard import Scorecard
+
+
+class _SerializableLogisticModel:
+    def __init__(self):
+        self.fit_intercept = True
+        self.method = "bfgs"
+        self.maxiter = 123
+        self.regularization = None
+        self.alpha = 0.15
+        self.extra_kwargs = {"tol": 1e-6}
+        self.coefficients_ = pd.DataFrame()
+        self.result_ = None
+
+    def to_dict(self):
+        return {"intercept": -0.1, "coefficients": {"x": 0.8}}
 
 
 @pytest.fixture
@@ -59,6 +75,12 @@ def test_scorecard_from_model_preserves_logistic_summary_stats(mock_components):
 
     class _FakeLogisticModel:
         def __init__(self):
+            self.fit_intercept = True
+            self.method = "bfgs"
+            self.maxiter = 99
+            self.regularization = None
+            self.alpha = 0.0
+            self.extra_kwargs = {"tol": 1e-6}
             self.coefficients_ = pd.DataFrame(
                 [
                     {
@@ -97,10 +119,13 @@ def test_scorecard_from_model_preserves_logistic_summary_stats(mock_components):
     ] == pytest.approx(0.0002)
     assert sc.model_statistics_["aic"] == pytest.approx(10.5)
     assert sc.model_statistics_["pseudo_r2"] == pytest.approx(0.21)
+    assert sc.lr_parameters_["fit_intercept"] is True
+    assert sc.lr_parameters_["method"] == "bfgs"
 
     restored = Scorecard().from_dict(sc.to_dict())
     assert not restored.feature_statistics_.empty
     assert restored.model_statistics_["bic"] == pytest.approx(12.1)
+    assert restored.lr_parameters_["maxiter"] == 99
 
 
 def test_scorecard_score(mock_components):
@@ -197,3 +222,18 @@ def test_scorecard_round_trip_from_dict_preserves_scores():
     restored = Scorecard().from_dict(scorecard.to_dict())
 
     pd.testing.assert_series_equal(scorecard.score(X), restored.score(X))
+
+
+def test_scorecard_pickle_preserves_original_lr_object_and_lr_params():
+    X = pd.DataFrame({"x": [1, 2, 3, np.nan, 5, 6, np.nan, 8, 9, 10]})
+    y = pd.Series([0, 0, 0, 1, 1, 1, 1, 1, 1, 1], name="target")
+    binner = Binner()
+    binner.fit(X, y, method="quantile", n_bins=2)
+
+    model = _SerializableLogisticModel()
+    scorecard = Scorecard().from_model(model, binner, binner.woe_encoders_)
+    restored = pickle.loads(pickle.dumps(scorecard))
+
+    assert isinstance(restored.lr_model_, _SerializableLogisticModel)
+    assert restored.lr_parameters_["method"] == "bfgs"
+    assert restored.lr_parameters_["maxiter"] == 123

@@ -315,6 +315,15 @@ def build_variable_analysis_sheet(
     )
 
     step_start = time.perf_counter()
+    feature_bin_edges = {}
+    get_feature_bin_edges = getattr(model_adapter, "get_feature_bin_edges", None)
+    if callable(get_feature_bin_edges):
+        feature_bin_edges = {
+            feature: edges
+            for feature in feature_cols
+            for edges in [get_feature_bin_edges(feature)]
+            if edges is not None
+        }
     feature_table, feature_artifacts = feature_metrics._build_feature_analysis_table(
         train_frame=train_frame,
         oot_frame=oot_frame,
@@ -325,6 +334,7 @@ def build_variable_analysis_sheet(
         feature_cols=feature_cols,
         feature_dict=feature_dict,
         importance=importance,
+        feature_bin_edges=feature_bin_edges,
         lr_feature_summary=lr_feature_summary,
         build_context=build_context,
     )
@@ -396,6 +406,12 @@ def build_variable_analysis_sheet(
                 build_context.options.metrics_mode
                 if build_context is not None
                 else "exact"
+            ),
+            use_fixed_edges_for_psi=(
+                feature_artifacts.use_feature_edges_for_psi_by_feature.get(
+                    feature_name,
+                    False,
+                )
             ),
         )
         display_name = feature_metrics._lookup_feature_meta(

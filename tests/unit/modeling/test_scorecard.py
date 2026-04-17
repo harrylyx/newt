@@ -32,17 +32,13 @@ def mock_components():
     binner.binners_["feature1"].splits_ = [0.5]
     binner.rules_ = {"feature1": [0.5]}
     binner.get_splits.return_value = [0.5]
-
-    # Mock WOE Encoder
-    woe_enc_instance = MagicMock()
-    woe_enc_instance.woe_map_ = {"bin1": 0.5, "bin2": -0.5}
-    woe_encoder = {"feature1": woe_enc_instance}
+    binner.get_woe_map.return_value = {"bin1": 0.5, "bin2": -0.5}
 
     # Mock Model
     model = MagicMock()
     model.to_dict.return_value = {"intercept": 0.1, "coefficients": {"feature1": 1.5}}
 
-    return model, binner, woe_encoder
+    return model, binner
 
 
 def test_scorecard_init():
@@ -53,9 +49,9 @@ def test_scorecard_init():
 
 
 def test_from_model(mock_components):
-    model, binner, woe_encoder = mock_components
+    model, binner = mock_components
     sc = Scorecard()
-    sc.from_model(model, binner, woe_encoder)
+    sc.from_model(model, binner)
 
     assert sc.is_built_
     assert "feature1" in sc.scorecard_
@@ -64,7 +60,7 @@ def test_from_model(mock_components):
 
 
 def test_scorecard_from_model_preserves_logistic_summary_stats(mock_components):
-    _, binner, woe_encoder = mock_components
+    _, binner = mock_components
 
     class _FakeResult:
         aic = 10.5
@@ -110,7 +106,7 @@ def test_scorecard_from_model_preserves_logistic_summary_stats(mock_components):
         def to_dict(self):
             return {"intercept": 0.1, "coefficients": {"feature1": 1.5}}
 
-    sc = Scorecard().from_model(_FakeLogisticModel(), binner, woe_encoder)
+    sc = Scorecard().from_model(_FakeLogisticModel(), binner)
 
     assert not sc.feature_statistics_.empty
     assert "p_value" in sc.feature_statistics_.columns
@@ -129,9 +125,9 @@ def test_scorecard_from_model_preserves_logistic_summary_stats(mock_components):
 
 
 def test_scorecard_score(mock_components):
-    model, binner, woe_encoder = mock_components
+    model, binner = mock_components
     sc = Scorecard()
-    sc.from_model(model, binner, woe_encoder)
+    sc.from_model(model, binner)
 
     X = pd.DataFrame({"feature1": [0.1, 0.9]})
     scores = sc.score(X)
@@ -141,9 +137,9 @@ def test_scorecard_score(mock_components):
 
 
 def test_scorecard_export(mock_components):
-    model, binner, woe_encoder = mock_components
+    model, binner = mock_components
     sc = Scorecard()
-    sc.from_model(model, binner, woe_encoder)
+    sc.from_model(model, binner)
 
     df = sc.export()
     assert isinstance(df, pd.DataFrame)
@@ -160,9 +156,9 @@ def test_not_built_error():
 
 
 def test_scorecard_summary(mock_components):
-    model, binner, woe_encoder = mock_components
+    model, binner = mock_components
     sc = Scorecard()
-    sc.from_model(model, binner, woe_encoder)
+    sc.from_model(model, binner)
 
     s = sc.summary()
     assert isinstance(s, str)
@@ -178,11 +174,7 @@ def test_scorecard_score_uses_missing_bucket_points():
     binner.fit(X, y, method="quantile", n_bins=2)
 
     scorecard = Scorecard()
-    scorecard.from_model(
-        {"intercept": 0.0, "coefficients": {"x": 1.0}},
-        binner,
-        binner.woe_encoders_,
-    )
+    scorecard.from_model({"intercept": 0.0, "coefficients": {"x": 1.0}}, binner)
 
     missing_points = scorecard.scorecard_["x"].set_index("bin").loc["Missing", "points"]
     assert missing_points != 0.0
@@ -197,9 +189,9 @@ def test_scorecard_score_uses_missing_bucket_points():
 
 
 def test_scorecard_to_dict_includes_binning_rules(mock_components):
-    model, binner, woe_encoder = mock_components
+    model, binner = mock_components
     sc = Scorecard()
-    sc.from_model(model, binner, woe_encoder)
+    sc.from_model(model, binner)
 
     exported = sc.to_dict()
 
@@ -215,9 +207,7 @@ def test_scorecard_round_trip_from_dict_preserves_scores():
     binner.fit(X, y, method="quantile", n_bins=2)
 
     scorecard = Scorecard().from_model(
-        {"intercept": 0.0, "coefficients": {"x": 1.0}},
-        binner,
-        binner.woe_encoders_,
+        {"intercept": 0.0, "coefficients": {"x": 1.0}}, binner
     )
     restored = Scorecard().from_dict(scorecard.to_dict())
 
@@ -231,9 +221,21 @@ def test_scorecard_pickle_preserves_original_lr_object_and_lr_params():
     binner.fit(X, y, method="quantile", n_bins=2)
 
     model = _SerializableLogisticModel()
-    scorecard = Scorecard().from_model(model, binner, binner.woe_encoders_)
+    scorecard = Scorecard().from_model(model, binner)
     restored = pickle.loads(pickle.dumps(scorecard))
 
     assert isinstance(restored.lr_model_, _SerializableLogisticModel)
     assert restored.lr_parameters_["method"] == "bfgs"
     assert restored.lr_parameters_["maxiter"] == 123
+
+
+def test_scorecard_from_model_old_signature_raises_type_error(mock_components):
+    model, binner = mock_components
+    scorecard = Scorecard()
+
+    with pytest.raises(TypeError):
+        scorecard.from_model(
+            model,
+            binner,
+            {"feature1": MagicMock()},
+        )

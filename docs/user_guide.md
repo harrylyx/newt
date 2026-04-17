@@ -123,7 +123,7 @@ df_labels = binner.transform(df, labels=True)
 
 # Export binning rules
 rules = binner.export()
-# Output example: {'age': [25.0, 40.0, 55.0], 'income': [50000.0, 100000.0]}
+# Output example: {'age': {'splits': [25.0, 40.0, 55.0], 'woe': {...}, 'iv': 0.42}, ...}
 ```
 
 ### Accessing Binning Results
@@ -285,7 +285,7 @@ print(f"Removed by VIF: {postfilter.vif_removed_}")
 
 ## 3. WOE & IV Analysis
 
-`newt.features.analysis.WOEEncoder` handles Weight of Evidence (WOE) and Information Value (IV) calculation.
+`newt.features.analysis.WOEEncoder` handles single-feature Weight of Evidence (WOE) and Information Value (IV) calculation. For multi-column workflows, use `WOETransformer` or `binner.woe_transform()`.
 
 ### Basic WOE Encoding
 
@@ -312,30 +312,25 @@ print(encoder.woe_map_)
 ### Batch WOE Transformation
 
 ```python
-# Apply WOE to all binned features
-X_woe = df_binned.copy()
-woe_encoders = {}
+from newt.features.analysis import WOETransformer
 
-for col in df_binned.columns:
-    encoder = WOEEncoder()
-    encoder.fit(df_binned[col].astype(str), df[target])
-    woe_encoders[col] = encoder
-    X_woe[col] = encoder.transform(df_binned[col].astype(str))
+woe = WOETransformer()
+X_woe = woe.fit_transform(df_binned, df[target])
+print(woe.iv_table)
 ```
 
-### Using Binner's WOE Storage
+### Using Binner's WOE Maps
 
 ```python
-# WOE encoders are automatically stored in binner.woe_storage
 binner = Binner()
 binner.fit(df, y=target, method='chi')
 
-# Access individual WOE encoder for a feature
-encoder = binner.woe_storage.get('age')
-print(encoder.woe_map_)
+# Access the WOE map for a feature
+woe_map = binner.get_woe_map('age')
+print(woe_map)
 
-# Access all encoders
-print(binner.woe_encoders_)
+# Transform all fitted features directly with the binner
+X_woe = binner.woe_transform(df)
 ```
 
 ---
@@ -403,7 +398,7 @@ lr = LogisticRegression()
 lr.fit(X_woe, y)
 
 # Can be used directly with Scorecard
-scorecard.from_model(lr, binner, woe_encoders)
+scorecard.from_model(lr, binner)
 ```
 
 ### Using with Statsmodels
@@ -416,7 +411,7 @@ X_sm = sm.add_constant(X_woe)
 model_sm = sm.Logit(y, X_sm).fit()
 
 # Can be used directly with Scorecard
-scorecard.from_model(model_sm, binner, woe_encoders)
+scorecard.from_model(model_sm, binner)
 ```
 
 ---
@@ -437,8 +432,8 @@ scorecard = Scorecard(
     base_odds=1/15      # Base odds (good/bad ratio)
 )
 
-# Build from fitted model, binner, and WOE encoder
-scorecard.from_model(model, binner, woe_encoders)
+# Build from fitted model and binner
+scorecard.from_model(model, binner)
 
 # View scorecard summary
 print(scorecard.summary())
@@ -570,7 +565,6 @@ fig = plot_binning_result(
     X=df,
     y=df[target],
     feature='age',
-    woe_encoder=woe_encoders.get('age'),
     figsize=(12, 6)
 )
 
@@ -596,10 +590,13 @@ plt.show()
 
 ```python
 from newt.visualization import plot_woe_pattern
+from newt.features.analysis import WOEEncoder
 
 # Plot WOE pattern for a feature
+encoder = WOEEncoder()
+encoder.fit(df_binned['age'].astype(str), df[target])
 fig = plot_woe_pattern(
-    woe_encoder=woe_encoders['age'],
+    woe_encoder=encoder,
     feature='age'
 )
 plt.show()
@@ -630,8 +627,8 @@ Sometimes automated binning isn't perfect (e.g., non-monotonic bad rates, busine
 rules = binner.export()
 # Output example:
 # {
-#    'age': [25.0, 40.0, 55.0],
-#    'income': [50000.0, 100000.0]
+#    'age': {'splits': [25.0, 40.0, 55.0], 'woe': {...}, 'iv': 0.42},
+#    'income': {'splits': [50000.0, 100000.0], 'woe': {...}, 'iv': 0.31}
 # }
 ```
 
@@ -703,16 +700,13 @@ production_binner.load(rules)
 with open('model_params.json', 'r') as f:
     model_params = json.load(f)
 
-# Load WOE encoders (you'll need to save/load these separately)
-# ... load woe_encoders dict ...
-
 # Recreate scorecard
 production_scorecard = Scorecard(
     base_score=600,
     pdo=50,
     base_odds=1/15
 )
-production_scorecard.from_model(model_params, production_binner, woe_encoders)
+production_scorecard.from_model(model_params, production_binner)
 
 # Score new data
 df_new = pd.read_csv('new_data.csv')
@@ -849,7 +843,6 @@ print(vif_values)
 import pandas as pd
 from newt import Binner
 from newt.features.selection import FeatureSelector, PostFilter
-from newt.features.analysis import WOEEncoder
 from newt.modeling import LogisticModel, Scorecard
 from newt.pipeline import ScorecardPipeline
 from newt.visualization import plot_binning_result, plot_iv_ranking
@@ -875,13 +868,7 @@ binner['age'].plot()
 X_binned = binner.transform(X, labels=False)
 
 # 4. WOE transformation
-X_woe = X_binned.copy()
-woe_encoders = {}
-for col in X_binned.columns:
-    encoder = WOEEncoder()
-    encoder.fit(X_binned[col].astype(str), df[target])
-    woe_encoders[col] = encoder
-    X_woe[col] = encoder.transform(X_binned[col].astype(str))
+X_woe = binner.woe_transform(X)
 
 # 5. Post-filtering
 postfilter = PostFilter()
@@ -894,7 +881,7 @@ print(model.summary())
 
 # 7. Scorecard generation
 scorecard = Scorecard(base_score=600, pdo=50)
-scorecard.from_model(model, binner, woe_encoders)
+scorecard.from_model(model, binner)
 print(scorecard.summary())
 
 # 8. Score new data

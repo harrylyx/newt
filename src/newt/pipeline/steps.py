@@ -320,10 +320,20 @@ class ScorecardStep:
         """Run scorecard generation and update the pipeline state."""
         from newt.modeling.scorecard import Scorecard
 
+        if state.model is None:
+            raise ValueError("Must call build_model() before generate_scorecard().")
+        if state.binner is None:
+            raise ValueError("Must call bin() before generate_scorecard().")
+        if state.X_woe is None or "woe_transform" not in state.steps:
+            raise ValueError(
+                "Must call woe_transform() before generate_scorecard() "
+                "to align model and scorecard feature space."
+            )
+
         scorecard = Scorecard(
             base_score=self.base_score, pdo=self.pdo, base_odds=self.base_odds
         )
-        scorecard.from_model(state.model, state.binner, state.woe_encoders)
+        scorecard.from_model(state.model, state.binner)
 
         state.scorecard = scorecard
         state.steps.append("scorecard")

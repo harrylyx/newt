@@ -22,7 +22,6 @@ class ScorecardBuilder:
         self,
         model: Any,
         binner: Any,
-        woe_encoder: Any,
     ) -> Tuple[
         ScorecardSpec,
         Dict[str, float],
@@ -45,7 +44,7 @@ class ScorecardBuilder:
             if not self._has_binning_rule(binner, feature):
                 continue
 
-            woe_map = self._get_woe_map(woe_encoder, feature)
+            woe_map = self._get_woe_map(binner, feature)
             if not woe_map:
                 continue
 
@@ -118,12 +117,12 @@ class ScorecardBuilder:
             return list(getattr(binner.binners_[feature], "splits_", []))
         return []
 
-    def _get_woe_map(self, woe_encoder: Any, feature: str) -> Dict[str, float]:
+    def _get_woe_map(self, binner: Any, feature: str) -> Dict[str, float]:
         """Get the WOE mapping for a feature."""
-        if isinstance(woe_encoder, dict) and feature in woe_encoder:
-            return dict(woe_encoder[feature].woe_map_)
-        if hasattr(woe_encoder, "woe_map_"):
-            return dict(woe_encoder.woe_map_)
+        if hasattr(binner, "get_woe_map"):
+            return dict(binner.get_woe_map(feature))
+        if hasattr(binner, "woe_maps_") and feature in binner.woe_maps_:
+            return dict(binner.woe_maps_[feature])
         return {}
 
     def _extract_feature_statistics(

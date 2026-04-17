@@ -55,7 +55,6 @@ class Scorecard:
         self.spec_: Optional[ScorecardSpec] = None
         self.scorer_: Optional[ScorecardScorer] = None
         self._binner = None
-        self._woe_encoder = None
         self._model_coefs: Dict[str, float] = {}
         self.feature_statistics_: pd.DataFrame = pd.DataFrame()
         self.model_statistics_: Dict[str, float] = {}
@@ -66,21 +65,19 @@ class Scorecard:
         self,
         model: Any,
         binner: Any,
-        woe_encoder: Any,
     ) -> "Scorecard":
         """Build a scorecard from a fitted model and its binning/encoding artifacts.
 
         Args:
             model: A fitted model object (scikit-learn, statsmodels, or dict).
-            binner: A fitted Binner instance or rules dictionary.
-            woe_encoder: A fitted WOEEncoder instance or mapping dictionary.
+            binner: A fitted Binner instance.
 
         Returns:
             Scorecard: The built Scorecard instance.
 
         Examples:
             >>> scorecard = Scorecard(base_score=600, pdo=20)
-            >>> scorecard.from_model(lr_model, binner, woe_encoders)
+            >>> scorecard.from_model(lr_model, binner)
         """
         builder = ScorecardBuilder(
             base_score=self.base_score,
@@ -93,10 +90,9 @@ class Scorecard:
             feature_statistics,
             model_statistics,
             lr_parameters,
-        ) = builder.build(model, binner, woe_encoder)
+        ) = builder.build(model, binner)
 
         self._binner = binner
-        self._woe_encoder = woe_encoder
         self._model_coefs = model_coefs
         self.lr_model_ = model if not isinstance(model, dict) else None
         self.lr_parameters_ = dict(lr_parameters)

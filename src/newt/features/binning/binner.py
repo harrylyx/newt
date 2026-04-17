@@ -12,7 +12,7 @@ import pandas as pd
 from newt.config import BINNING
 
 from .base import BaseBinner
-from .binner_mixins import BinnerIOMixin, BinnerStatsMixin, BinnerWOEMixin
+from .binner_mixins import BinnerIOMixin, BinnerStatsMixin
 from .supervised import (
     ChiMergeBinner,
     DecisionTreeBinner,
@@ -21,7 +21,6 @@ from .supervised import (
     _resolve_monotonic_mode,
 )
 from .unsupervised import EqualFrequencyBinner, EqualWidthBinner, KMeansBinner
-from .woe_storage import WOEStorage
 
 
 class BinningResult:
@@ -78,12 +77,21 @@ class BinningResult:
         if y is None:
             y = ["bad_prop"]
 
+        from newt.features.analysis.woe_calculator import WOEEncoder
         from newt.results import BinningPlotData
         from newt.visualization.binning_viz import plot_binning_result
 
+        # Create a temporary encoder for plot if it exists in native storage
+        woe_encoder = None
+        if self._feature in self._binner.woe_maps_:
+            woe_encoder = WOEEncoder()
+            woe_encoder.woe_map_ = self._binner.woe_maps_[self._feature]
+            woe_encoder.iv_ = self._binner.ivs_.get(self._feature, 0.0)
+            woe_encoder.is_fitted_ = True
+
         return plot_binning_result(
             binner=BinningPlotData.from_binner(self._binner, self._feature),
-            woe_encoder=self._binner.woe_storage.get(self._feature),
+            woe_encoder=woe_encoder,
             x_col=x,
             y_col=y,
             secondary_y_col=secondary_y,
@@ -99,7 +107,7 @@ class BinningResult:
         return self._binner.get_woe_map(self._feature)
 
 
-class Binner(BinnerStatsMixin, BinnerIOMixin, BinnerWOEMixin):
+class Binner(BinnerStatsMixin, BinnerIOMixin):
     """Unified interface for multi-feature binning using various algorithms.
 
     The Binner class manages the discretization of multiple features, handles
@@ -138,7 +146,8 @@ class Binner(BinnerStatsMixin, BinnerIOMixin, BinnerWOEMixin):
             "opt": OptBinningBinner,
         }
         self.binners_: Dict[str, BaseBinner] = {}
-        self.woe_storage = WOEStorage()
+        self.woe_maps_: Dict[str, Dict[Any, float]] = {}
+        self.ivs_: Dict[str, float] = {}
         self.stats_: Dict[str, pd.DataFrame] = {}
         self._X: Optional[pd.DataFrame] = None
         self._y: Optional[pd.Series] = None
@@ -152,7 +161,16 @@ class Binner(BinnerStatsMixin, BinnerIOMixin, BinnerWOEMixin):
         Returns:
             Dict[str, Any]: Mapping of feature names to WOEEncoder objects.
         """
-        return self.woe_storage.encoders_
+        from newt.features.analysis.woe_calculator import WOEEncoder
+
+        encoders = {}
+        for feature, woe_map in self.woe_maps_.items():
+            encoder = WOEEncoder()
+            encoder.woe_map_ = woe_map
+            encoder.iv_ = self.ivs_.get(feature, 0.0)
+            encoder.is_fitted_ = True
+            encoders[feature] = encoder
+        return encoders
 
     def fit(
         self,
@@ -195,6 +213,13 @@ class Binner(BinnerStatsMixin, BinnerIOMixin, BinnerWOEMixin):
             y_series = X[y]
             if y in X.columns:
                 X = X.drop(columns=[y])
+
+        # Reset state for a fresh fit.
+        self.rules_ = {}
+        self.binners_ = {}
+        self.woe_maps_ = {}
+        self.ivs_ = {}
+        self.stats_ = {}
 
         # Store references for later use
         self._X = X.copy()
@@ -413,8 +438,40 @@ class Binner(BinnerStatsMixin, BinnerIOMixin, BinnerWOEMixin):
                 self.rules_[col] = binner.splits_
 
         # Calculate and store statistics
-        self._update_all_stats()
+        self.fit_woe(X, y_series, show_progress=show_progress)
 
+        return self
+
+    def fit_woe(
+        self,
+        X: pd.DataFrame,
+        y: Union[pd.Series, str],
+        show_progress: bool = True,
+    ) -> "Binner":
+        """Calculate and update WOE mappings for all features.
+
+        Applicable when rules are loaded or manually set. This method updates
+        WOE and IV statistics without changing existing split points.
+
+        Args:
+            X: Input DataFrame.
+            y: Target data or target column name.
+            show_progress: Whether to show a progress bar.
+
+        Returns:
+            Binner: Self.
+        """
+        y_series = y
+        if isinstance(y, str):
+            y_series = X[y]
+
+        self._X = X.copy()
+        self._y = y_series.copy() if y_series is not None else None
+
+        if self._y is None:
+            return self
+
+        self._update_all_stats()
         return self
 
     def transform(
@@ -488,15 +545,29 @@ class Binner(BinnerStatsMixin, BinnerIOMixin, BinnerWOEMixin):
             >>> X_woe = binner.woe_transform(X_raw)
         """
         X_new = X.copy()
+        from newt.features.analysis.woe_calculator import WOEEncoder
+
+        target_features = [col for col in self.binners_.keys() if col in X_new.columns]
+        missing_woe = [col for col in target_features if col not in self.woe_maps_]
+        if missing_woe:
+            missing = ", ".join(missing_woe)
+            raise ValueError(
+                f"WOE mappings are missing for feature(s): {missing}. "
+                "Call fit_woe() before woe_transform()."
+            )
 
         for col in self.binners_.keys():
             if col not in X_new.columns:
                 continue
 
-            # Get WOE encoder for this feature
-            woe_encoder = self.woe_storage.get(col)
-            if woe_encoder is None:
-                continue
+            woe_map = self.woe_maps_[col]
+            iv = self.ivs_.get(col, 0.0)
+
+            # Create temporary encoder for transformation
+            encoder = WOEEncoder()
+            encoder.woe_map_ = woe_map
+            encoder.iv_ = iv
+            encoder.is_fitted_ = True
 
             # First bin the data
             col_data = X[col]
@@ -510,7 +581,7 @@ class Binner(BinnerStatsMixin, BinnerIOMixin, BinnerWOEMixin):
             binned[~valid_mask] = self._missing_label
 
             # Apply WOE transformation
-            X_new[col] = woe_encoder.transform(binned)
+            X_new[col] = encoder.transform(binned)
 
         return X_new
 

@@ -8,6 +8,7 @@ from newt.features.analysis.correlation import (
 )
 from newt.features.analysis.iv_calculator import calculate_iv
 from newt.features.analysis.woe_calculator import WOEEncoder
+from newt.features.analysis.woe_transformer import WOETransformer
 
 
 @pytest.fixture
@@ -145,3 +146,25 @@ def test_woe_encoder_class(analysis_data):
     assert encoder.get_iv() > 0
     assert len(encoder.get_woe_map()) > 0
     assert not encoder.get_summary().empty
+
+
+def test_woe_transformer_fit_resets_previous_state():
+    transformer = WOETransformer()
+
+    X_first = pd.DataFrame(
+        {
+            "a": ["x", "y", "x", "y"],
+            "b": ["u", "u", "v", "v"],
+        }
+    )
+    y_first = pd.Series([0, 1, 0, 1])
+    transformer.fit(X_first, y_first)
+    assert set(transformer.woe_maps_.keys()) == {"a", "b"}
+
+    X_second = pd.DataFrame({"a": ["x", "x", "y", "y"]})
+    y_second = pd.Series([1, 0, 1, 0])
+    transformer.fit(X_second, y_second)
+
+    assert set(transformer.woe_maps_.keys()) == {"a"}
+    assert set(transformer.encoders_.keys()) == {"a"}
+    assert set(transformer.export().keys()) == {"a"}

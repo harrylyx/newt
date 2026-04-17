@@ -116,7 +116,7 @@ batch_py = calculate_batch_iv(X, y, engine="python")
 
 ```python
 import pandas as pd
-from newt import Binner, FeatureSelector, WOEEncoder
+from newt import Binner, FeatureSelector
 from newt.modeling import LogisticModel, Scorecard
 from newt.pipeline import ScorecardPipeline
 
@@ -156,12 +156,7 @@ binner['age'].plot()       # Plot results
 binner['age'].woe_map()    # Get WOE mapping
 
 # WOE transformation
-X_binned = binner.transform(X)
-X_woe = X_binned.copy()
-for col in X_binned.columns:
-    encoder = WOEEncoder()
-    encoder.fit(X_binned[col].astype(str), df[target])
-    X_woe[col] = encoder.transform(X_binned[col].astype(str))
+X_woe = binner.woe_transform(X)
 
 # Model building
 model = LogisticModel()
@@ -170,7 +165,7 @@ print(model.summary())
 
 # Scorecard generation
 scorecard = Scorecard(base_score=600, pdo=50)
-scorecard.from_model(model, binner, binner.woe_encoders_)
+scorecard.from_model(model, binner)
 scores = scorecard.score(X_new)
 ```
 

@@ -64,6 +64,8 @@ def calculate_iv(df: pd.DataFrame, target: str, feature: str) -> Dict[str, Union
 
 ### 4.2 Scorecard Model Support
 - Supports `LogisticModel`, `sklearn` models, `statsmodels` results, and raw `dict` formats (`{'intercept': float, 'coefficients': {feat: coef}}`).
+- Build scorecards with `Scorecard.from_model(model, binner)` after fitting the model on `binner.woe_transform(X)` or `WOETransformer` output.
+- Treat `Binner` as the source of truth for WOE state; use `binner.get_woe_map(feature)` and `binner.export()` rather than maintaining separate WOE storage objects.
 
 ### 4.3 Results Access
 ```python
@@ -72,6 +74,8 @@ res = binner['age']  # BinningResult
 res.stats            # pd.DataFrame
 res.plot()           # Visualization
 ```
+
+For batch WOE workflows, prefer `binner.woe_transform(X)` over hand-written encoder loops.
 
 ## 5. Development Workflow
 

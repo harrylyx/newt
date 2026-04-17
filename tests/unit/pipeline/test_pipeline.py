@@ -132,4 +132,15 @@ def test_pipeline_real_flow_scores_missing_values():
 
     assert scores.notna().all()
     assert "scorecard" in pipeline.steps_
-    assert scores[X_test["feature1"].isna()].nunique() == 1
+    missing_row = X_test.loc[X_test["feature1"].isna()].iloc[[0]].copy()
+    duplicate_missing = pd.concat([missing_row, missing_row], ignore_index=True)
+    duplicate_scores = pipeline.score(duplicate_missing)
+    assert duplicate_scores.nunique() == 1
+
+
+def test_generate_scorecard_requires_woe_transform(sample_data):
+    X, y = sample_data
+    pipeline = ScorecardPipeline(X, y).bin(method="quantile", n_bins=4).build_model()
+
+    with pytest.raises(ValueError, match="woe_transform"):
+        pipeline.generate_scorecard()

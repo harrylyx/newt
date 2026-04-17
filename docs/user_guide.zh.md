@@ -118,7 +118,7 @@ df_labels = binner.transform(df, labels=True)
 
 # 导出分箱规则
 rules = binner.export()
-# 输出示例：{'age': [25.0, 40.0, 55.0], 'income': [50000.0, 100000.0]}
+# 输出示例：{'age': {'splits': [25.0, 40.0, 55.0], 'woe': {...}, 'iv': 0.42}, 'income': {'splits': [50000.0, 100000.0], 'woe': {...}, 'iv': 0.31}}
 ```
 
 ### 访问分箱结果
@@ -280,7 +280,7 @@ print(f"因 VIF 移除：{postfilter.vif_removed_}")
 
 ## 3. WOE & IV 分析
 
-`newt.features.analysis.WOEEncoder` 处理证据权重（WOE）和信息值（IV）的计算。
+`newt.features.analysis.WOEEncoder` 处理单个特征的证据权重（WOE）和信息值（IV）计算。对于多列批量场景，使用 `WOETransformer` 或 `binner.woe_transform()`。
 
 ### 基础 WOE 编码
 
@@ -307,30 +307,24 @@ print(encoder.woe_map_)
 ### 批量 WOE 转换
 
 ```python
-# 对所有分箱特征应用 WOE
-X_woe = df_binned.copy()
-woe_encoders = {}
+from newt.features.analysis import WOETransformer
 
-for col in df_binned.columns:
-    encoder = WOEEncoder()
-    encoder.fit(df_binned[col].astype(str), df[target])
-    woe_encoders[col] = encoder
-    X_woe[col] = encoder.transform(df_binned[col].astype(str))
+woe = WOETransformer()
+X_woe = woe.fit_transform(df_binned, df[target])
+print(woe.iv_table)
 ```
 
-### 使用 Binner 的 WOE 存储
+### 使用 Binner 的 WOE 映射
 
 ```python
-# WOE 编码器自动存储在 binner.woe_storage 中
 binner = Binner()
 binner.fit(df, y=target, method='chi')
 
-# 访问特定特征的 WOE 编码器
-encoder = binner.woe_storage.get('age')
-print(encoder.woe_map_)
+# 访问特定特征的 WOE 映射
+print(binner.get_woe_map('age'))
 
-# 访问所有编码器
-print(binner.woe_encoders_)
+# 直接使用 Binner 对所有已拟合特征做 WOE 转换
+X_woe = binner.woe_transform(df)
 ```
 
 ---
@@ -398,7 +392,7 @@ lr = LogisticRegression()
 lr.fit(X_woe, y)
 
 # 可直接与 Scorecard 配合使用
-scorecard.from_model(lr, binner, woe_encoders)
+scorecard.from_model(lr, binner)
 ```
 
 ### 与 Statsmodels 配合使用
@@ -411,7 +405,7 @@ X_sm = sm.add_constant(X_woe)
 model_sm = sm.Logit(y, X_sm).fit()
 
 # 可直接与 Scorecard 配合使用
-scorecard.from_model(model_sm, binner, woe_encoders)
+scorecard.from_model(model_sm, binner)
 ```
 
 ---
@@ -432,8 +426,8 @@ scorecard = Scorecard(
     base_odds=1/15      # 基准赔率（好/坏比率）
 )
 
-# 从拟合的模型、分箱器和 WOE 编码器构建
-scorecard.from_model(model, binner, woe_encoders)
+# 从拟合的模型和分箱器构建
+scorecard.from_model(model, binner)
 
 # 查看评分卡摘要
 print(scorecard.summary())
@@ -565,7 +559,6 @@ fig = plot_binning_result(
     X=df,
     y=df[target],
     feature='age',
-    woe_encoder=woe_encoders.get('age'),
     figsize=(12, 6)
 )
 
@@ -591,10 +584,13 @@ plt.show()
 
 ```python
 from newt.visualization import plot_woe_pattern
+from newt.features.analysis import WOEEncoder
 
 # 绘制特征的 WOE 模式
+encoder = WOEEncoder()
+encoder.fit(df_binned['age'].astype(str), df[target])
 fig = plot_woe_pattern(
-    woe_encoder=woe_encoders['age'],
+    woe_encoder=encoder,
     feature='age'
 )
 plt.show()
@@ -625,8 +621,8 @@ plt.show()
 rules = binner.export()
 # 输出示例：
 # {
-#    'age': [25.0, 40.0, 55.0],
-#    'income': [50000.0, 100000.0]
+#    'age': {'splits': [25.0, 40.0, 55.0], 'woe': {...}, 'iv': 0.42},
+#    'income': {'splits': [50000.0, 100000.0], 'woe': {...}, 'iv': 0.31}
 # }
 ```
 
@@ -698,16 +694,13 @@ production_binner.load(rules)
 with open('model_params.json', 'r', encoding='utf-8') as f:
     model_params = json.load(f)
 
-# 加载 WOE 编码器（需要单独保存/加载）
-# ... 加载 woe_encoders 字典 ...
-
 # 重建评分卡
 production_scorecard = Scorecard(
     base_score=600,
     pdo=50,
     base_odds=1/15
 )
-production_scorecard.from_model(model_params, production_binner, woe_encoders)
+production_scorecard.from_model(model_params, production_binner)
 
 # 为新数据打分
 df_new = pd.read_csv('new_data.csv')
@@ -844,7 +837,6 @@ print(vif_values)
 import pandas as pd
 from newt import Binner
 from newt.features.selection import FeatureSelector, PostFilter
-from newt.features.analysis import WOEEncoder
 from newt.modeling import LogisticModel, Scorecard
 from newt.pipeline import ScorecardPipeline
 from newt.visualization import plot_binning_result, plot_iv_ranking
@@ -870,13 +862,7 @@ binner['age'].plot()
 X_binned = binner.transform(X, labels=False)
 
 # 4. WOE 转换
-X_woe = X_binned.copy()
-woe_encoders = {}
-for col in X_binned.columns:
-    encoder = WOEEncoder()
-    encoder.fit(X_binned[col].astype(str), df[target])
-    woe_encoders[col] = encoder
-    X_woe[col] = encoder.transform(X_binned[col].astype(str))
+X_woe = binner.woe_transform(X)
 
 # 5. 后过滤
 postfilter = PostFilter()
@@ -889,7 +875,7 @@ print(model.summary())
 
 # 7. 评分卡生成
 scorecard = Scorecard(base_score=600, pdo=50)
-scorecard.from_model(model, binner, woe_encoders)
+scorecard.from_model(model, binner)
 print(scorecard.summary())
 
 # 8. 为新数据打分

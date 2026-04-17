@@ -11,12 +11,10 @@ from .unsupervised import (  # noqa: F401
     EqualWidthBinner,
     KMeansBinner,
 )
-from .woe_storage import WOEStorage  # noqa: F401
 
 __all__ = [
     "BaseBinner",
     "Binner",
-    "WOEStorage",
     "calculate_bin_stats",
     "get_bin_boundaries",
     "ChiMergeBinner",

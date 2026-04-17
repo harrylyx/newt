@@ -20,7 +20,8 @@ class BinnerStatsMixin:
     - _y: pd.Series
     - _features: List[str]
     - binners_: Dict[str, BaseBinner]
-    - woe_storage: WOEStorage
+    - woe_maps_: Dict[str, Dict[Any, float]]
+    - ivs_: Dict[str, float]
     - stats_: Dict[str, pd.DataFrame]
     - _missing_label: str
     """
@@ -59,8 +60,9 @@ class BinnerStatsMixin:
         woe_encoder = WOEEncoder()
         woe_encoder.fit(binned, y_data)
 
-        # Store WOE encoder
-        self.woe_storage.store(feature, woe_encoder)
+        # Store WOE results
+        self.woe_maps_[feature] = woe_encoder.woe_map_
+        self.ivs_[feature] = woe_encoder.iv_
 
         # Calculate full stats
         self.stats_[feature] = calculate_bin_stats(
@@ -155,18 +157,28 @@ class BinnerIOMixin:
             for f, splits in self.rules_.items():
                 print(f"{f}: {splits}")
 
-    def export(self) -> Dict[str, List[float]]:
-        """Export binning rules."""
-        return self.rules_.copy()
+    def export(self) -> Dict[str, Dict[str, Any]]:
+        """Export unified binning + WOE payload."""
+        result: Dict[str, Dict[str, Any]] = {}
+        for feature, splits in self.rules_.items():
+            woe_map = self.get_woe_map(feature)
+            iv = self.get_iv(feature)
+            result[feature] = {
+                "splits": splits.copy(),
+                "woe": woe_map.copy() if woe_map else {},
+                "iv": float(iv) if isinstance(iv, (int, float)) else 0.0,
+            }
+        return result
 
-    def load(self, rules: Dict[str, List[float]]) -> "BinnerIOMixin":
+    def load(self, rules: Dict[str, Any]) -> "BinnerIOMixin":
         """
         Load binning rules manually.
 
         Parameters
         ----------
-        rules : Dict[str, List[float]]
-            Binning rules mapping feature to split points.
+        rules : Dict[str, Any]
+            Binning rules. Can be mapping feature to split points, or
+            mapping feature to {'splits': [...], 'woe': {...}, 'iv': ...}.
 
         Returns
         -------
@@ -175,24 +187,44 @@ class BinnerIOMixin:
         """
         from .unsupervised import EqualWidthBinner
 
-        self.rules_ = rules.copy()
+        self.rules_ = {}
         self.binners_ = {}
+        self.woe_maps_ = {}
+        self.ivs_ = {}
+        self.stats_ = {}
+        self._features = []
 
-        for col, splits in rules.items():
+        for col, config in rules.items():
+            if isinstance(config, dict):
+                if "splits" not in config:
+                    raise ValueError(f"Feature '{col}' payload must contain 'splits'.")
+                if "woe_map" in config and "woe" not in config:
+                    raise ValueError(
+                        "Legacy key 'woe_map' is unsupported. "
+                        "Use 'woe' in binner.load()."
+                    )
+
+                splits = list(config["splits"])
+                woe_map = config.get("woe", {})
+                iv = config.get("iv", 0.0)
+            else:
+                splits = list(config)
+                woe_map = {}
+                iv = 0.0
+
+            self.rules_[col] = splits
             binner = EqualWidthBinner()
             binner.set_splits(splits)
             self.binners_[col] = binner
 
+            if col not in self._features:
+                self._features.append(col)
+
+            if woe_map:
+                self.woe_maps_[col] = dict(woe_map)
+                self.ivs_[col] = float(iv)
+
         return self
-
-
-class BinnerWOEMixin:
-    """
-    Mixin providing WOE/IV access functionality.
-
-    Requires the following attributes from the main class:
-    - woe_storage: WOEStorage
-    """
 
     def get_iv(self, feature: Optional[str] = None) -> Union[float, pd.DataFrame]:
         """
@@ -209,8 +241,13 @@ class BinnerWOEMixin:
             IV value or DataFrame with all IVs.
         """
         if feature:
-            return self.woe_storage.get_iv(feature)
-        return self.woe_storage.get_all_iv()
+            return self.ivs_.get(feature, 0.0)
+
+        records = [{"feature": feat, "iv": iv} for feat, iv in self.ivs_.items()]
+        if not records:
+            return pd.DataFrame(columns=["feature", "iv"])
+
+        return pd.DataFrame(records).sort_values("iv", ascending=False)
 
     def get_woe_map(self, feature: str) -> Dict[Any, float]:
         """
@@ -226,4 +263,4 @@ class BinnerWOEMixin:
         Dict
             Mapping from bin label to WOE value.
         """
-        return self.woe_storage.get_woe_map(feature)
+        return self.woe_maps_.get(feature, {})

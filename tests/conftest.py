@@ -188,12 +188,10 @@ def fake_scorecard_model():
     }
     binner._missing_label = "Missing"
     binner.get_splits.side_effect = lambda feature: binner.rules_[feature]
-
-    woe_a = MagicMock()
-    woe_a.woe_map_ = {"(-inf, 10.0]": -0.4, "(10.0, inf]": 0.6, "Missing": 0.0}
-    woe_b = MagicMock()
-    woe_b.woe_map_ = {"(-inf, 95.0]": -0.2, "(95.0, inf]": 0.3, "Missing": 0.0}
-    woe_encoder = {"feature_a": woe_a, "feature_b": woe_b}
+    binner.get_woe_map.side_effect = lambda feature: {
+        "feature_a": {"(-inf, 10.0]": -0.4, "(10.0, inf]": 0.6, "Missing": 0.0},
+        "feature_b": {"(-inf, 95.0]": -0.2, "(95.0, inf]": 0.3, "Missing": 0.0},
+    }.get(feature, {})
 
     class _FakeResult:
         aic = 123.45
@@ -256,4 +254,4 @@ def fake_scorecard_model():
             }
 
     model = _FakeLogisticModel()
-    return Scorecard().from_model(model, binner, woe_encoder)
+    return Scorecard().from_model(model, binner)

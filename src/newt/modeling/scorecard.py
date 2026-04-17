@@ -8,6 +8,7 @@ import pandas as pd
 from newt.config import SCORECARD
 from newt.modeling.scorecard_builder import ScorecardBuilder
 from newt.modeling.scorecard_scorer import ScorecardScorer
+from newt.modeling.scorecard_sql_builder import ScorecardSQLBuilder
 from newt.results import ScorecardSpec
 
 
@@ -182,6 +183,31 @@ class Scorecard:
         if not self.is_built_ or self.spec_ is None:
             raise ValueError("Scorecard is not built. Call from_model() first.")
         return self.spec_.to_dict()
+
+    def to_sql(
+        self,
+        table_name: str = "input_table",
+        score_alias: str = "score",
+        include_breakdown: bool = False,
+    ) -> str:
+        """Render the scorecard as an ANSI SQL scoring query.
+
+        Args:
+            table_name: Source table name used in the FROM clause.
+            score_alias: Alias of the output score column.
+            include_breakdown: Whether to include per-feature points columns.
+
+        Returns:
+            str: ANSI SQL query for score calculation.
+        """
+        if not self.is_built_ or self.spec_ is None:
+            raise ValueError("Scorecard is not built. Call from_model() first.")
+
+        return ScorecardSQLBuilder(self.spec_).build(
+            table_name=table_name,
+            score_alias=score_alias,
+            include_breakdown=include_breakdown,
+        )
 
     def summary(self) -> str:
         """Generate a human-readable summary of the scorecard configuration and points.

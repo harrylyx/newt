@@ -41,6 +41,17 @@ def mock_components():
     return model, binner
 
 
+def _build_numeric_scorecard() -> Scorecard:
+    X = pd.DataFrame({"x": [1, 2, 3, np.nan, 5, 6, np.nan, 8, 9, 10]})
+    y = pd.Series([0, 0, 0, 1, 1, 1, 1, 1, 1, 1], name="target")
+    binner = Binner()
+    binner.fit(X, y, method="quantile", n_bins=2)
+    return Scorecard().from_model(
+        {"intercept": 0.0, "coefficients": {"x": 1.0}},
+        binner,
+    )
+
+
 def test_scorecard_init():
     sc = Scorecard(base_score=600, pdo=50)
     assert sc.base_score == 600
@@ -239,3 +250,58 @@ def test_scorecard_from_model_old_signature_raises_type_error(mock_components):
             binner,
             {"feature1": MagicMock()},
         )
+
+
+def test_scorecard_to_sql_returns_select_query():
+    scorecard = _build_numeric_scorecard()
+
+    sql = scorecard.to_sql()
+
+    assert sql.startswith("SELECT")
+    assert "CASE WHEN x IS NULL THEN" in sql
+    assert "ELSE 0.0 END" in sql
+    assert " AS score" in sql
+    assert "FROM input_table" in sql
+
+
+def test_scorecard_to_sql_includes_feature_breakdown():
+    scorecard = _build_numeric_scorecard()
+
+    sql = scorecard.to_sql(
+        table_name="credit_input",
+        score_alias="final_score",
+        include_breakdown=True,
+    )
+
+    assert "AS x_points" in sql
+    assert " AS final_score" in sql
+    assert "FROM credit_input" in sql
+
+
+def test_scorecard_to_sql_uses_zero_for_missing_fallback_without_missing_bin():
+    scorecard = _build_numeric_scorecard()
+    payload = scorecard.to_dict()
+    payload["features"]["x"] = [
+        row for row in payload["features"]["x"] if row["bin"] != "Missing"
+    ]
+
+    restored = Scorecard().from_dict(payload)
+    sql = restored.to_sql()
+
+    assert "WHEN x IS NULL THEN 0.0" in sql
+
+
+def test_scorecard_to_sql_after_from_dict():
+    scorecard = _build_numeric_scorecard()
+    restored = Scorecard().from_dict(scorecard.to_dict())
+
+    sql = restored.to_sql(table_name="scoring_table")
+
+    assert "FROM scoring_table" in sql
+    assert " AS score" in sql
+
+
+def test_scorecard_to_sql_not_built_error():
+    scorecard = Scorecard()
+    with pytest.raises(ValueError, match="Scorecard is not built"):
+        scorecard.to_sql()

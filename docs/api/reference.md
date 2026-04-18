@@ -35,18 +35,6 @@ This page provides automated documentation for the core components of `newt`.
       members:
         - StepwiseSelector
 
-## WOE Encoding & Transformation
-
-::: newt.features.analysis.woe_calculator
-    options:
-      members:
-        - WOEEncoder
-
-::: newt.features.analysis.woe_transformer
-    options:
-      members:
-        - WOETransformer
-
 ## Modeling
 
 ::: newt.modeling.logistic

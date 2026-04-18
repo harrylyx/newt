@@ -1,3 +1,4 @@
+import json
 import pickle
 from unittest.mock import MagicMock
 
@@ -28,6 +29,7 @@ class _SerializableLogisticModel:
 def mock_components():
     # Mock Binner
     binner = MagicMock()
+    binner._missing_label = "Missing"
     binner.binners_ = {"feature1": MagicMock()}
     binner.binners_["feature1"].splits_ = [0.5]
     binner.rules_ = {"feature1": [0.5]}
@@ -68,6 +70,8 @@ def test_from_model(mock_components):
     assert "feature1" in sc.scorecard_
     assert not sc.scorecard_["feature1"].empty
     assert "points" in sc.scorecard_["feature1"].columns
+    assert sc.lr_model_ is None
+    assert sc._binner is None
 
 
 def test_scorecard_from_model_preserves_logistic_summary_stats(mock_components):
@@ -225,7 +229,7 @@ def test_scorecard_round_trip_from_dict_preserves_scores():
     pd.testing.assert_series_equal(scorecard.score(X), restored.score(X))
 
 
-def test_scorecard_pickle_preserves_original_lr_object_and_lr_params():
+def test_scorecard_pickle_default_does_not_preserve_original_lr_object():
     X = pd.DataFrame({"x": [1, 2, 3, np.nan, 5, 6, np.nan, 8, 9, 10]})
     y = pd.Series([0, 0, 0, 1, 1, 1, 1, 1, 1, 1], name="target")
     binner = Binner()
@@ -235,9 +239,60 @@ def test_scorecard_pickle_preserves_original_lr_object_and_lr_params():
     scorecard = Scorecard().from_model(model, binner)
     restored = pickle.loads(pickle.dumps(scorecard))
 
-    assert isinstance(restored.lr_model_, _SerializableLogisticModel)
+    assert restored.lr_model_ is None
+    assert restored._binner is None
+    assert "coef__x" in restored.lr_parameters_
     assert restored.lr_parameters_["method"] == "bfgs"
     assert restored.lr_parameters_["maxiter"] == 123
+
+
+def test_scorecard_from_model_can_keep_training_artifacts():
+    X = pd.DataFrame({"x": [1, 2, 3, np.nan, 5, 6, np.nan, 8, 9, 10]})
+    y = pd.Series([0, 0, 0, 1, 1, 1, 1, 1, 1, 1], name="target")
+    binner = Binner()
+    binner.fit(X, y, method="quantile", n_bins=2)
+
+    model = _SerializableLogisticModel()
+    scorecard = Scorecard().from_model(model, binner, keep_training_artifacts=True)
+
+    assert isinstance(scorecard.lr_model_, _SerializableLogisticModel)
+    assert scorecard._binner is binner
+
+
+def test_scorecard_dump_load_round_trip(tmp_path):
+    X = pd.DataFrame({"x": [1, 2, 3, np.nan, 5, 6, np.nan, 8, 9, 10]})
+    y = pd.Series([0, 0, 0, 1, 1, 1, 1, 1, 1, 1], name="target")
+    binner = Binner()
+    binner.fit(X, y, method="quantile", n_bins=2)
+
+    scorecard = Scorecard().from_model(
+        {"intercept": 0.0, "coefficients": {"x": 1.0}},
+        binner,
+    )
+    path = tmp_path / "scorecard.json"
+
+    scorecard.dump(path)
+    restored = Scorecard.load(path)
+
+    pd.testing.assert_series_equal(scorecard.score(X), restored.score(X))
+    assert restored.to_sql() == scorecard.to_sql()
+
+
+def test_scorecard_payload_contains_lr_snapshot_without_training_data(mock_components):
+    model, binner = mock_components
+    scorecard = Scorecard().from_model(model, binner)
+
+    payload = scorecard.to_dict()
+    assert "lr_snapshot" in payload
+    assert "coefficients" in payload["lr_snapshot"]
+    assert payload["lr_snapshot"]["coefficients"]["feature1"] == pytest.approx(1.5)
+
+    restored = Scorecard().from_dict(payload)
+    assert restored.lr_snapshot_["coefficients"]["feature1"] == pytest.approx(1.5)
+
+    serialized = json.dumps(payload)
+    for forbidden in ["X_train", "y_train", "training_data", "training_label"]:
+        assert forbidden not in serialized
 
 
 def test_scorecard_from_model_old_signature_raises_type_error(mock_components):

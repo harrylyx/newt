@@ -1,6 +1,6 @@
 # Newt 用户指南
 
-本指南涵盖使用 `newt` 进行信用评分卡开发的端到端工作流程，包括分箱、特征选择、WOE/IV 分析、建模和评分卡生成。
+本指南涵盖使用 `newt` 进行信用评分卡开发的端到端工作流程，包括分箱、特征选择、特征转换、建模和评分卡生成。
 
 当前项目支持 Python `>=3.8.5,<3.13`（即 Python `3.8.5` 到 `3.12.x`）。
 
@@ -67,7 +67,7 @@ batch_py = calculate_batch_iv(X, y, engine="python")
 
 1. [特征分箱](#1-特征分箱)
 2. [特征选择](#2-特征选择)
-3. [WOE & IV 分析](#3-woe-iv-分析)
+3. [分箱特征分析](#3-分箱特征分析)
 4. [逻辑回归建模](#4-逻辑回归建模)
 5. [评分卡生成](#5-评分卡生成)
 6. [完整流程](#6-完整流程)
@@ -249,9 +249,9 @@ stepwise = StepwiseSelector(
     verbose=True         # 显示 tqdm 进度条
 )
 
-# 拟合并转换数据（通常在 WOE 转换后的数据上执行）
+# 拟合并转换数据（通常在转换后的数据上执行）
 # 每一轮特征筛选都会显示实时进度条
-X_selected = stepwise.fit_transform(X_woe, y)
+X_selected = stepwise.fit_transform(X_transformed, y)
 
 print(f"Selected features: {stepwise.selected_features_}")
 ```
@@ -270,7 +270,7 @@ postfilter = PostFilter(
 )
 
 # 在训练数据上拟合，使用测试数据计算 PSI
-X_filtered = postfilter.fit_transform(X_train_woe, X_test_woe)
+X_filtered = postfilter.fit_transform(X_train_transformed, X_test_transformed)
 
 print(f"因 PSI 移除：{postfilter.psi_removed_}")
 print(f"因 VIF 移除：{postfilter.vif_removed_}")
@@ -278,53 +278,34 @@ print(f"因 VIF 移除：{postfilter.vif_removed_}")
 
 ---
 
-## 3. WOE & IV 分析
+## 3. 分箱特征分析
 
-`newt.features.analysis.WOEEncoder` 处理单个特征的证据权重（WOE）和信息值（IV）计算。对于多列批量场景，使用 `WOETransformer` 或 `binner.woe_transform()`。
+使用 `Binner` 查看分箱统计、生成后续建模所需的特征矩阵，并进入下游建模步骤。
 
-### 基础 WOE 编码
-
-```python
-from newt.features.analysis import WOEEncoder
-
-# 在分箱数据上拟合
-encoder = WOEEncoder(epsilon=1e-8)
-encoder.fit(df_binned['feature_name'], df[target])
-
-# 获取 IV
-print(f"IV: {encoder.iv_}")
-
-# 获取汇总统计（好/坏分布、WOE、IV 贡献）
-print(encoder.summary_)
-
-# 转换为 WOE 值
-df_woe = encoder.transform(df_binned['feature_name'])
-
-# 获取 WOE 映射字典
-print(encoder.woe_map_)
-```
-
-### 批量 WOE 转换
-
-```python
-from newt.features.analysis import WOETransformer
-
-woe = WOETransformer()
-X_woe = woe.fit_transform(df_binned, df[target])
-print(woe.iv_table)
-```
-
-### 使用 Binner 的 WOE 映射
+### 查看特征统计
 
 ```python
 binner = Binner()
 binner.fit(df, y=target, method='chi')
 
-# 访问特定特征的 WOE 映射
-print(binner.get_woe_map('age'))
+result = binner['age']
+print(result.stats)
+result.plot()
+```
 
-# 直接使用 Binner 对所有已拟合特征做 WOE 转换
-X_woe = binner.woe_transform(df)
+### 为建模转换特征
+
+```python
+# 直接使用 Binner 转换所有已拟合特征
+X_transformed = binner.woe_transform(df)
+```
+
+### 查看分箱汇总
+
+```python
+for feat in binner:
+    print(feat)
+    print(binner[feat].stats)
 ```
 
 ---
@@ -345,8 +326,8 @@ model = LogisticModel(
     maxiter=100
 )
 
-# 在 WOE 转换后的特征上拟合
-model.fit(X_woe, df[target])
+# 在转换后的特征上拟合
+model.fit(X_transformed, df[target])
 
 # 打印模型摘要（类似 R 的 summary()）
 print(model.summary())
@@ -364,23 +345,26 @@ print(sig_features)
 
 ```python
 # 预测概率
-y_pred_proba = model.predict_proba(X_woe_test)
+y_pred_proba = model.predict_proba(X_transformed_test)
 
 # 预测类别标签（默认阈值：0.5）
-y_pred = model.predict(X_woe_test)
+y_pred = model.predict(X_transformed_test)
 
 # 自定义阈值
-y_pred_custom = model.predict(X_woe_test, threshold=0.3)
+y_pred_custom = model.predict(X_transformed_test, threshold=0.3)
 ```
 
 ### 模型导出
 
 ```python
-# 将模型参数导出为字典
-model_dict = model.to_dict()
-print(model_dict)
-# {'intercept': -2.5, 'coefficients': {'age': 0.3, 'income': 0.5}, ...}
+# 推荐：直接保存为 JSON
+model.dump("logistic_model.json")
+
+# 轻量恢复模型（不包含训练样本）
+restored_model = LogisticModel.load("logistic_model.json")
 ```
+
+`to_dict/from_dict` 仍保留用于兼容，但推荐优先使用 `dump/load`。
 
 ### 与 Scikit-learn 模型配合使用
 
@@ -389,7 +373,7 @@ from sklearn.linear_model import LogisticRegression
 
 # Scikit-learn 模型
 lr = LogisticRegression()
-lr.fit(X_woe, y)
+lr.fit(X_transformed, y)
 
 # 可直接与 Scorecard 配合使用
 scorecard.from_model(lr, binner)
@@ -401,7 +385,7 @@ scorecard.from_model(lr, binner)
 import statsmodels.api as sm
 
 # Statsmodels 模型
-X_sm = sm.add_constant(X_woe)
+X_sm = sm.add_constant(X_transformed)
 model_sm = sm.Logit(y, X_sm).fit()
 
 # 可直接与 Scorecard 配合使用
@@ -412,7 +396,7 @@ scorecard.from_model(model_sm, binner)
 
 ## 5. 评分卡生成
 
-`newt.modeling.Scorecard` 将基于 WOE 的逻辑回归系数转换为传统信用评分卡。
+`newt.modeling.Scorecard` 将逻辑回归系数转换为传统信用评分卡。
 
 ### 构建评分卡
 
@@ -428,6 +412,8 @@ scorecard = Scorecard(
 
 # 从拟合的模型和分箱器构建
 scorecard.from_model(model, binner)
+# 可选（调试场景）：保留原始 model/binner 的运行期引用
+# scorecard.from_model(model, binner, keep_training_artifacts=True)
 
 # 查看评分卡摘要
 print(scorecard.summary())
@@ -441,7 +427,7 @@ print(df_scorecard)
 
 ```python
 # 为新数据计算分数
-# 注意：X 是原始数据（未分箱，未进行 WOE 转换）
+# 注意：X 是原始数据（未分箱，未进行预转换）
 scores = scorecard.score(X_new)
 
 print(f"分数：{scores}")
@@ -450,9 +436,14 @@ print(f"分数：{scores}")
 ### 评分卡导出
 
 ```python
-# 导出为字典
-scorecard_dict = scorecard.to_dict()
+# 推荐：直接保存为 JSON
+scorecard.dump("scorecard.json")
+
+# 从 JSON 恢复
+restored_scorecard = Scorecard.load("scorecard.json")
 ```
+
+`to_dict/from_dict` 仍保留用于兼容，但推荐优先使用 `dump/load`。
 
 ### 评分卡参数
 
@@ -488,7 +479,7 @@ pipeline = (
     )
     # 步骤 2：分箱
     .bin(method='opt', n_bins=5)
-    # 步骤 3：WOE 转换
+    # 步骤 3：特征转换
     .woe_transform()
     # 步骤 4：后过滤
     .postfilter(
@@ -580,22 +571,6 @@ fig = plot_iv_ranking(
 plt.show()
 ```
 
-### WOE 模式
-
-```python
-from newt.visualization import plot_woe_pattern
-from newt.features.analysis import WOEEncoder
-
-# 绘制特征的 WOE 模式
-encoder = WOEEncoder()
-encoder.fit(df_binned['age'].astype(str), df[target])
-fig = plot_woe_pattern(
-    woe_encoder=encoder,
-    feature='age'
-)
-plt.show()
-```
-
 ### PSI 对比
 
 ```python
@@ -670,13 +645,9 @@ import json
 with open('binning_rules.json', 'w', encoding='utf-8') as f:
     json.dump(binner.export(), f, ensure_ascii=False)
 
-# 保存模型参数
-with open('model_params.json', 'w', encoding='utf-8') as f:
-    json.dump(model.to_dict(), f, ensure_ascii=False)
-
-# 保存评分卡
-with open('scorecard.json', 'w', encoding='utf-8') as f:
-    json.dump(scorecard.to_dict(), f, ensure_ascii=False)
+# 保存轻量模型与评分卡快照
+model.dump('model_params.json')
+scorecard.dump('scorecard.json')
 ```
 
 ### 在生产环境中加载和使用
@@ -690,22 +661,18 @@ with open('binning_rules.json', 'r', encoding='utf-8') as f:
 production_binner = Binner()
 production_binner.load(rules)
 
-# 加载模型参数并重建
-with open('model_params.json', 'r', encoding='utf-8') as f:
-    model_params = json.load(f)
+# 直接加载评分卡
+production_scorecard = Scorecard.load('scorecard.json')
 
-# 重建评分卡
-production_scorecard = Scorecard(
-    base_score=600,
-    pdo=50,
-    base_odds=1/15
-)
-production_scorecard.from_model(model_params, production_binner)
+# 可选：加载轻量 LogisticModel 用于审计或复现实验
+production_model = LogisticModel.load('model_params.json')
 
 # 为新数据打分
 df_new = pd.read_csv('new_data.csv')
 scores = production_scorecard.score(df_new)
 ```
+
+`to_dict/from_dict` 仍保留用于兼容，但推荐优先使用 `dump/load` 进行持久化。
 
 ---
 
@@ -765,21 +732,21 @@ from newt.metrics import (
 )
 
 # 计算训练集和测试集之间的 PSI
-psi_values = calculate_psi(X_train_woe, X_test_woe)
+psi_values = calculate_psi(X_train_transformed, X_test_transformed)
 print(f"PSI 值：{psi_values}")
 
 # 计算单个特征的 PSI
 psi_single = calculate_psi(
-    X_train_woe['age'],
-    X_test_woe['age'],
+    X_train_transformed['age'],
+    X_test_transformed['age'],
     buckets=10
 )
 print(f"age 的 PSI：{psi_single}")
 
 # 一个基准分布，对多个对比分布批量计算 PSI
 psi_batch = calculate_psi_batch(
-    expected=X_train_woe["age"],
-    actual_groups=[X_test_woe["age"], X_oot_woe["age"]],
+    expected=X_train_transformed["age"],
+    actual_groups=[X_test_transformed["age"], X_oot_transformed["age"]],
     engine="rust",
 )
 print(f"批量 PSI：{psi_batch}")
@@ -814,7 +781,7 @@ print(feature_psi.head())
 ```python
 from newt.metrics import calculate_vif
 
-vif_values = calculate_vif(X_woe)
+vif_values = calculate_vif(X_transformed)
 print(vif_values)
 ```
 
@@ -861,16 +828,16 @@ binner['age'].stats
 binner['age'].plot()
 X_binned = binner.transform(X, labels=False)
 
-# 4. WOE 转换
-X_woe = binner.woe_transform(X)
+# 4. 特征转换
+X_transformed = binner.woe_transform(X)
 
 # 5. 后过滤
 postfilter = PostFilter()
-X_woe = postfilter.fit_transform(X_woe, X_woe_test)
+X_transformed = postfilter.fit_transform(X_transformed, X_transformed_test)
 
 # 6. 模型构建
 model = LogisticModel()
-model.fit(X_woe, df[target])
+model.fit(X_transformed, df[target])
 print(model.summary())
 
 # 7. 评分卡生成
@@ -884,8 +851,8 @@ scores = scorecard.score(df_new)
 print(f"分数：{scores}")
 
 # 9. 计算指标
-auc = calculate_auc(df[target], model.predict_proba(X_woe))
-ks = calculate_ks(df[target], model.predict_proba(X_woe))
+auc = calculate_auc(df[target], model.predict_proba(X_transformed))
+ks = calculate_ks(df[target], model.predict_proba(X_transformed))
 print(f"AUC: {auc}, KS: {ks}")
 
 # 10. 可视化
@@ -950,6 +917,7 @@ report.generate()
 - `parallel_sheets` 控制是否并行计算各个 sheet（Excel 写入仍是串行）
 - `memory_mode` 控制内存策略：`compact`（默认）或 `standard`。Compact 模式通过使用下采样类型和优化的按月转换逻辑，显著降低处理千万级数据时的内存占用。
 - `metrics_mode` 控制指标计算模式：`exact`（默认）或 `binned`（更快、近似）
+- `prin_bal_amount_col` 与 `loan_amount_col` 可成对传入，用于在相关报表表格（按 tag/按月模型效果、分维度对比、新老模型对比）中输出金额维度指标
 - 如果你只想看某一部分报表，可以只传对应的 sheet 名称或编号
 - 跑报表开发和验收时，建议使用 `uv sync --group dev`
 
@@ -984,7 +952,10 @@ tag_metrics, month_metrics = calculate_split_metrics(
     date_col='obs_date',      # 只需要传入日期列
     label_list=['target'],
     score_col='xgb_score',
-    model_name='XGBoost Model'
+    model_name='XGBoost Model',
+    score_type='probability',  # 'probability'（值越大风险越高）或 'score'（值越大风险越低）
+    prin_bal_amount_col='prin_bal_amount',  # 可选；需与 loan_amount_col 成对传入
+    loan_amount_col='loan_amount',          # 可选
 )
 
 print(tag_metrics)
@@ -1003,7 +974,10 @@ dim_metrics = calculate_dimensional_comparison(
     data=df[df['tag'] == 'oot'],
     dim_list=['channel', 'education'],
     label_list=['target'],
-    score_model_columns=[('XGBoost Model', 'xgb_score')]
+    score_model_columns=[('XGBoost Model', 'xgb_score')],
+    score_type='probability',
+    prin_bal_amount_col='prin_bal_amount',  # 可选；需成对传入
+    loan_amount_col='loan_amount',          # 可选
 )
 
 print(dim_metrics)
@@ -1026,10 +1000,39 @@ compare_metrics = calculate_model_comparison(
         ('New XGBoost Model', 'xgb_score'),
         ('Old Logistic Model', 'old_score')
     ],
-    group_mode='month'  # 也接受 'tag'
+    group_mode='month',  # 也接受 'tag'
+    score_type='probability',
+    prin_bal_amount_col='prin_bal_amount',  # 可选；需成对传入
+    loan_amount_col='loan_amount',          # 可选
 )
 
 print(compare_metrics)
+```
+
+### 12.4. 分箱指标
+
+直接计算分箱层面的模型指标，并可选输出金额维度指标。
+
+```python
+from newt import calculate_bin_metrics
+
+# 分位数分箱（默认 q=10）
+bin_metrics = calculate_bin_metrics(
+    data=df,
+    label_col='target',
+    score_col='xgb_score',
+    q=10,
+    prin_bal_amount_col='prin_bal_amount',  # 可选；需成对传入
+    loan_amount_col='loan_amount',          # 可选
+)
+
+# 自定义分箱边界
+custom_bin_metrics = calculate_bin_metrics(
+    data=df,
+    label_col='target',
+    score_col='xgb_score',
+    bins=[-float('inf'), 0.2, 0.5, 0.8, float('inf')],
+)
 ```
 
 ---

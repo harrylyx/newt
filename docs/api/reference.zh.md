@@ -35,18 +35,6 @@
       members:
         - StepwiseSelector
 
-## WOE 编码与转换
-
-::: newt.features.analysis.woe_calculator
-    options:
-      members:
-        - WOEEncoder
-
-::: newt.features.analysis.woe_transformer
-    options:
-      members:
-        - WOETransformer
-
 ## 模型建模 (Modeling)
 
 ::: newt.modeling.logistic

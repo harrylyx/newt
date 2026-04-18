@@ -8,12 +8,12 @@ A lightweight Python toolkit for efficient feature analysis and statistical diag
 
 - **6 Binning Algorithms**: ChiMerge, Decision Tree, K-Means, Equal Frequency, Equal Width, Optimal Binning
 - **Monotonic Binning Support**: Ascending, descending, and auto-detect monotonic trends
-- **WOE/IV Analysis**: Comprehensive Weight of Evidence and Information Value calculations
+- **Feature Analysis**: Comprehensive binning statistics and model diagnostics
 - **Feature Selection**: Pre-filtering (IV, missing rate, correlation), post-filtering (PSI, VIF), and stepwise selection
 - **Logistic Regression**: Statsmodels-based with scikit-learn-like interface
 - **Scorecard Generation**: Traditional credit scorecard with customizable base score and PDO
 - **Pipeline Workflow**: Fluent API for end-to-end scorecard development
-- **Visualization Tools**: Binning plots, IV ranking, WOE patterns, PSI comparison
+- **Visualization Tools**: Binning plots, IV ranking, PSI comparison
 - **Excel Model Report**: Multi-sheet model report generation with overview, model design, variable analysis, and model performance output
 ## Installation
 
@@ -153,20 +153,24 @@ binner.fit(X, df[target], method='chi', n_bins=5)
 # Access binning results
 binner['age'].stats        # View statistics
 binner['age'].plot()       # Plot results
-binner['age'].woe_map()    # Get WOE mapping
+binner['age'].woe_map()    # Get bin mapping
 
-# WOE transformation
-X_woe = binner.woe_transform(X)
+# Feature transformation
+X_transformed = binner.woe_transform(X)
 
 # Model building
 model = LogisticModel()
-model.fit(X_woe, df[target])
+model.fit(X_transformed, df[target])
 print(model.summary())
 
 # Scorecard generation
 scorecard = Scorecard(base_score=600, pdo=50)
 scorecard.from_model(model, binner)
 scores = scorecard.score(X_new)
+
+# Persist lightweight artifacts
+model.dump("logistic_model.json")
+scorecard.dump("scorecard.json")
 ```
 
 ## Binning Methods
@@ -221,7 +225,7 @@ stepwise = StepwiseSelector(
     p_enter=0.05,
     p_remove=0.10
 )
-X_selected = stepwise.fit_transform(X_woe, y)
+X_selected = stepwise.fit_transform(X_transformed, y)
 ```
 
 ### Post-Filtering (PSI & VIF)
@@ -232,7 +236,7 @@ postfilter = PostFilter(
     psi_threshold=0.25,
     vif_threshold=10.0
 )
-X_filtered = postfilter.fit_transform(X_train_woe, X_test_woe)
+X_filtered = postfilter.fit_transform(X_train_transformed, X_test_transformed)
 ```
 
 ## Metrics
@@ -278,7 +282,6 @@ vif_values = calculate_vif(X)
 from newt.visualization import (
     plot_binning_result,
     plot_iv_ranking,
-    plot_woe_pattern,
     plot_psi_comparison
 )
 
@@ -287,9 +290,6 @@ fig = plot_binning_result(binner, X, y, 'age')
 
 # IV ranking
 fig = plot_iv_ranking(iv_dict, top_n=20, threshold=0.02)
-
-# WOE pattern
-fig = plot_woe_pattern(woe_encoder['age'], 'age')
 
 # PSI comparison
 fig = plot_psi_comparison(psi_dict, threshold=0.25)

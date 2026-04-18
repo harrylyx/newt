@@ -1,6 +1,6 @@
 # Newt Library User Guide
 
-This guide covers the end-to-end workflow for credit scorecard development using `newt`, including binning, feature selection, WOE/IV analysis, modeling, and scorecard generation.
+This guide covers the end-to-end workflow for credit scorecard development using `newt`, including binning, feature selection, feature transformation, modeling, and scorecard generation.
 
 The project supports Python `>=3.8.5,<3.13` (Python `3.8.5` through `3.12.x`).
 
@@ -72,7 +72,7 @@ When working inside this repository, keep environments split by purpose:
 
 1. [Feature Binning](#1-feature-binning)
 2. [Feature Selection](#2-feature-selection)
-3. [WOE & IV Analysis](#3-woe-iv-analysis)
+3. [Binned Feature Analysis](#3-binned-feature-analysis)
 4. [Logistic Regression Modeling](#4-logistic-regression-modeling)
 5. [Scorecard Generation](#5-scorecard-generation)
 6. [Complete Pipeline](#6-complete-pipeline)
@@ -254,9 +254,9 @@ stepwise = StepwiseSelector(
     verbose=True         # Show tqdm progress bar
 )
 
-# Fit and transform (typically on WOE-transformed data)
+# Fit and transform (typically on transformed data)
 # This will show a real-time progress bar for each selection step
-X_selected = stepwise.fit_transform(X_woe, y)
+X_selected = stepwise.fit_transform(X_transformed, y)
 
 print(f"Selected features: {stepwise.selected_features_}")
 ```
@@ -275,7 +275,7 @@ postfilter = PostFilter(
 )
 
 # Fit on training data and test data for PSI
-X_filtered = postfilter.fit_transform(X_train_woe, X_test_woe)
+X_filtered = postfilter.fit_transform(X_train_transformed, X_test_transformed)
 
 print(f"Removed by PSI: {postfilter.psi_removed_}")
 print(f"Removed by VIF: {postfilter.vif_removed_}")
@@ -283,54 +283,34 @@ print(f"Removed by VIF: {postfilter.vif_removed_}")
 
 ---
 
-## 3. WOE & IV Analysis
+## 3. Binned Feature Analysis
 
-`newt.features.analysis.WOEEncoder` handles single-feature Weight of Evidence (WOE) and Information Value (IV) calculation. For multi-column workflows, use `WOETransformer` or `binner.woe_transform()`.
+Use `Binner` to inspect bin statistics, derive transformed feature matrices, and feed downstream modeling steps.
 
-### Basic WOE Encoding
-
-```python
-from newt.features.analysis import WOEEncoder
-
-# Fit on binned data
-encoder = WOEEncoder(epsilon=1e-8)
-encoder.fit(df_binned['feature_name'], df[target])
-
-# Get IV
-print(f"IV: {encoder.iv_}")
-
-# Get summary statistics (Good/Bad distribution, WOE, IV contribution)
-print(encoder.summary_)
-
-# Transform to WOE values
-df_woe = encoder.transform(df_binned['feature_name'])
-
-# Get WOE mapping dictionary
-print(encoder.woe_map_)
-```
-
-### Batch WOE Transformation
-
-```python
-from newt.features.analysis import WOETransformer
-
-woe = WOETransformer()
-X_woe = woe.fit_transform(df_binned, df[target])
-print(woe.iv_table)
-```
-
-### Using Binner's WOE Maps
+### Inspect Feature Statistics
 
 ```python
 binner = Binner()
 binner.fit(df, y=target, method='chi')
 
-# Access the WOE map for a feature
-woe_map = binner.get_woe_map('age')
-print(woe_map)
+result = binner['age']
+print(result.stats)
+result.plot()
+```
 
+### Transform Features For Modeling
+
+```python
 # Transform all fitted features directly with the binner
-X_woe = binner.woe_transform(df)
+X_transformed = binner.woe_transform(df)
+```
+
+### Review Binning Summary
+
+```python
+for feat in binner:
+    print(feat)
+    print(binner[feat].stats)
 ```
 
 ---
@@ -351,8 +331,8 @@ model = LogisticModel(
     maxiter=100
 )
 
-# Fit on WOE-transformed features
-model.fit(X_woe, df[target])
+# Fit on transformed features
+model.fit(X_transformed, df[target])
 
 # Print model summary (similar to R's summary())
 print(model.summary())
@@ -370,23 +350,26 @@ print(sig_features)
 
 ```python
 # Predict probabilities
-y_pred_proba = model.predict_proba(X_woe_test)
+y_pred_proba = model.predict_proba(X_transformed_test)
 
 # Predict class labels (default threshold: 0.5)
-y_pred = model.predict(X_woe_test)
+y_pred = model.predict(X_transformed_test)
 
 # Custom threshold
-y_pred_custom = model.predict(X_woe_test, threshold=0.3)
+y_pred_custom = model.predict(X_transformed_test, threshold=0.3)
 ```
 
 ### Model Export
 
 ```python
-# Export model parameters as dictionary
-model_dict = model.to_dict()
-print(model_dict)
-# {'intercept': -2.5, 'coefficients': {'age': 0.3, 'income': 0.5}, ...}
+# Recommended: persist as JSON
+model.dump("logistic_model.json")
+
+# Restore lightweight model (no training samples embedded)
+restored_model = LogisticModel.load("logistic_model.json")
 ```
+
+`to_dict/from_dict` remain available for compatibility, but `dump/load` is the recommended path.
 
 ### Using with Scikit-learn Models
 
@@ -395,7 +378,7 @@ from sklearn.linear_model import LogisticRegression
 
 # Scikit-learn model
 lr = LogisticRegression()
-lr.fit(X_woe, y)
+lr.fit(X_transformed, y)
 
 # Can be used directly with Scorecard
 scorecard.from_model(lr, binner)
@@ -407,7 +390,7 @@ scorecard.from_model(lr, binner)
 import statsmodels.api as sm
 
 # Statsmodels model
-X_sm = sm.add_constant(X_woe)
+X_sm = sm.add_constant(X_transformed)
 model_sm = sm.Logit(y, X_sm).fit()
 
 # Can be used directly with Scorecard
@@ -418,7 +401,7 @@ scorecard.from_model(model_sm, binner)
 
 ## 5. Scorecard Generation
 
-`newt.modeling.Scorecard` converts WOE-based logistic regression coefficients into a traditional credit scorecard.
+`newt.modeling.Scorecard` converts logistic regression coefficients into a traditional credit scorecard.
 
 ### Building a Scorecard
 
@@ -434,6 +417,8 @@ scorecard = Scorecard(
 
 # Build from fitted model and binner
 scorecard.from_model(model, binner)
+# Optional (debugging): keep runtime references to original model/binner
+# scorecard.from_model(model, binner, keep_training_artifacts=True)
 
 # View scorecard summary
 print(scorecard.summary())
@@ -447,7 +432,7 @@ print(df_scorecard)
 
 ```python
 # Calculate scores for new data
-# Note: X is raw data (not binned, not WOE transformed)
+# Note: X is raw data (not pre-transformed)
 scores = scorecard.score(X_new)
 
 print(f"Scores: {scores}")
@@ -456,9 +441,14 @@ print(f"Scores: {scores}")
 ### Scorecard Export
 
 ```python
-# Export as dictionary
-scorecard_dict = scorecard.to_dict()
+# Recommended: persist as JSON
+scorecard.dump("scorecard.json")
+
+# Restore from JSON
+restored_scorecard = Scorecard.load("scorecard.json")
 ```
+
+`to_dict/from_dict` remain available for compatibility, but `dump/load` is the recommended path.
 
 ### Scorecard Parameters
 
@@ -494,7 +484,7 @@ pipeline = (
     )
     # Step 2: Binning
     .bin(method='opt', n_bins=5)
-    # Step 3: WOE transformation
+    # Step 3: feature transformation
     .woe_transform()
     # Step 4: Post-filtering
     .postfilter(
@@ -586,22 +576,6 @@ fig = plot_iv_ranking(
 plt.show()
 ```
 
-### WOE Pattern
-
-```python
-from newt.visualization import plot_woe_pattern
-from newt.features.analysis import WOEEncoder
-
-# Plot WOE pattern for a feature
-encoder = WOEEncoder()
-encoder.fit(df_binned['age'].astype(str), df[target])
-fig = plot_woe_pattern(
-    woe_encoder=encoder,
-    feature='age'
-)
-plt.show()
-```
-
 ### PSI Comparison
 
 ```python
@@ -676,13 +650,9 @@ import json
 with open('binning_rules.json', 'w') as f:
     json.dump(binner.export(), f)
 
-# Save model parameters
-with open('model_params.json', 'w') as f:
-    json.dump(model.to_dict(), f)
-
-# Save scorecard
-with open('scorecard.json', 'w') as f:
-    json.dump(scorecard.to_dict(), f)
+# Save lightweight model and scorecard snapshots
+model.dump('model_params.json')
+scorecard.dump('scorecard.json')
 ```
 
 ### Load and Use in Production
@@ -696,22 +666,18 @@ with open('binning_rules.json', 'r') as f:
 production_binner = Binner()
 production_binner.load(rules)
 
-# Load model parameters and recreate
-with open('model_params.json', 'r') as f:
-    model_params = json.load(f)
+# Load scorecard directly
+production_scorecard = Scorecard.load('scorecard.json')
 
-# Recreate scorecard
-production_scorecard = Scorecard(
-    base_score=600,
-    pdo=50,
-    base_odds=1/15
-)
-production_scorecard.from_model(model_params, production_binner)
+# Optional: load lightweight LogisticModel snapshot for audit/repro checks
+production_model = LogisticModel.load('model_params.json')
 
 # Score new data
 df_new = pd.read_csv('new_data.csv')
 scores = production_scorecard.score(df_new)
 ```
+
+`to_dict/from_dict` are still supported for compatibility, but `dump/load` is the recommended persistence path.
 
 ---
 
@@ -771,21 +737,21 @@ from newt.metrics import (
 )
 
 # Calculate PSI between training and test distributions
-psi_values = calculate_psi(X_train_woe, X_test_woe)
+psi_values = calculate_psi(X_train_transformed, X_test_transformed)
 print(f"PSI values: {psi_values}")
 
 # Calculate PSI for a single feature
 psi_single = calculate_psi(
-    X_train_woe['age'],
-    X_test_woe['age'],
+    X_train_transformed['age'],
+    X_test_transformed['age'],
     buckets=10
 )
 print(f"PSI for age: {psi_single}")
 
 # Batch PSI for multiple groups against one base
 psi_batch = calculate_psi_batch(
-    expected=X_train_woe["age"],
-    actual_groups=[X_test_woe["age"], X_oot_woe["age"]],
+    expected=X_train_transformed["age"],
+    actual_groups=[X_test_transformed["age"], X_oot_transformed["age"]],
     engine="rust",
 )
 print(f"Batch PSI: {psi_batch}")
@@ -820,7 +786,7 @@ print(feature_psi.head())
 ```python
 from newt.metrics import calculate_vif
 
-vif_values = calculate_vif(X_woe)
+vif_values = calculate_vif(X_transformed)
 print(vif_values)
 ```
 
@@ -867,16 +833,16 @@ binner['age'].stats
 binner['age'].plot()
 X_binned = binner.transform(X, labels=False)
 
-# 4. WOE transformation
-X_woe = binner.woe_transform(X)
+# 4. feature transformation
+X_transformed = binner.woe_transform(X)
 
 # 5. Post-filtering
 postfilter = PostFilter()
-X_woe = postfilter.fit_transform(X_woe, X_woe_test)
+X_transformed = postfilter.fit_transform(X_transformed, X_transformed_test)
 
 # 6. Model building
 model = LogisticModel()
-model.fit(X_woe, df[target])
+model.fit(X_transformed, df[target])
 print(model.summary())
 
 # 7. Scorecard generation
@@ -890,8 +856,8 @@ scores = scorecard.score(df_new)
 print(f"Scores: {scores}")
 
 # 9. Calculate metrics
-auc = calculate_auc(df[target], model.predict_proba(X_woe))
-ks = calculate_ks(df[target], model.predict_proba(X_woe))
+auc = calculate_auc(df[target], model.predict_proba(X_transformed))
+ks = calculate_ks(df[target], model.predict_proba(X_transformed))
 print(f"AUC: {auc}, KS: {ks}")
 
 # 10. Visualize
@@ -956,6 +922,7 @@ Notes:
 - `parallel_sheets` enables concurrent sheet computation (Excel write remains sequential)
 - `memory_mode` controls runtime memory strategy: `compact` (default) or `standard`. Compact mode significantly reduces memory usage for 10M+ rows by using downcasted types and optimized monthly transformations.
 - `metrics_mode` controls metric computation mode: `exact` (default) or `binned` (faster, approximate)
+- `prin_bal_amount_col` and `loan_amount_col` can be passed together to enable amount-based metrics in related report tables (split metrics, dimensional comparison, and model comparison)
 - If you only need part of the report, pass just the sheet names or indexes you want
 - For report development and validation, use `uv sync --group dev`
 
@@ -988,7 +955,10 @@ tag_metrics, month_metrics = calculate_split_metrics(
     date_col='obs_date',      # Only date_col is needed
     label_list=['target'],
     score_col='xgb_score',
-    model_name='XGBoost Model'
+    model_name='XGBoost Model',
+    score_type='probability',  # 'probability' (higher=more risky) or 'score' (higher=less risky)
+    prin_bal_amount_col='prin_bal_amount',  # optional; must be provided with loan_amount_col
+    loan_amount_col='loan_amount',          # optional
 )
 
 print(tag_metrics)
@@ -1007,7 +977,10 @@ dim_metrics = calculate_dimensional_comparison(
     data=df[df['tag'] == 'oot'],
     dim_list=['channel', 'education'],
     label_list=['target'],
-    score_model_columns=[('XGBoost Model', 'xgb_score')]
+    score_model_columns=[('XGBoost Model', 'xgb_score')],
+    score_type='probability',
+    prin_bal_amount_col='prin_bal_amount',  # optional; must be paired
+    loan_amount_col='loan_amount',          # optional
 )
 
 print(dim_metrics)
@@ -1030,10 +1003,39 @@ compare_metrics = calculate_model_comparison(
         ('New XGBoost Model', 'xgb_score'),
         ('Old Logistic Model', 'old_score')
     ],
-    group_mode='month'  # also accepts 'tag'
+    group_mode='month',  # also accepts 'tag'
+    score_type='probability',
+    prin_bal_amount_col='prin_bal_amount',  # optional; must be paired
+    loan_amount_col='loan_amount',          # optional
 )
 
 print(compare_metrics)
+```
+
+### 12.4. Bin Metrics
+
+Calculate bin-level performance metrics directly, with optional amount metrics.
+
+```python
+from newt import calculate_bin_metrics
+
+# Quantile bins (default q=10)
+bin_metrics = calculate_bin_metrics(
+    data=df,
+    label_col='target',
+    score_col='xgb_score',
+    q=10,
+    prin_bal_amount_col='prin_bal_amount',  # optional; must be paired
+    loan_amount_col='loan_amount',          # optional
+)
+
+# Custom split edges
+custom_bin_metrics = calculate_bin_metrics(
+    data=df,
+    label_col='target',
+    score_col='xgb_score',
+    bins=[-float('inf'), 0.2, 0.5, 0.8, float('inf')],
+)
 ```
 
 ---

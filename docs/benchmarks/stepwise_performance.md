@@ -35,7 +35,7 @@ selector = StepwiseSelector(
     verbose=True
 )
 
-selector.fit(X_woe, y)
+selector.fit(X_transformed, y)
 ```
 
 For debugging or comparing with legacy results, you can manually switch back to the Python engine:

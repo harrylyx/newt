@@ -85,6 +85,8 @@ def build_report_result(
     var_list: Sequence[str],
     feature_path: Optional[str],
     selected_sheets: Sequence[str],
+    prin_bal_amount_col: Optional[str] = None,
+    loan_amount_col: Optional[str] = None,
     options: Optional[ReportBuildOptions] = None,
 ) -> ModelReportResult:
     """Build the full report result object."""
@@ -104,6 +106,8 @@ def build_report_result(
         var_list=var_list,
         feature_path=feature_path,
         selected_sheets=selected_sheets,
+        prin_bal_amount_col=prin_bal_amount_col,
+        loan_amount_col=loan_amount_col,
         options=options,
     )
 

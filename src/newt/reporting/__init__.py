@@ -1,6 +1,7 @@
 """Excel reporting helpers."""
 
 from newt.reporting.interactive import (
+    calculate_bin_metrics,
     calculate_dimensional_comparison,
     calculate_model_comparison,
     calculate_split_metrics,
@@ -11,6 +12,7 @@ from newt.reporting.report import Report
 __all__ = [
     "ModelAdapter",
     "Report",
+    "calculate_bin_metrics",
     "calculate_split_metrics",
     "calculate_dimensional_comparison",
     "calculate_model_comparison",

@@ -1072,3 +1072,83 @@ def test_report_scorecard_missing_lr_stats_keeps_columns_and_does_not_fail(
     feature_table = variable_sheet.get_block("二、变量分析").data
     assert "p_value" in feature_table.columns
     assert feature_table["p_value"].isna().all()
+
+
+def test_report_supports_amount_metrics_in_related_report_tables(
+    tmp_path,
+    report_frame,
+    fake_lightgbm_model,
+):
+    frame = report_frame.copy()
+    frame["prin_bal_amount"] = np.where(frame["label_main"] == 1, 45.0, 10.0)
+    frame["loan_amount"] = 100.0
+
+    output_path = tmp_path / "report_amount_metrics.xlsx"
+    report = Report(
+        data=frame,
+        model=fake_lightgbm_model,
+        tag="tag",
+        score_col="score_new",
+        date_col="obs_date",
+        label_list=["label_main"],
+        score_list=["score_old_a"],
+        dim_list=["channel_dim"],
+        sheet_list=["模型表现", "分维度对比", "新老模型对比"],
+        report_out_path=str(output_path),
+        prin_bal_amount_col="prin_bal_amount",
+        loan_amount_col="loan_amount",
+    )
+
+    report.generate()
+
+    expected_amount_columns = {
+        "逾期本金",
+        "放款金额",
+        "金额坏占比",
+        "放款金额占比",
+        "逾期本金占比",
+        "金额lift",
+    }
+
+    performance_sheet = report.result_.get_sheet("3.模型表现")
+    tag_metrics = performance_sheet.get_block("二、按tag模型效果").data
+    month_metrics = performance_sheet.get_block("三、按月模型效果").data
+    assert expected_amount_columns.issubset(tag_metrics.columns)
+    assert expected_amount_columns.issubset(month_metrics.columns)
+
+    dimensional_sheet = report.result_.get_sheet("附1 分维度对比")
+    dimensional_data_block = next(
+        block
+        for block in dimensional_sheet.blocks
+        if block.title.startswith("1.") and not block.data.empty
+    )
+    assert expected_amount_columns.issubset(dimensional_data_block.data.columns)
+
+    comparison_sheet = report.result_.get_sheet("附2 新老模型对比")
+    tag_compare = comparison_sheet.get_block("按tag新老模型对比(score_old_a)").data
+    assert expected_amount_columns.issubset(tag_compare.columns)
+
+
+def test_report_requires_amount_columns_to_be_provided_in_pairs(
+    tmp_path,
+    report_frame,
+    fake_lightgbm_model,
+):
+    output_path = tmp_path / "invalid_amount_args.xlsx"
+    report = Report(
+        data=report_frame,
+        model=fake_lightgbm_model,
+        tag="tag",
+        score_col="score_new",
+        date_col="obs_date",
+        label_list=["label_main"],
+        sheet_list=["模型表现"],
+        report_out_path=str(output_path),
+        prin_bal_amount_col="prin_bal_amount",
+    )
+
+    with pytest.raises(
+        ValueError,
+        match="prin_bal_amount_col and loan_amount_col must be provided together",
+    ):
+        report.generate()

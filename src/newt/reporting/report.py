@@ -52,6 +52,10 @@ class Report:
         memory_mode (str): Memory usage strategy: 'compact' (default) or 'standard'.
         metrics_mode (str): Calculation mode: 'exact' (default) or
             'binned' (approximate).
+        prin_bal_amount_col (str, optional): Column name for principal-balance
+            amount used by optional amount-based report metrics.
+        loan_amount_col (str, optional): Column name for loan amount used by
+            optional amount-based report metrics.
 
     Examples:
         >>> from newt import Report
@@ -84,6 +88,8 @@ class Report:
     parallel_sheets: bool = True
     memory_mode: str = "compact"
     metrics_mode: str = "exact"
+    prin_bal_amount_col: Optional[str] = None
+    loan_amount_col: Optional[str] = None
 
     result_: Optional[ModelReportResult] = field(default=None, init=False)
 
@@ -182,6 +188,8 @@ class Report:
             var_list=self.var_list,
             feature_path=self.feature_path,
             selected_sheets=selected_sheets,
+            prin_bal_amount_col=self.prin_bal_amount_col,
+            loan_amount_col=self.loan_amount_col,
             options=build_options,
         )
         _log_stage(
@@ -231,7 +239,17 @@ class Report:
 
     def _validate_columns(self) -> None:
         required = [self.tag, self.score_col, self.date_col, *self.label_list]
-        optional = [*self.score_list, *self.dim_list, *self.var_list]
+        optional = [
+            *self.score_list,
+            *self.dim_list,
+            *self.var_list,
+            self.prin_bal_amount_col,
+            self.loan_amount_col,
+        ]
+        if (self.prin_bal_amount_col is None) ^ (self.loan_amount_col is None):
+            raise ValueError(
+                "prin_bal_amount_col and loan_amount_col must be provided together"
+            )
         missing = [
             column
             for column in [*required, *optional]

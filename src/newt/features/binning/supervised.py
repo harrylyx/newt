@@ -29,6 +29,70 @@ def _resolve_monotonic_mode(monotonic: Union[bool, str, None]) -> str:
     return "auto"
 
 
+def _validate_chi_target(y: pd.Series, context: str = "ChiMerge") -> pd.Series:
+    """Validate and normalize target for ChiMerge to strict binary integers."""
+    y_numeric = pd.to_numeric(y, errors="coerce")
+
+    missing_count = int(y_numeric.isna().sum())
+    if missing_count > 0:
+        raise ValueError(
+            f"{context}: target contains {missing_count} missing value(s). "
+            "ChiMerge requires complete binary targets with values 0 or 1."
+        )
+
+    invalid_mask = ~y_numeric.isin([0, 1])
+    invalid_count = int(invalid_mask.sum())
+    if invalid_count > 0:
+        invalid_examples = sorted(y_numeric[invalid_mask].unique().tolist())
+        preview = ", ".join(str(v) for v in invalid_examples[:5])
+        if len(invalid_examples) > 5:
+            preview = f"{preview}, ..."
+        raise ValueError(
+            f"{context}: target contains {invalid_count} non-binary value(s) "
+            f"outside {{0, 1}}: {preview}."
+        )
+
+    return y_numeric.astype(np.int64)
+
+
+def _resolve_chi_min_samples_count(
+    min_samples: Union[int, float],
+    sample_count: int,
+    context: str = "ChiMerge",
+) -> int:
+    """Resolve min_samples setting into an absolute minimum bin count."""
+    if sample_count <= 0:
+        return 1
+
+    if isinstance(min_samples, bool):
+        raise TypeError(f"{context}: min_samples must be int or float, got bool.")
+
+    if isinstance(min_samples, (int, np.integer)):
+        value = int(min_samples)
+        if value <= 0:
+            raise ValueError(f"{context}: min_samples must be > 0, got {value}.")
+        return value
+
+    if isinstance(min_samples, (float, np.floating)):
+        value = float(min_samples)
+        if not np.isfinite(value):
+            raise ValueError(
+                f"{context}: min_samples must be finite, got {min_samples}."
+            )
+        if value <= 0.0:
+            raise ValueError(f"{context}: min_samples must be > 0, got {value}.")
+        if value > 1.0:
+            raise ValueError(
+                f"{context}: float min_samples must be in (0, 1], got {value}."
+            )
+        return max(1, int(np.ceil(value * sample_count)))
+
+    raise TypeError(
+        f"{context}: min_samples must be int or float, "
+        f"got {type(min_samples).__name__}."
+    )
+
+
 def _calculate_cut_points_from_bins(bins) -> List[float]:
     """Convert ordered bin start values into split points for ``pd.cut``."""
     if len(bins) < 2:
@@ -112,7 +176,7 @@ class ChiMergeBinner(BaseBinner):
         n_bins: int = 5,
         monotonic: Union[bool, str, None] = None,
         alpha: float = 0.05,
-        min_samples: float = 0.05,
+        min_samples: Union[int, float] = 0.05,
         **kwargs,
     ):
         """Initialize ChiMergeBinner.
@@ -121,8 +185,8 @@ class ChiMergeBinner(BaseBinner):
             n_bins: Target number of bins.
             monotonic: Enforce monotonic trend.
             alpha: Significance level for Chi-square test (merges if p > alpha).
-            min_samples: Minimum fraction of samples per bin (not yet enforced
-                in core loop).
+            min_samples: Minimum samples per bin. Float is treated as fraction
+                in (0, 1], int as absolute count.
             **kwargs: Arguments passed to BaseBinner.
         """
         super().__init__(n_bins=n_bins, monotonic=monotonic, **kwargs)
@@ -137,14 +201,21 @@ class ChiMergeBinner(BaseBinner):
             raise ValueError("ChiMergeBinner requires target 'y'.")
 
         # 1. Prepare data
-        df = pd.DataFrame({"X": X, "y": y}).dropna()
-        X_arr = df["X"].to_numpy(dtype=np.float64)
-        y_arr = df["y"].to_numpy(dtype=np.int64)
+        y_series = _validate_chi_target(pd.Series(y), context="ChiMergeBinner")
+        X_series = pd.Series(X)
+        valid_mask = X_series.notna()
+        X_arr = X_series[valid_mask].to_numpy(dtype=np.float64)
+        y_arr = y_series[valid_mask].to_numpy(dtype=np.int64)
 
         if len(X_arr) == 0:
             return []
 
         threshold = float(stats.chi2.ppf(1 - self.alpha, 1))
+        min_sample_count = _resolve_chi_min_samples_count(
+            self.min_samples,
+            len(X_arr),
+            context="ChiMergeBinner",
+        )
 
         # 2. Try Rust engine first
         rust_module = _load_rust_engine()
@@ -155,6 +226,7 @@ class ChiMergeBinner(BaseBinner):
                     y_arr,
                     self.n_bins,
                     threshold,
+                    min_sample_count,
                 )
                 return sorted(splits)
             except Exception:
@@ -177,20 +249,10 @@ class ChiMergeBinner(BaseBinner):
         bins = list(zip(unique_vals, counts, event_counts))
 
         # 4. Merge iterations (Python fallback)
-        chi_squares = self._compute_chi_squares(bins)
-        max_bins = self.n_bins
-
-        while len(bins) > max_bins:
-            if len(chi_squares) == 0:
-                break
-
-            min_chi2 = np.min(chi_squares)
-            if min_chi2 >= threshold:
-                break
-
-            min_idx = np.argmin(chi_squares)
-            bins = self._merge_bins(bins, min_idx)
-            chi_squares = self._compute_chi_squares(bins)
+        max_bins = max(int(self.n_bins), 1)
+        bins = self._merge_until_hard_cap(bins, max_bins)
+        bins = self._merge_until_threshold(bins, threshold)
+        bins = self._merge_for_min_samples(bins, min_sample_count)
 
         # 5. Extract splits
         return _calculate_cut_points_from_bins(bins)
@@ -270,6 +332,63 @@ class ChiMergeBinner(BaseBinner):
         merged = (val1, n1 + n2, e1 + e2)
         new_bins = bins[:idx] + [merged] + bins[idx + 2 :]
         return new_bins
+
+    def _merge_until_hard_cap(self, bins, max_bins: int):
+        """Merge adjacent bins by smallest chi-square until bin count cap is met."""
+        current = list(bins)
+        while len(current) > max_bins:
+            chi_squares = self._compute_chi_squares(current)
+            if len(chi_squares) == 0:
+                break
+            min_idx = int(np.argmin(chi_squares))
+            current = self._merge_bins(current, min_idx)
+        return current
+
+    def _merge_until_threshold(self, bins, threshold: float):
+        """Merge adjacent bins while smallest chi-square is below threshold."""
+        current = list(bins)
+        while len(current) > 1:
+            chi_squares = self._compute_chi_squares(current)
+            if len(chi_squares) == 0:
+                break
+
+            min_idx = int(np.argmin(chi_squares))
+            min_chi2 = float(chi_squares[min_idx])
+            if min_chi2 >= threshold:
+                break
+            current = self._merge_bins(current, min_idx)
+        return current
+
+    def _merge_for_min_samples(self, bins, min_sample_count: int):
+        """Merge bins until all bins satisfy minimum count or only one remains."""
+        current = list(bins)
+        while len(current) > 1:
+            small_bin_indexes = [
+                i for i, (_, count, _) in enumerate(current) if count < min_sample_count
+            ]
+            if not small_bin_indexes:
+                break
+
+            chi_squares = self._compute_chi_squares(current)
+            if len(chi_squares) == 0:
+                break
+
+            candidate_edges = set()
+            for idx in small_bin_indexes:
+                if idx > 0:
+                    candidate_edges.add(idx - 1)
+                if idx < len(current) - 1:
+                    candidate_edges.add(idx)
+
+            if not candidate_edges:
+                break
+
+            min_idx = min(
+                candidate_edges,
+                key=lambda edge_idx: (float(chi_squares[edge_idx]), edge_idx),
+            )
+            current = self._merge_bins(current, min_idx)
+        return current
 
 
 class OptBinningBinner(BaseBinner):

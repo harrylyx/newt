@@ -547,6 +547,8 @@ def build_model_performance_sheet(
     precomputed_tag_metrics: Optional[pd.DataFrame] = None,
     precomputed_month_metrics: Optional[pd.DataFrame] = None,
     primary_binary_data: Optional[pd.DataFrame] = None,
+    prin_bal_amount_col: Optional[str] = None,
+    loan_amount_col: Optional[str] = None,
     build_context: Optional[ReportBuildContext] = None,
 ) -> ReportSheet:
     """Build model performance sheet."""
@@ -570,6 +572,8 @@ def build_model_performance_sheet(
             model_name=model_name,
             reverse_auc_label=reverse_auc_label,
             metrics_mode=metrics_mode,
+            prin_bal_amount_col=prin_bal_amount_col,
+            loan_amount_col=loan_amount_col,
             build_context=build_context,
         )
     blocks.append(ReportBlock(title="二、按tag模型效果", data=tag_metrics))

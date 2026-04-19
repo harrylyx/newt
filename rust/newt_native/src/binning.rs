@@ -129,6 +129,37 @@ fn is_edge_candidate_valid(bins: &[BinNode], candidate: EdgeCandidate) -> bool {
         && right.prev == Some(candidate.left_idx)
 }
 
+fn merge_adjacent_bins(
+    bins: &mut [BinNode],
+    left_idx: usize,
+    right_idx: usize,
+    active_bins: &mut usize,
+) {
+    let right_next_idx = bins[right_idx].next;
+
+    bins[left_idx].count += bins[right_idx].count;
+    bins[left_idx].events += bins[right_idx].events;
+    bins[left_idx].next = right_next_idx;
+    bins[left_idx].version += 1;
+
+    bins[right_idx].active = false;
+    bins[right_idx].prev = None;
+    bins[right_idx].next = None;
+    bins[right_idx].version += 1;
+
+    if let Some(next_idx) = right_next_idx {
+        bins[next_idx].prev = Some(left_idx);
+    }
+
+    *active_bins = active_bins.saturating_sub(1);
+}
+
+fn find_active_head(bins: &[BinNode]) -> Option<usize> {
+    bins.iter()
+        .position(|bin| bin.active && bin.prev.is_none())
+        .or_else(|| bins.iter().position(|bin| bin.active))
+}
+
 fn extract_split_points(bins: &[BinNode]) -> Vec<f64> {
     let mut start_idx = bins.iter().position(|bin| bin.active && bin.prev.is_none());
     if start_idx.is_none() {
@@ -291,6 +322,7 @@ fn calculate_single_chi_merge(
     target: &[i64],
     n_bins: usize,
     threshold: f64,
+    min_samples: usize,
 ) -> Vec<f64> {
     if feature.is_empty() {
         return vec![];
@@ -356,6 +388,7 @@ fn calculate_single_chi_merge(
     }
 
     let target_bins = n_bins.max(1);
+    let min_bin_count = min_samples.max(1) as f64;
     let mut active_bins = bins.len();
     let mut heap = BinaryHeap::new();
 
@@ -366,65 +399,121 @@ fn calculate_single_chi_merge(
     }
 
     while active_bins > target_bins {
-        let mut merged = false;
-
-        while let Some(candidate) = heap.pop() {
-            if !is_edge_candidate_valid(&bins, candidate) {
-                continue;
-            }
-
-            if candidate.chi2 >= threshold {
-                return extract_split_points(&bins);
-            }
-
-            let left_idx = candidate.left_idx;
-            let right_idx = candidate.right_idx;
-            let right_next_idx = bins[right_idx].next;
-
-            bins[left_idx].count += bins[right_idx].count;
-            bins[left_idx].events += bins[right_idx].events;
-            bins[left_idx].next = right_next_idx;
-            bins[left_idx].version += 1;
-
-            bins[right_idx].active = false;
-            bins[right_idx].prev = None;
-            bins[right_idx].next = None;
-            bins[right_idx].version += 1;
-
-            if let Some(next_idx) = right_next_idx {
-                bins[next_idx].prev = Some(left_idx);
-            }
-
-            active_bins -= 1;
-            merged = true;
-
-            if let Some(prev_idx) = bins[left_idx].prev {
-                if let Some(updated_candidate) = build_edge_candidate(&bins, prev_idx) {
-                    heap.push(updated_candidate);
+        let candidate = loop {
+            match heap.pop() {
+                Some(candidate) if is_edge_candidate_valid(&bins, candidate) => {
+                    break Some(candidate);
                 }
+                Some(_) => {}
+                None => break None,
             }
-            if let Some(updated_candidate) = build_edge_candidate(&bins, left_idx) {
+        };
+
+        let Some(candidate) = candidate else {
+            break;
+        };
+
+        let left_idx = candidate.left_idx;
+        let right_idx = candidate.right_idx;
+        merge_adjacent_bins(&mut bins, left_idx, right_idx, &mut active_bins);
+
+        if let Some(prev_idx) = bins[left_idx].prev {
+            if let Some(updated_candidate) = build_edge_candidate(&bins, prev_idx) {
                 heap.push(updated_candidate);
             }
+        }
+        if let Some(updated_candidate) = build_edge_candidate(&bins, left_idx) {
+            heap.push(updated_candidate);
+        }
+    }
 
+    while active_bins > 1 {
+        let candidate = loop {
+            match heap.pop() {
+                Some(candidate) if is_edge_candidate_valid(&bins, candidate) => {
+                    break Some(candidate);
+                }
+                Some(_) => {}
+                None => break None,
+            }
+        };
+
+        let Some(candidate) = candidate else {
+            break;
+        };
+
+        if candidate.chi2 >= threshold {
             break;
         }
 
-        if !merged {
-            break;
+        let left_idx = candidate.left_idx;
+        let right_idx = candidate.right_idx;
+        merge_adjacent_bins(&mut bins, left_idx, right_idx, &mut active_bins);
+
+        if let Some(prev_idx) = bins[left_idx].prev {
+            if let Some(updated_candidate) = build_edge_candidate(&bins, prev_idx) {
+                heap.push(updated_candidate);
+            }
         }
+        if let Some(updated_candidate) = build_edge_candidate(&bins, left_idx) {
+            heap.push(updated_candidate);
+        }
+    }
+
+    while active_bins > 1 {
+        let mut current_idx = match find_active_head(&bins) {
+            Some(idx) => idx,
+            None => break,
+        };
+        let mut best_edge: Option<(f64, usize, usize)> = None;
+
+        loop {
+            let next_idx = match bins[current_idx].next {
+                Some(idx) => idx,
+                None => break,
+            };
+            if !bins[next_idx].active {
+                break;
+            }
+
+            if bins[current_idx].count < min_bin_count || bins[next_idx].count < min_bin_count {
+                let chi2 = calculate_chi2_yates(
+                    bins[current_idx].count,
+                    bins[current_idx].events,
+                    bins[next_idx].count,
+                    bins[next_idx].events,
+                );
+
+                match best_edge {
+                    Some((best_chi2, best_left_idx, _))
+                        if chi2 > best_chi2
+                            || (chi2 == best_chi2 && current_idx >= best_left_idx) => {}
+                    _ => best_edge = Some((chi2, current_idx, next_idx)),
+                }
+            }
+
+            current_idx = next_idx;
+        }
+
+        let Some((_, left_idx, right_idx)) = best_edge else {
+            break;
+        };
+
+        merge_adjacent_bins(&mut bins, left_idx, right_idx, &mut active_bins);
     }
 
     extract_split_points(&bins)
 }
 
 #[pyfunction]
+#[pyo3(signature = (feature, target, n_bins, threshold, min_samples = 1))]
 fn calculate_chi_merge_numpy(
     py: Python<'_>,
     feature: PyReadonlyArray1<f64>,
     target: PyReadonlyArray1<i64>,
     n_bins: usize,
     threshold: f64,
+    min_samples: usize,
 ) -> PyResult<Vec<f64>> {
     let feature_slice = feature.as_slice().map_err(|err| {
         pyo3::exceptions::PyValueError::new_err(format!("feature not contiguous: {}", err))
@@ -445,6 +534,7 @@ fn calculate_chi_merge_numpy(
             target_slice,
             n_bins,
             threshold,
+            min_samples,
         ))
     })
 }
@@ -526,12 +616,14 @@ fn adjust_batch_chi_merge_monotonic_numpy(
 }
 
 #[pyfunction]
+#[pyo3(signature = (features, target, n_bins, threshold, min_samples = 1))]
 fn calculate_batch_chi_merge_numpy(
     py: Python<'_>,
     features: Vec<PyReadonlyArray1<f64>>,
     target: PyReadonlyArray1<i64>,
     n_bins: usize,
     threshold: f64,
+    min_samples: usize,
 ) -> PyResult<Vec<Vec<f64>>> {
     let target_slice = target.as_slice().map_err(|err| {
         pyo3::exceptions::PyValueError::new_err(format!("target not contiguous: {}", err))
@@ -558,7 +650,13 @@ fn calculate_batch_chi_merge_numpy(
         Ok(feature_vecs
             .into_par_iter()
             .map(|feature_vec| {
-                calculate_single_chi_merge(&feature_vec, &target_vec, n_bins, threshold)
+                calculate_single_chi_merge(
+                    &feature_vec,
+                    &target_vec,
+                    n_bins,
+                    threshold,
+                    min_samples,
+                )
             })
             .collect())
     })

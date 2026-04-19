@@ -73,6 +73,8 @@ def build_report_result(
     var_list: Sequence[str],
     feature_path: Optional[str],
     selected_sheets: Sequence[str],
+    prin_bal_amount_col: Optional[str] = None,
+    loan_amount_col: Optional[str] = None,
     options: Optional[ReportBuildOptions] = None,
 ) -> ModelReportResult:
     """Build the full report result object."""
@@ -148,6 +150,8 @@ def build_report_result(
                 score_metric_options, primary_score_name
             ),
             metrics_mode=resolved_options.metrics_mode,
+            prin_bal_amount_col=prin_bal_amount_col,
+            loan_amount_col=loan_amount_col,
             build_context=context,
         )
         _log_context_stage(
@@ -282,6 +286,8 @@ def build_report_result(
             precomputed_tag_metrics=shared_tag_metrics,
             precomputed_month_metrics=shared_month_metrics,
             primary_binary_data=shared_primary_binary_data,
+            prin_bal_amount_col=prin_bal_amount_col,
+            loan_amount_col=loan_amount_col,
             build_context=context,
         ),
         "dimensional_comparison": (
@@ -293,6 +299,8 @@ def build_report_result(
                 score_model_columns=score_model_columns,
                 score_metric_options=score_metric_options,
                 oot_frame=shared_oot_frame,
+                prin_bal_amount_col=prin_bal_amount_col,
+                loan_amount_col=loan_amount_col,
                 build_context=context,
             )
         ),
@@ -305,6 +313,8 @@ def build_report_result(
             model_columns=score_model_columns,
             score_metric_options=score_metric_options,
             oot_frame=shared_oot_frame,
+            prin_bal_amount_col=prin_bal_amount_col,
+            loan_amount_col=loan_amount_col,
             build_context=context,
         ),
         "portrait": lambda: appendix_sheets.build_portrait_sheet(

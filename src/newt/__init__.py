@@ -10,7 +10,7 @@ A comprehensive Python library for building credit scorecards with:
 - Pipeline-style workflow
 """
 
-__version__ = "0.2.2"
+__version__ = "0.2.3"
 
 # Runtime config loader
 from newt.config import load_conf
@@ -54,6 +54,7 @@ from newt.pipeline import ScorecardPipeline
 # Reporting
 from newt.reporting import (
     Report,
+    calculate_bin_metrics,
     calculate_dimensional_comparison,
     calculate_model_comparison,
     calculate_split_metrics,
@@ -90,6 +91,7 @@ __all__ = [
     "Scorecard",
     # Reporting
     "Report",
+    "calculate_bin_metrics",
     "calculate_split_metrics",
     "calculate_dimensional_comparison",
     "calculate_model_comparison",

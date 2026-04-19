@@ -24,6 +24,8 @@ def build_dimensional_comparison_sheet(
     score_model_columns: Sequence[Tuple[str, str]],
     score_metric_options: dict,
     oot_frame: Optional[pd.DataFrame] = None,
+    prin_bal_amount_col: Optional[str] = None,
+    loan_amount_col: Optional[str] = None,
     build_context: Optional[ReportBuildContext] = None,
 ) -> ReportSheet:
     """Build appendix sheet for dimensional model-effect comparison."""
@@ -40,6 +42,8 @@ def build_dimensional_comparison_sheet(
                 if build_context is not None
                 else "exact"
             ),
+            prin_bal_amount_col=prin_bal_amount_col,
+            loan_amount_col=loan_amount_col,
         )
         if dim_list and not oot_frame.empty
         else pd.DataFrame()
@@ -75,6 +79,8 @@ def build_model_comparison_sheet(
     model_columns: Sequence[Tuple[str, str]],
     score_metric_options: dict,
     oot_frame: Optional[pd.DataFrame] = None,
+    prin_bal_amount_col: Optional[str] = None,
+    loan_amount_col: Optional[str] = None,
     build_context: Optional[ReportBuildContext] = None,
 ) -> ReportSheet:
     """Build appendix sheet for old/new model comparison."""
@@ -96,6 +102,8 @@ def build_model_comparison_sheet(
                     if build_context is not None
                     else "exact"
                 ),
+                prin_bal_amount_col=prin_bal_amount_col,
+                loan_amount_col=loan_amount_col,
                 build_context=build_context,
             )
             month_compare = group_metrics._build_model_pair_comparison(
@@ -112,6 +120,8 @@ def build_model_comparison_sheet(
                     if build_context is not None
                     else "exact"
                 ),
+                prin_bal_amount_col=prin_bal_amount_col,
+                loan_amount_col=loan_amount_col,
                 build_context=build_context,
             )
             blocks.append(

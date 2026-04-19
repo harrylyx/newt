@@ -18,7 +18,9 @@ from .supervised import (
     DecisionTreeBinner,
     OptBinningBinner,
     _load_rust_engine,
+    _resolve_chi_min_samples_count,
     _resolve_monotonic_mode,
+    _validate_chi_target,
 )
 from .unsupervised import EqualFrequencyBinner, EqualWidthBinner, KMeansBinner
 
@@ -194,7 +196,10 @@ class Binner(BinnerStatsMixin, BinnerIOMixin):
             y: Target data or target column name. Required for supervised methods.
             method: Binning algorithm name ('chi', 'dt', 'opt', 'kmean', etc.).
             n_bins: Target number of bins.
-            min_samples: Minimum samples per leaf (relevant for 'dt').
+            min_samples: Minimum samples threshold.
+                - For 'dt': minimum samples per leaf.
+                - For 'chi': float in (0, 1] means minimum bin proportion,
+                  int means minimum absolute samples per bin.
             cols: List of columns to bin. If None, all numeric columns are selected.
             monotonic: Enforce monotonic bad rate trend.
                 - True/'auto': Enforce auto-detected trend.
@@ -213,6 +218,16 @@ class Binner(BinnerStatsMixin, BinnerIOMixin):
             y_series = X[y]
             if y in X.columns:
                 X = X.drop(columns=[y])
+
+        if method == "chi":
+            if y_series is None:
+                raise ValueError("ChiMerge requires target 'y'.")
+            if not isinstance(y_series, pd.Series):
+                y_series = pd.Series(y_series, index=X.index)
+            y_series = _validate_chi_target(
+                y_series,
+                context="Binner.fit(method='chi')",
+            )
 
         # Reset state for a fresh fit.
         self.rules_ = {}
@@ -259,6 +274,8 @@ class Binner(BinnerStatsMixin, BinnerIOMixin):
                 raise ValueError(f"Unknown method: {method}")
 
             kwargs_binner = {"n_bins": n_bins, "monotonic": monotonic}
+            if min_samples is not None:
+                kwargs_binner["min_samples"] = min_samples
             kwargs_binner.update(kwargs)
 
             pbar = (
@@ -313,6 +330,11 @@ class Binner(BinnerStatsMixin, BinnerIOMixin):
                     X[col][valid_mask].astype(np.float64).to_numpy()
                     for col in cols_in_group
                 ]
+                min_sample_count = _resolve_chi_min_samples_count(
+                    kwargs_binner.get("min_samples", 0.05),
+                    len(y_arr),
+                    context="Binner.fit(method='chi')",
+                )
 
                 try:
                     batch_splits = rust_module.calculate_batch_chi_merge_numpy(
@@ -320,6 +342,7 @@ class Binner(BinnerStatsMixin, BinnerIOMixin):
                         y_arr,
                         n_bins,
                         threshold,
+                        min_sample_count,
                     )
                 except Exception:
                     for col in cols_in_group:
@@ -421,6 +444,8 @@ class Binner(BinnerStatsMixin, BinnerIOMixin):
 
                 if method == "dt" and min_samples is not None:
                     kwargs_binner["min_samples_leaf"] = min_samples
+                if method == "chi" and min_samples is not None:
+                    kwargs_binner["min_samples"] = min_samples
 
                 kwargs_binner.update(kwargs)
 

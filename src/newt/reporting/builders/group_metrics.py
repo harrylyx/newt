@@ -38,6 +38,80 @@ CORE_METRIC_COLUMNS: Tuple[str, ...] = (
     "1%lift",
 )
 
+AMOUNT_METRIC_COLUMNS: Tuple[str, ...] = (
+    "逾期本金",
+    "放款金额",
+    "金额坏占比",
+    "放款金额占比",
+    "逾期本金占比",
+    "金额lift",
+)
+
+
+def _has_amount_columns(
+    prin_bal_amount_col: Optional[str],
+    loan_amount_col: Optional[str],
+) -> bool:
+    return prin_bal_amount_col is not None and loan_amount_col is not None
+
+
+def _validate_amount_columns(
+    data: pd.DataFrame,
+    prin_bal_amount_col: Optional[str],
+    loan_amount_col: Optional[str],
+) -> None:
+    if (prin_bal_amount_col is None) ^ (loan_amount_col is None):
+        raise ValueError(
+            "prin_bal_amount_col and loan_amount_col must be provided together"
+        )
+    if prin_bal_amount_col is None:
+        return
+    missing = [
+        column
+        for column in [prin_bal_amount_col, loan_amount_col]
+        if column not in data.columns
+    ]
+    if missing:
+        raise ValueError(f"Missing required columns: {sorted(set(missing))}")
+
+
+def _safe_divide(numerator: float, denominator: float) -> float:
+    if pd.isna(numerator) or pd.isna(denominator) or denominator == 0:
+        return np.nan
+    return float(numerator / denominator)
+
+
+def _compute_amount_totals(
+    frame: pd.DataFrame,
+    prin_bal_amount_col: str,
+    loan_amount_col: str,
+) -> Tuple[float, float, float]:
+    total_prin = float(pd.to_numeric(frame[prin_bal_amount_col], errors="coerce").sum())
+    total_loan = float(pd.to_numeric(frame[loan_amount_col], errors="coerce").sum())
+    total_bad_ratio = _safe_divide(total_prin, total_loan)
+    return total_prin, total_loan, total_bad_ratio
+
+
+def _build_amount_metrics(
+    frame: pd.DataFrame,
+    prin_bal_amount_col: str,
+    loan_amount_col: str,
+    total_prin: float,
+    total_loan: float,
+    total_bad_ratio: float,
+) -> Dict[str, float]:
+    group_prin = float(pd.to_numeric(frame[prin_bal_amount_col], errors="coerce").sum())
+    group_loan = float(pd.to_numeric(frame[loan_amount_col], errors="coerce").sum())
+    amount_bad_ratio = _safe_divide(group_prin, group_loan)
+    return {
+        "逾期本金": group_prin,
+        "放款金额": group_loan,
+        "金额坏占比": amount_bad_ratio,
+        "放款金额占比": _safe_divide(group_loan, total_loan),
+        "逾期本金占比": _safe_divide(group_prin, total_prin),
+        "金额lift": _safe_divide(amount_bad_ratio, total_bad_ratio),
+    }
+
 
 def _build_split_metrics_tables(
     data: pd.DataFrame,
@@ -49,8 +123,11 @@ def _build_split_metrics_tables(
     model_name: str,
     reverse_auc_label: bool = False,
     metrics_mode: str = "exact",
+    prin_bal_amount_col: Optional[str] = None,
+    loan_amount_col: Optional[str] = None,
     build_context: Optional[ReportBuildContext] = None,
 ) -> Tuple[pd.DataFrame, pd.DataFrame]:
+    _validate_amount_columns(data, prin_bal_amount_col, loan_amount_col)
     cache_key = (
         tuple(label_list),
         score_col,
@@ -60,6 +137,8 @@ def _build_split_metrics_tables(
         tag_col,
         month_col,
         raw_date_col,
+        prin_bal_amount_col,
+        loan_amount_col,
     )
     if build_context is not None:
         cached = build_context.cache_get_split_metrics(cache_key)
@@ -102,6 +181,8 @@ def _build_split_metrics_tables(
             model_name=model_name,
             reverse_auc_label=reverse_auc_label,
             metrics_mode=metrics_mode,
+            prin_bal_amount_col=prin_bal_amount_col,
+            loan_amount_col=loan_amount_col,
             build_context=build_context,
         )
         tag_rows.append(tag_table)
@@ -118,6 +199,8 @@ def _build_split_metrics_tables(
             model_name=model_name,
             reverse_auc_label=reverse_auc_label,
             metrics_mode=metrics_mode,
+            prin_bal_amount_col=prin_bal_amount_col,
+            loan_amount_col=loan_amount_col,
             build_context=build_context,
         )
         if not month_table.empty:
@@ -149,8 +232,11 @@ def _build_model_pair_comparison(
     raw_date_col: str,
     score_metric_options: Dict[str, Dict[str, bool]],
     metrics_mode: str = "exact",
+    prin_bal_amount_col: Optional[str] = None,
+    loan_amount_col: Optional[str] = None,
     build_context: Optional[ReportBuildContext] = None,
 ) -> pd.DataFrame:
+    _validate_amount_columns(data, prin_bal_amount_col, loan_amount_col)
     if group_mode not in {"tag", "month"}:
         raise ValueError(f"Unknown comparison mode: {group_mode}")
 
@@ -184,6 +270,8 @@ def _build_model_pair_comparison(
                 model_name=model_name,
                 reverse_auc_label=_lookup_reverse_auc(score_metric_options, model_name),
                 metrics_mode=metrics_mode,
+                prin_bal_amount_col=prin_bal_amount_col,
+                loan_amount_col=loan_amount_col,
                 build_context=build_context,
             )
             if group_mode == "month":
@@ -216,8 +304,15 @@ def _build_group_metrics(
     model_name: str = "",
     reverse_auc_label: bool = False,
     metrics_mode: str = "exact",
+    prin_bal_amount_col: Optional[str] = None,
+    loan_amount_col: Optional[str] = None,
     build_context: Optional[ReportBuildContext] = None,
 ) -> pd.DataFrame:
+    _validate_amount_columns(data, prin_bal_amount_col, loan_amount_col)
+    include_amount_metrics = _has_amount_columns(
+        prin_bal_amount_col=prin_bal_amount_col,
+        loan_amount_col=loan_amount_col,
+    )
     group_key = (
         tuple(group_cols),
         label_col,
@@ -228,6 +323,8 @@ def _build_group_metrics(
         model_name,
         bool(reverse_auc_label),
         str(metrics_mode),
+        prin_bal_amount_col,
+        loan_amount_col,
         bool(train_reference is not None),
     )
     if build_context is not None:
@@ -255,13 +352,12 @@ def _build_group_metrics(
     )
     _group_cols_set = set(group_cols)
     if _group_cols_set == {tag_col}:
-        required_columns = list(
-            dict.fromkeys([*group_cols, label_col, score_col, tag_col, raw_date_col])
-        )
+        required_columns = [*group_cols, label_col, score_col, tag_col, raw_date_col]
     else:
-        required_columns = list(
-            dict.fromkeys([*group_cols, label_col, score_col, tag_col, month_col])
-        )
+        required_columns = [*group_cols, label_col, score_col, tag_col, month_col]
+    if include_amount_metrics:
+        required_columns.extend([str(prin_bal_amount_col), str(loan_amount_col)])
+    required_columns = list(dict.fromkeys(required_columns))
     ordered = data.loc[:, required_columns].copy()
     for group_col in group_cols:
         normalized = _normalize_group_column(
@@ -292,6 +388,20 @@ def _build_group_metrics(
         metrics_mode=resolved_metrics_mode,
         engine=resolved_engine,
     )
+
+    total_prin = np.nan
+    total_loan = np.nan
+    total_amount_bad_ratio = np.nan
+    if include_amount_metrics:
+        (
+            total_prin,
+            total_loan,
+            total_amount_bad_ratio,
+        ) = _compute_amount_totals(
+            ordered,
+            prin_bal_amount_col=str(prin_bal_amount_col),
+            loan_amount_col=str(loan_amount_col),
+        )
     if train_reference is not None:
         group_binary_scores = [
             group_frame.loc[group_frame[label_col].isin([0, 1]), score_col]
@@ -328,6 +438,17 @@ def _build_group_metrics(
             "观察点月": observation_month_value,
             **metrics,
         }
+        if include_amount_metrics:
+            record.update(
+                _build_amount_metrics(
+                    group_frame,
+                    prin_bal_amount_col=str(prin_bal_amount_col),
+                    loan_amount_col=str(loan_amount_col),
+                    total_prin=total_prin,
+                    total_loan=total_loan,
+                    total_bad_ratio=total_amount_bad_ratio,
+                )
+            )
 
         if train_reference is None:
             record["train和各集合的PSI"] = np.nan
@@ -470,7 +591,24 @@ def _build_dimensional_comparison(
     score_model_columns: Sequence[Tuple[str, str]],
     score_metric_options: Dict[str, Dict[str, bool]],
     metrics_mode: str = "exact",
+    prin_bal_amount_col: Optional[str] = None,
+    loan_amount_col: Optional[str] = None,
 ) -> pd.DataFrame:
+    _validate_amount_columns(data, prin_bal_amount_col, loan_amount_col)
+    include_amount_metrics = _has_amount_columns(
+        prin_bal_amount_col=prin_bal_amount_col,
+        loan_amount_col=loan_amount_col,
+    )
+    total_prin = np.nan
+    total_loan = np.nan
+    total_amount_bad_ratio = np.nan
+    if include_amount_metrics:
+        total_prin, total_loan, total_amount_bad_ratio = _compute_amount_totals(
+            data,
+            prin_bal_amount_col=str(prin_bal_amount_col),
+            loan_amount_col=str(loan_amount_col),
+        )
+
     rows: List[Dict[str, object]] = []
     for dim_col in dim_list:
         for dim_value, dim_frame in data.groupby(dim_col, dropna=False):
@@ -484,15 +622,25 @@ def _build_dimensional_comparison(
                         ),
                         metrics_mode=metrics_mode,
                     )
-                    rows.append(
-                        {
-                            "维度列": dim_col,
-                            "维度值": dim_value,
-                            "样本标签": label_col,
-                            "模型": model_name,
-                            **metrics,
-                        }
-                    )
+                    row: Dict[str, object] = {
+                        "维度列": dim_col,
+                        "维度值": dim_value,
+                        "样本标签": label_col,
+                        "模型": model_name,
+                        **metrics,
+                    }
+                    if include_amount_metrics:
+                        row.update(
+                            _build_amount_metrics(
+                                dim_frame,
+                                prin_bal_amount_col=str(prin_bal_amount_col),
+                                loan_amount_col=str(loan_amount_col),
+                                total_prin=total_prin,
+                                total_loan=total_loan,
+                                total_bad_ratio=total_amount_bad_ratio,
+                            )
+                        )
+                    rows.append(row)
     result = pd.DataFrame(rows)
     if not result.empty:
         leading = ["维度列", "维度值", "样本标签", "模型"]
@@ -612,6 +760,7 @@ def _reorder_metric_columns(
     preferred = [
         *(leading_columns or ()),
         *CORE_METRIC_COLUMNS,
+        *AMOUNT_METRIC_COLUMNS,
         *(trailing_columns or ()),
     ]
     ordered: List[str] = []

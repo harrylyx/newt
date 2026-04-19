@@ -86,6 +86,58 @@ def test_chimerge(binning_data):
     assert len(binner.splits_) + 1 <= 5
 
 
+def _high_cardinality_chi_data(seed: int = 5, n: int = 100):
+    rng = np.random.default_rng(seed)
+    X = pd.Series(rng.integers(0, 30, size=n).astype(float))
+    prob = 1 / (1 + np.exp(-((X - 15.0) / 2.0)))
+    y = pd.Series((rng.random(n) < prob).astype(int))
+    return X, y
+
+
+def test_chimerge_respects_n_bins_hard_cap():
+    X, y = _high_cardinality_chi_data()
+    binner = ChiMergeBinner(n_bins=5)
+    binner.fit(X, y)
+
+    assert len(binner.splits_) + 1 <= 5
+
+
+def test_binner_chi_rejects_missing_target_values():
+    frame = pd.DataFrame({"score": [1.0, 2.0, 3.0, 4.0, 5.0]})
+    y = pd.Series([0, 1, np.nan, 0, 1])
+
+    with pytest.raises(ValueError, match="missing value"):
+        Binner().fit(frame, y, method="chi", n_bins=3, show_progress=False)
+
+
+def test_binner_chi_rejects_non_binary_target_values():
+    frame = pd.DataFrame({"score": [1.0, 2.0, 3.0, 4.0, 5.0]})
+    y = pd.Series([0, 1, 2, 0, 1])
+
+    with pytest.raises(ValueError, match="non-binary"):
+        Binner().fit(frame, y, method="chi", n_bins=3, show_progress=False)
+
+
+def test_chimerge_enforces_min_samples_threshold():
+    X, y = _high_cardinality_chi_data()
+    frame = pd.DataFrame({"score": X})
+    min_samples = 0.30
+    expected_min_count = int(np.ceil(min_samples * len(frame)))
+
+    binner = Binner()
+    binner.fit(
+        frame,
+        y,
+        method="chi",
+        n_bins=8,
+        min_samples=min_samples,
+        show_progress=False,
+    )
+
+    stats = binner["score"].stats
+    assert stats["total"].min() >= expected_min_count
+
+
 def test_chimerge_rust_matches_python_splits(binning_data, monkeypatch):
     _require_chimerge_rust()
     X, y = binning_data

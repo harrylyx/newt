@@ -42,6 +42,7 @@ def build_dimensional_comparison_sheet(
                 if build_context is not None
                 else "exact"
             ),
+            metric_basis="count",
             prin_bal_amount_col=prin_bal_amount_col,
             loan_amount_col=loan_amount_col,
         )
@@ -102,6 +103,7 @@ def build_model_comparison_sheet(
                     if build_context is not None
                     else "exact"
                 ),
+                metric_basis="count",
                 prin_bal_amount_col=prin_bal_amount_col,
                 loan_amount_col=loan_amount_col,
                 build_context=build_context,
@@ -120,6 +122,7 @@ def build_model_comparison_sheet(
                     if build_context is not None
                     else "exact"
                 ),
+                metric_basis="count",
                 prin_bal_amount_col=prin_bal_amount_col,
                 loan_amount_col=loan_amount_col,
                 build_context=build_context,
@@ -190,6 +193,120 @@ def build_portrait_sheet(
             )
         )
     return ReportSheet(name="画像变量", blocks=blocks)
+
+
+def build_amount_metrics_sheet(
+    data: pd.DataFrame,
+    tag_col: str,
+    month_col: str,
+    raw_date_col: str,
+    label_list: Sequence[str],
+    primary_model_name: str,
+    primary_score_col: str,
+    model_columns: Sequence[Tuple[str, str]],
+    dim_list: Sequence[str],
+    score_metric_options: dict,
+    prin_bal_amount_col: str,
+    loan_amount_col: str,
+    build_context: Optional[ReportBuildContext] = None,
+) -> ReportSheet:
+    """Build appendix sheet for amount-basis model metrics."""
+    blocks = [ReportBlock(title="一、金额口径指标", blank_rows_after=1)]
+    tag_metrics, month_metrics = group_metrics._build_split_metrics_tables(
+        data=data,
+        tag_col=tag_col,
+        month_col=month_col,
+        raw_date_col=raw_date_col,
+        label_list=label_list,
+        score_col=primary_score_col,
+        model_name=primary_model_name,
+        reverse_auc_label=group_metrics._lookup_reverse_auc(
+            score_metric_options, primary_model_name
+        ),
+        metrics_mode=(
+            build_context.options.metrics_mode if build_context is not None else "exact"
+        ),
+        metric_basis="amount",
+        prin_bal_amount_col=prin_bal_amount_col,
+        loan_amount_col=loan_amount_col,
+        build_context=build_context,
+    )
+    blocks.append(ReportBlock(title="按tag模型效果", data=tag_metrics))
+    blocks.append(ReportBlock(title="按月模型效果", data=month_metrics))
+
+    oot_frame = data.loc[data[tag_col] == "oot"]
+    if dim_list and not oot_frame.empty:
+        dim_table = group_metrics._build_dimensional_comparison(
+            data=oot_frame,
+            dim_list=dim_list,
+            label_list=label_list,
+            score_model_columns=model_columns,
+            score_metric_options=score_metric_options,
+            metrics_mode=(
+                build_context.options.metrics_mode
+                if build_context is not None
+                else "exact"
+            ),
+            metric_basis="amount",
+            prin_bal_amount_col=prin_bal_amount_col,
+            loan_amount_col=loan_amount_col,
+        )
+        blocks.append(ReportBlock(title="分维度对比", data=dim_table))
+
+    if len(model_columns) >= 2:
+        for old_model_name, old_score_col in model_columns[1:]:
+            pair_models = [model_columns[0], (old_model_name, old_score_col)]
+            tag_compare = group_metrics._build_model_pair_comparison(
+                data=data,
+                group_mode="tag",
+                label_list=label_list,
+                model_columns=pair_models,
+                tag_col=tag_col,
+                month_col=month_col,
+                raw_date_col=raw_date_col,
+                score_metric_options=score_metric_options,
+                metrics_mode=(
+                    build_context.options.metrics_mode
+                    if build_context is not None
+                    else "exact"
+                ),
+                metric_basis="amount",
+                prin_bal_amount_col=prin_bal_amount_col,
+                loan_amount_col=loan_amount_col,
+                build_context=build_context,
+            )
+            month_compare = group_metrics._build_model_pair_comparison(
+                data=data,
+                group_mode="month",
+                label_list=label_list,
+                model_columns=pair_models,
+                tag_col=tag_col,
+                month_col=month_col,
+                raw_date_col=raw_date_col,
+                score_metric_options=score_metric_options,
+                metrics_mode=(
+                    build_context.options.metrics_mode
+                    if build_context is not None
+                    else "exact"
+                ),
+                metric_basis="amount",
+                prin_bal_amount_col=prin_bal_amount_col,
+                loan_amount_col=loan_amount_col,
+                build_context=build_context,
+            )
+            blocks.append(
+                ReportBlock(
+                    title=f"按tag新老模型对比({old_model_name})",
+                    data=tag_compare,
+                )
+            )
+            blocks.append(
+                ReportBlock(
+                    title=f"按月新老模型对比({old_model_name})",
+                    data=month_compare,
+                )
+            )
+    return ReportSheet(name="金额指标", blocks=blocks)
 
 
 def _reshape_portrait_table(portrait: pd.DataFrame) -> pd.DataFrame:

@@ -217,8 +217,9 @@ def build_model_design_sheet(
         for tag_value in group_metrics._ordered_tag_values(data[tag_col]):
             tag_frame = data.loc[data[tag_col] == tag_value]
             metrics = group_metrics._calculate_report_metrics(
-                tag_frame[label_col],
-                tag_frame[score_col],
+                frame=tag_frame,
+                label_col=label_col,
+                score_col=score_col,
                 reverse_auc_label=reverse_auc_label,
                 metrics_mode=metrics_mode,
             )
@@ -262,6 +263,7 @@ def build_model_design_sheet(
                 model_name=model_name,
                 reverse_auc_label=reverse_auc_label,
                 metrics_mode=metrics_mode,
+                metric_basis="count",
                 build_context=build_context,
             )
             for _, row in effect_table.iterrows():
@@ -572,6 +574,7 @@ def build_model_performance_sheet(
             model_name=model_name,
             reverse_auc_label=reverse_auc_label,
             metrics_mode=metrics_mode,
+            metric_basis="count",
             prin_bal_amount_col=prin_bal_amount_col,
             loan_amount_col=loan_amount_col,
             build_context=build_context,

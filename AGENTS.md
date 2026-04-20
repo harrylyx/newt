@@ -93,6 +93,14 @@ uv run pytest --cov=src/newt      # Coverage (Target: 70%)
 - **CI**: GitHub Actions runs on py3.8, 3.9, 3.10.
 - **Wheels**: Built for `cp38`-`cp312` across Windows, macOS (arm64), Linux (x86_64, aarch64).
 
+### 5.3 Release Flow
+1. Bump the version in `pyproject.toml` and `src/newt/__init__.py`, then let `uv` refresh `uv.lock` if needed.
+2. Run the relevant tests and lint checks before release.
+3. Commit the version bump and code changes.
+4. Create a Git tag for the release, and include the concrete change summary in the tag message.
+5. Create a GitHub Release from that tag with the same change summary.
+6. Push the branch and the tag to `origin`, then verify the release page exists.
+
 ## 6. Guidelines
 1. **Adding Features**: Update `src/`, `__init__.py`, `config.py`, `tests/`, and `docs/`.
 2. **Backward Compatibility**: Ensure APIs remain stable.

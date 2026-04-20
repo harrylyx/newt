@@ -1107,7 +1107,10 @@ def test_report_supports_amount_metrics_in_related_report_tables(
         "金额坏占比",
         "放款金额占比",
         "逾期本金占比",
-        "金额lift",
+        "10%金额lift",
+        "5%金额lift",
+        "2%金额lift",
+        "1%金额lift",
     }
 
     performance_sheet = report.result_.get_sheet("3.模型表现")
@@ -1127,6 +1130,71 @@ def test_report_supports_amount_metrics_in_related_report_tables(
     comparison_sheet = report.result_.get_sheet("附2 新老模型对比")
     tag_compare = comparison_sheet.get_block("按tag新老模型对比(score_old_a)").data
     assert expected_amount_columns.issubset(tag_compare.columns)
+
+
+def test_report_supports_explicit_amount_metrics_sheet_selector(
+    tmp_path,
+    report_frame,
+    fake_lightgbm_model,
+):
+    frame = report_frame.copy()
+    frame["prin_bal_amount"] = np.where(frame["label_main"] == 1, 45.0, 10.0)
+    frame["loan_amount"] = 100.0
+
+    output_path = tmp_path / "report_amount_sheet.xlsx"
+    report = Report(
+        data=frame,
+        model=fake_lightgbm_model,
+        tag="tag",
+        score_col="score_new",
+        date_col="obs_date",
+        label_list=["label_main"],
+        score_list=["score_old_a"],
+        dim_list=["channel_dim"],
+        sheet_list=["金额指标"],
+        report_out_path=str(output_path),
+        prin_bal_amount_col="prin_bal_amount",
+        loan_amount_col="loan_amount",
+    )
+
+    report.generate()
+
+    assert report.result_.sheet_names == ["附1 金额指标"]
+    amount_sheet = report.result_.get_sheet("附1 金额指标")
+    assert amount_sheet.get_block("按tag模型效果").data["总"].notna().all()
+    assert amount_sheet.get_block("按月模型效果").data["AUC"].notna().all()
+    assert "10%金额lift" in amount_sheet.get_block("按tag模型效果").data.columns
+
+
+def test_report_does_not_auto_append_amount_sheet_when_sheet_list_excludes_it(
+    tmp_path,
+    report_frame,
+    fake_lightgbm_model,
+):
+    frame = report_frame.copy()
+    frame["prin_bal_amount"] = np.where(frame["label_main"] == 1, 45.0, 10.0)
+    frame["loan_amount"] = 100.0
+
+    output_path = tmp_path / "report_no_auto_amount_sheet.xlsx"
+    report = Report(
+        data=frame,
+        model=fake_lightgbm_model,
+        tag="tag",
+        score_col="score_new",
+        date_col="obs_date",
+        label_list=["label_main"],
+        score_list=["score_old_a"],
+        dim_list=["channel_dim"],
+        sheet_list=["模型表现", "分维度对比"],
+        report_out_path=str(output_path),
+        prin_bal_amount_col="prin_bal_amount",
+        loan_amount_col="loan_amount",
+    )
+
+    report.generate()
+
+    assert "附3 金额指标" not in report.result_.sheet_names
+    assert all("金额指标" not in sheet_name for sheet_name in report.result_.sheet_names)
 
 
 def test_report_requires_amount_columns_to_be_provided_in_pairs(

@@ -9,12 +9,15 @@ import numpy as np
 import pandas as pd
 
 from newt.config import BINNING
+from newt.metrics.auc import calculate_auc as _calculate_weighted_auc
+from newt.metrics.binary_metrics import PERCENT_LEVELS
 from newt.metrics.binary_metrics import (
     calculate_binary_metrics as _unified_binary_metrics,
 )
 from newt.metrics.binary_metrics import (
     calculate_binary_metrics_batch as _unified_binary_metrics_batch,
 )
+from newt.metrics.ks import calculate_ks as _calculate_weighted_ks
 from newt.metrics.psi import calculate_psi_batch
 from newt.report_sort_utils import month_sort_key as _shared_month_sort_key
 from newt.report_sort_utils import ordered_month_values as _shared_ordered_month_values
@@ -24,6 +27,8 @@ from newt.report_sort_utils import tag_sort_key as _shared_tag_sort_key
 from newt.reporting.table_context import ReportBuildContext
 
 LOGGER = logging.getLogger("newt.reporting.tables")
+
+_VALID_METRIC_BASIS = frozenset({"count", "amount"})
 
 CORE_METRIC_COLUMNS: Tuple[str, ...] = (
     "总",
@@ -44,8 +49,18 @@ AMOUNT_METRIC_COLUMNS: Tuple[str, ...] = (
     "金额坏占比",
     "放款金额占比",
     "逾期本金占比",
-    "金额lift",
+    "10%金额lift",
+    "5%金额lift",
+    "2%金额lift",
+    "1%金额lift",
 )
+
+
+def _resolve_metric_basis(metric_basis: str) -> str:
+    normalized = str(metric_basis).strip().lower()
+    if normalized not in _VALID_METRIC_BASIS:
+        raise ValueError("metric_basis must be 'count' or 'amount'")
+    return normalized
 
 
 def _has_amount_columns(
@@ -75,10 +90,71 @@ def _validate_amount_columns(
         raise ValueError(f"Missing required columns: {sorted(set(missing))}")
 
 
+def _validate_metric_basis_amount_dependency(
+    metric_basis: str,
+    prin_bal_amount_col: Optional[str],
+    loan_amount_col: Optional[str],
+) -> None:
+    if metric_basis == "amount" and not _has_amount_columns(
+        prin_bal_amount_col=prin_bal_amount_col,
+        loan_amount_col=loan_amount_col,
+    ):
+        raise ValueError(
+            "metric_basis='amount' requires prin_bal_amount_col and loan_amount_col"
+        )
+
+
 def _safe_divide(numerator: float, denominator: float) -> float:
     if pd.isna(numerator) or pd.isna(denominator) or denominator == 0:
         return np.nan
     return float(numerator / denominator)
+
+
+def _prepare_metric_vectors(
+    frame: pd.DataFrame,
+    label_col: str,
+    score_col: str,
+) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
+    score_numeric = pd.to_numeric(frame[score_col], errors="coerce")
+    mask = frame[label_col].isin([0, 1]) & score_numeric.notna()
+    labels = frame.loc[mask, label_col].astype(int).to_numpy(dtype=int)
+    scores = score_numeric.loc[mask].to_numpy(dtype=float)
+    return labels, scores, mask.to_numpy(dtype=bool)
+
+
+def _compute_amount_lifts(
+    y_score: np.ndarray,
+    overdue_amount: np.ndarray,
+    loan_amount: np.ndarray,
+    descending: bool,
+    levels: Sequence[float] = PERCENT_LEVELS,
+) -> Dict[str, float]:
+    if len(y_score) == 0:
+        return {f"{int(level * 100)}%金额lift": np.nan for level in levels}
+
+    global_amount_bad_rate = _safe_divide(
+        float(np.nansum(overdue_amount)),
+        float(np.nansum(loan_amount)),
+    )
+    if pd.isna(global_amount_bad_rate) or global_amount_bad_rate == 0:
+        return {f"{int(level * 100)}%金额lift": np.nan for level in levels}
+
+    sort_scores = y_score if descending else -y_score
+    ranked_index = np.argsort(sort_scores)[::-1]
+
+    results: Dict[str, float] = {}
+    sample_total = len(y_score)
+    for level in levels:
+        top_count = max(1, int(np.ceil(sample_total * float(level))))
+        top_index = ranked_index[:top_count]
+        top_overdue = float(np.nansum(overdue_amount[top_index]))
+        top_loan = float(np.nansum(loan_amount[top_index]))
+        top_bad_rate = _safe_divide(top_overdue, top_loan)
+        results[f"{int(level * 100)}%金额lift"] = _safe_divide(
+            top_bad_rate,
+            global_amount_bad_rate,
+        )
+    return results
 
 
 def _compute_amount_totals(
@@ -92,24 +168,113 @@ def _compute_amount_totals(
     return total_prin, total_loan, total_bad_ratio
 
 
+def _calculate_amount_basis_metrics(
+    frame: pd.DataFrame,
+    label_col: str,
+    score_col: str,
+    prin_bal_amount_col: str,
+    loan_amount_col: str,
+    reverse_auc_label: bool = False,
+) -> Dict[str, float]:
+    principal_amount = pd.to_numeric(
+        frame[prin_bal_amount_col], errors="coerce"
+    ).fillna(0)
+    loan_amount = pd.to_numeric(frame[loan_amount_col], errors="coerce").fillna(0)
+
+    binary_mask = frame[label_col].isin([0, 1]).to_numpy(dtype=bool)
+    total_amount = float(np.nansum(loan_amount.to_numpy(dtype=float)[binary_mask]))
+    bad_amount = float(np.nansum(principal_amount.to_numpy(dtype=float)[binary_mask]))
+    good_amount = total_amount - bad_amount
+    bad_rate = _safe_divide(bad_amount, total_amount)
+
+    y_true, y_score, metric_mask = _prepare_metric_vectors(frame, label_col, score_col)
+    if len(y_true) == 0 or np.unique(y_true).size < 2:
+        auc_value = np.nan
+        ks_value = np.nan
+        amount_lifts = {f"{int(level * 100)}%lift": np.nan for level in PERCENT_LEVELS}
+    else:
+        sample_weight = loan_amount.to_numpy(dtype=float)[metric_mask]
+        sample_weight = np.nan_to_num(sample_weight, nan=0.0, posinf=0.0, neginf=0.0)
+        sample_weight = np.clip(sample_weight, a_min=0.0, a_max=None)
+        auc_value = _calculate_weighted_auc(
+            y_true=y_true,
+            y_prob=y_score,
+            sample_weight=sample_weight,
+        )
+        if reverse_auc_label and not pd.isna(auc_value):
+            auc_value = float(1.0 - auc_value)
+        ks_value = _calculate_weighted_ks(
+            y_true=y_true,
+            y_prob=y_score,
+            sample_weight=sample_weight,
+        )
+        raw_amount_lifts = _compute_amount_lifts(
+            y_score=y_score,
+            overdue_amount=principal_amount.to_numpy(dtype=float)[metric_mask],
+            loan_amount=sample_weight,
+            descending=not reverse_auc_label,
+            levels=PERCENT_LEVELS,
+        )
+        amount_lifts = {
+            f"{int(level * 100)}%lift": raw_amount_lifts.get(
+                f"{int(level * 100)}%金额lift",
+                np.nan,
+            )
+            for level in PERCENT_LEVELS
+        }
+
+    return {
+        "总": total_amount,
+        "好": good_amount,
+        "坏": bad_amount,
+        "坏占比": bad_rate,
+        "KS": ks_value,
+        "AUC": auc_value,
+        **amount_lifts,
+    }
+
+
 def _build_amount_metrics(
     frame: pd.DataFrame,
+    label_col: str,
+    score_col: str,
     prin_bal_amount_col: str,
     loan_amount_col: str,
     total_prin: float,
     total_loan: float,
-    total_bad_ratio: float,
+    reverse_auc_label: bool = False,
 ) -> Dict[str, float]:
     group_prin = float(pd.to_numeric(frame[prin_bal_amount_col], errors="coerce").sum())
     group_loan = float(pd.to_numeric(frame[loan_amount_col], errors="coerce").sum())
     amount_bad_ratio = _safe_divide(group_prin, group_loan)
+    _, y_score, metric_mask = _prepare_metric_vectors(frame, label_col, score_col)
+    overdue_amount = (
+        pd.to_numeric(frame[prin_bal_amount_col], errors="coerce")
+        .fillna(0)
+        .to_numpy(dtype=float)[metric_mask]
+    )
+    loan_amount = (
+        pd.to_numeric(frame[loan_amount_col], errors="coerce")
+        .fillna(0)
+        .to_numpy(dtype=float)[metric_mask]
+    )
+    amount_lifts = _compute_amount_lifts(
+        y_score=y_score,
+        overdue_amount=overdue_amount,
+        loan_amount=loan_amount,
+        descending=not reverse_auc_label,
+        levels=PERCENT_LEVELS,
+    )
     return {
         "逾期本金": group_prin,
         "放款金额": group_loan,
         "金额坏占比": amount_bad_ratio,
         "放款金额占比": _safe_divide(group_loan, total_loan),
         "逾期本金占比": _safe_divide(group_prin, total_prin),
-        "金额lift": _safe_divide(amount_bad_ratio, total_bad_ratio),
+        "10%金额lift": amount_lifts["10%金额lift"],
+        "5%金额lift": amount_lifts["5%金额lift"],
+        "2%金额lift": amount_lifts["2%金额lift"],
+        "1%金额lift": amount_lifts["1%金额lift"],
     }
 
 
@@ -123,17 +288,25 @@ def _build_split_metrics_tables(
     model_name: str,
     reverse_auc_label: bool = False,
     metrics_mode: str = "exact",
+    metric_basis: str = "count",
     prin_bal_amount_col: Optional[str] = None,
     loan_amount_col: Optional[str] = None,
     build_context: Optional[ReportBuildContext] = None,
 ) -> Tuple[pd.DataFrame, pd.DataFrame]:
     _validate_amount_columns(data, prin_bal_amount_col, loan_amount_col)
+    resolved_metric_basis = _resolve_metric_basis(metric_basis)
+    _validate_metric_basis_amount_dependency(
+        metric_basis=resolved_metric_basis,
+        prin_bal_amount_col=prin_bal_amount_col,
+        loan_amount_col=loan_amount_col,
+    )
     cache_key = (
         tuple(label_list),
         score_col,
         model_name,
         bool(reverse_auc_label),
         str(metrics_mode),
+        resolved_metric_basis,
         tag_col,
         month_col,
         raw_date_col,
@@ -181,6 +354,7 @@ def _build_split_metrics_tables(
             model_name=model_name,
             reverse_auc_label=reverse_auc_label,
             metrics_mode=metrics_mode,
+            metric_basis=resolved_metric_basis,
             prin_bal_amount_col=prin_bal_amount_col,
             loan_amount_col=loan_amount_col,
             build_context=build_context,
@@ -199,6 +373,7 @@ def _build_split_metrics_tables(
             model_name=model_name,
             reverse_auc_label=reverse_auc_label,
             metrics_mode=metrics_mode,
+            metric_basis=resolved_metric_basis,
             prin_bal_amount_col=prin_bal_amount_col,
             loan_amount_col=loan_amount_col,
             build_context=build_context,
@@ -232,11 +407,18 @@ def _build_model_pair_comparison(
     raw_date_col: str,
     score_metric_options: Dict[str, Dict[str, bool]],
     metrics_mode: str = "exact",
+    metric_basis: str = "count",
     prin_bal_amount_col: Optional[str] = None,
     loan_amount_col: Optional[str] = None,
     build_context: Optional[ReportBuildContext] = None,
 ) -> pd.DataFrame:
     _validate_amount_columns(data, prin_bal_amount_col, loan_amount_col)
+    resolved_metric_basis = _resolve_metric_basis(metric_basis)
+    _validate_metric_basis_amount_dependency(
+        metric_basis=resolved_metric_basis,
+        prin_bal_amount_col=prin_bal_amount_col,
+        loan_amount_col=loan_amount_col,
+    )
     if group_mode not in {"tag", "month"}:
         raise ValueError(f"Unknown comparison mode: {group_mode}")
 
@@ -270,6 +452,7 @@ def _build_model_pair_comparison(
                 model_name=model_name,
                 reverse_auc_label=_lookup_reverse_auc(score_metric_options, model_name),
                 metrics_mode=metrics_mode,
+                metric_basis=resolved_metric_basis,
                 prin_bal_amount_col=prin_bal_amount_col,
                 loan_amount_col=loan_amount_col,
                 build_context=build_context,
@@ -304,11 +487,18 @@ def _build_group_metrics(
     model_name: str = "",
     reverse_auc_label: bool = False,
     metrics_mode: str = "exact",
+    metric_basis: str = "count",
     prin_bal_amount_col: Optional[str] = None,
     loan_amount_col: Optional[str] = None,
     build_context: Optional[ReportBuildContext] = None,
 ) -> pd.DataFrame:
     _validate_amount_columns(data, prin_bal_amount_col, loan_amount_col)
+    resolved_metric_basis = _resolve_metric_basis(metric_basis)
+    _validate_metric_basis_amount_dependency(
+        metric_basis=resolved_metric_basis,
+        prin_bal_amount_col=prin_bal_amount_col,
+        loan_amount_col=loan_amount_col,
+    )
     include_amount_metrics = _has_amount_columns(
         prin_bal_amount_col=prin_bal_amount_col,
         loan_amount_col=loan_amount_col,
@@ -323,6 +513,7 @@ def _build_group_metrics(
         model_name,
         bool(reverse_auc_label),
         str(metrics_mode),
+        resolved_metric_basis,
         prin_bal_amount_col,
         loan_amount_col,
         bool(train_reference is not None),
@@ -381,23 +572,31 @@ def _build_group_metrics(
         (group_frame[label_col], group_frame[score_col])
         for _, group_frame in grouped_frames
     ]
-    grouped_metrics = _unified_binary_metrics_batch(
-        groups=metric_groups,
-        lift_use_descending_score=not reverse_auc_label,
-        reverse_auc_label=reverse_auc_label,
-        metrics_mode=resolved_metrics_mode,
-        engine=resolved_engine,
-    )
+    if resolved_metric_basis == "count":
+        grouped_metrics = _unified_binary_metrics_batch(
+            groups=metric_groups,
+            lift_use_descending_score=not reverse_auc_label,
+            reverse_auc_label=reverse_auc_label,
+            metrics_mode=resolved_metrics_mode,
+            engine=resolved_engine,
+        )
+    else:
+        grouped_metrics = [
+            _calculate_amount_basis_metrics(
+                group_frame,
+                label_col=label_col,
+                score_col=score_col,
+                prin_bal_amount_col=str(prin_bal_amount_col),
+                loan_amount_col=str(loan_amount_col),
+                reverse_auc_label=reverse_auc_label,
+            )
+            for _, group_frame in grouped_frames
+        ]
 
     total_prin = np.nan
     total_loan = np.nan
-    total_amount_bad_ratio = np.nan
     if include_amount_metrics:
-        (
-            total_prin,
-            total_loan,
-            total_amount_bad_ratio,
-        ) = _compute_amount_totals(
+        total_prin, total_loan, _ = _compute_amount_totals(
             ordered,
             prin_bal_amount_col=str(prin_bal_amount_col),
             loan_amount_col=str(loan_amount_col),
@@ -442,11 +641,13 @@ def _build_group_metrics(
             record.update(
                 _build_amount_metrics(
                     group_frame,
+                    label_col=label_col,
+                    score_col=score_col,
                     prin_bal_amount_col=str(prin_bal_amount_col),
                     loan_amount_col=str(loan_amount_col),
                     total_prin=total_prin,
                     total_loan=total_loan,
-                    total_bad_ratio=total_amount_bad_ratio,
+                    reverse_auc_label=reverse_auc_label,
                 )
             )
 
@@ -483,15 +684,34 @@ def _build_group_metrics(
 
 
 def _calculate_report_metrics(
-    y_true: pd.Series,
-    y_score: pd.Series,
+    frame: pd.DataFrame,
+    label_col: str,
+    score_col: str,
     reverse_auc_label: bool = False,
     metrics_mode: str = "exact",
+    metric_basis: str = "count",
+    prin_bal_amount_col: Optional[str] = None,
+    loan_amount_col: Optional[str] = None,
 ) -> Dict[str, float]:
     """Calculate report metrics using the unified binary metrics path."""
+    resolved_metric_basis = _resolve_metric_basis(metric_basis)
+    if resolved_metric_basis == "amount":
+        _validate_metric_basis_amount_dependency(
+            metric_basis=resolved_metric_basis,
+            prin_bal_amount_col=prin_bal_amount_col,
+            loan_amount_col=loan_amount_col,
+        )
+        return _calculate_amount_basis_metrics(
+            frame=frame,
+            label_col=label_col,
+            score_col=score_col,
+            prin_bal_amount_col=str(prin_bal_amount_col),
+            loan_amount_col=str(loan_amount_col),
+            reverse_auc_label=reverse_auc_label,
+        )
     return _unified_binary_metrics(
-        y_true=y_true,
-        y_score=y_score,
+        y_true=frame[label_col],
+        y_score=frame[score_col],
         lift_use_descending_score=not reverse_auc_label,
         reverse_auc_label=reverse_auc_label,
         metrics_mode=metrics_mode,
@@ -591,19 +811,25 @@ def _build_dimensional_comparison(
     score_model_columns: Sequence[Tuple[str, str]],
     score_metric_options: Dict[str, Dict[str, bool]],
     metrics_mode: str = "exact",
+    metric_basis: str = "count",
     prin_bal_amount_col: Optional[str] = None,
     loan_amount_col: Optional[str] = None,
 ) -> pd.DataFrame:
     _validate_amount_columns(data, prin_bal_amount_col, loan_amount_col)
+    resolved_metric_basis = _resolve_metric_basis(metric_basis)
+    _validate_metric_basis_amount_dependency(
+        metric_basis=resolved_metric_basis,
+        prin_bal_amount_col=prin_bal_amount_col,
+        loan_amount_col=loan_amount_col,
+    )
     include_amount_metrics = _has_amount_columns(
         prin_bal_amount_col=prin_bal_amount_col,
         loan_amount_col=loan_amount_col,
     )
     total_prin = np.nan
     total_loan = np.nan
-    total_amount_bad_ratio = np.nan
     if include_amount_metrics:
-        total_prin, total_loan, total_amount_bad_ratio = _compute_amount_totals(
+        total_prin, total_loan, _ = _compute_amount_totals(
             data,
             prin_bal_amount_col=str(prin_bal_amount_col),
             loan_amount_col=str(loan_amount_col),
@@ -615,12 +841,16 @@ def _build_dimensional_comparison(
             for label_col in label_list:
                 for model_name, score_col in score_model_columns:
                     metrics = _calculate_report_metrics(
-                        dim_frame[label_col],
-                        dim_frame[score_col],
+                        frame=dim_frame,
+                        label_col=label_col,
+                        score_col=score_col,
                         reverse_auc_label=_lookup_reverse_auc(
                             score_metric_options, model_name
                         ),
                         metrics_mode=metrics_mode,
+                        metric_basis=resolved_metric_basis,
+                        prin_bal_amount_col=prin_bal_amount_col,
+                        loan_amount_col=loan_amount_col,
                     )
                     row: Dict[str, object] = {
                         "维度列": dim_col,
@@ -633,11 +863,15 @@ def _build_dimensional_comparison(
                         row.update(
                             _build_amount_metrics(
                                 dim_frame,
+                                label_col=label_col,
+                                score_col=score_col,
                                 prin_bal_amount_col=str(prin_bal_amount_col),
                                 loan_amount_col=str(loan_amount_col),
                                 total_prin=total_prin,
                                 total_loan=total_loan,
-                                total_bad_ratio=total_amount_bad_ratio,
+                                reverse_auc_label=_lookup_reverse_auc(
+                                    score_metric_options, model_name
+                                ),
                             )
                         )
                     rows.append(row)

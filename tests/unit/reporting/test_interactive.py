@@ -3,6 +3,7 @@
 import numpy as np
 import pandas as pd
 import pytest
+from sklearn.metrics import roc_auc_score
 
 from newt import (
     calculate_bin_metrics,
@@ -97,7 +98,10 @@ def test_calculate_split_metrics_supports_score_type_and_amount_metrics():
         "金额坏占比",
         "放款金额占比",
         "逾期本金占比",
-        "金额lift",
+        "10%金额lift",
+        "5%金额lift",
+        "2%金额lift",
+        "1%金额lift",
     }.issubset(tag_prob.columns)
 
 
@@ -134,8 +138,26 @@ def test_calculate_dimensional_comparison_supports_amount_metrics():
         "金额坏占比",
         "放款金额占比",
         "逾期本金占比",
-        "金额lift",
+        "10%金额lift",
+        "5%金额lift",
+        "2%金额lift",
+        "1%金额lift",
     }.issubset(dim_df.columns)
+
+
+def test_calculate_dimensional_comparison_supports_amount_basis():
+    df = _build_dummy_data()
+    dim_df = calculate_dimensional_comparison(
+        data=df[df["tag"] == "oot"],
+        dim_list=["channel"],
+        label_list=["target"],
+        score_model_columns=[("new_model", "score")],
+        metric_basis="amount",
+        prin_bal_amount_col="prin_bal_amount",
+        loan_amount_col="loan_amount",
+    )
+    assert np.allclose(dim_df["总"], dim_df["放款金额"], equal_nan=True)
+    assert np.allclose(dim_df["坏"], dim_df["逾期本金"], equal_nan=True)
 
 
 def test_calculate_model_comparison():
@@ -189,7 +211,115 @@ def test_calculate_model_comparison_supports_score_type_and_amount_metrics():
         joined["AUC_prob"] + joined["AUC_score"],
         np.ones(len(joined)),
     )
-    assert "金额lift" in compare_prob.columns
+    assert "10%金额lift" in compare_prob.columns
+
+
+def test_calculate_model_comparison_supports_amount_basis():
+    df = _build_dummy_data()
+    compare_df = calculate_model_comparison(
+        data=df,
+        tag_col="tag",
+        date_col="obs_date",
+        label_list=["target"],
+        model_columns=[("new_model", "score"), ("old_model", "old_score")],
+        group_mode="tag",
+        metric_basis="amount",
+        prin_bal_amount_col="prin_bal_amount",
+        loan_amount_col="loan_amount",
+    )
+    assert np.allclose(compare_df["总"], compare_df["放款金额"], equal_nan=True)
+    assert np.allclose(compare_df["坏"], compare_df["逾期本金"], equal_nan=True)
+
+
+def test_calculate_split_metrics_supports_amount_basis():
+    df = _build_dummy_data()
+    count_tag, _ = calculate_split_metrics(
+        data=df,
+        tag_col="tag",
+        date_col="obs_date",
+        label_list=["target"],
+        score_col="score",
+        model_name="new_model",
+        metric_basis="count",
+        prin_bal_amount_col="prin_bal_amount",
+        loan_amount_col="loan_amount",
+    )
+    amount_tag, _ = calculate_split_metrics(
+        data=df,
+        tag_col="tag",
+        date_col="obs_date",
+        label_list=["target"],
+        score_col="score",
+        model_name="new_model",
+        metric_basis="amount",
+        prin_bal_amount_col="prin_bal_amount",
+        loan_amount_col="loan_amount",
+    )
+
+    joined = count_tag.merge(
+        amount_tag,
+        on=["样本标签", "模型", "样本集", "观察点月"],
+        suffixes=("_count", "_amount"),
+    )
+    assert np.allclose(
+        joined["总_amount"],
+        joined["放款金额_amount"],
+        equal_nan=True,
+    )
+    assert np.allclose(
+        joined["坏_amount"],
+        joined["逾期本金_amount"],
+        equal_nan=True,
+    )
+    assert (joined["10%金额lift_amount"].notna()).any()
+    assert not np.allclose(
+        joined["总_count"],
+        joined["总_amount"],
+        equal_nan=True,
+    )
+
+
+def test_calculate_split_metrics_amount_basis_uses_weighted_auc():
+    df = pd.DataFrame(
+        {
+            "tag": ["train", "train", "train", "train"],
+            "obs_date": ["2023-01-01"] * 4,
+            "target": [1, 0, 1, 0],
+            "score": [0.9, 0.8, 0.7, 0.1],
+            "prin_bal_amount": [50.0, 1.0, 20.0, 1.0],
+            "loan_amount": [100.0, 1.0, 1.0, 100.0],
+        }
+    )
+    count_tag, _ = calculate_split_metrics(
+        data=df,
+        tag_col="tag",
+        date_col="obs_date",
+        label_list=["target"],
+        score_col="score",
+        model_name="new_model",
+        metric_basis="count",
+        prin_bal_amount_col="prin_bal_amount",
+        loan_amount_col="loan_amount",
+    )
+    amount_tag, _ = calculate_split_metrics(
+        data=df,
+        tag_col="tag",
+        date_col="obs_date",
+        label_list=["target"],
+        score_col="score",
+        model_name="new_model",
+        metric_basis="amount",
+        prin_bal_amount_col="prin_bal_amount",
+        loan_amount_col="loan_amount",
+    )
+
+    auc_count = float(count_tag.loc[count_tag["样本集"] == "train", "AUC"].iloc[0])
+    auc_amount = float(amount_tag.loc[amount_tag["样本集"] == "train", "AUC"].iloc[0])
+    expected_weighted_auc = float(
+        roc_auc_score(df["target"], df["score"], sample_weight=df["loan_amount"])
+    )
+    assert auc_count != pytest.approx(auc_amount)
+    assert auc_amount == pytest.approx(expected_weighted_auc, rel=1e-9)
 
 
 def test_calculate_split_metrics_validates_inputs():
@@ -217,6 +347,31 @@ def test_calculate_split_metrics_validates_inputs():
             score_col="score",
             model_name="new_model",
             prin_bal_amount_col="prin_bal_amount",
+        )
+
+    with pytest.raises(ValueError, match="metric_basis must be 'count' or 'amount'"):
+        calculate_split_metrics(
+            data=df,
+            tag_col="tag",
+            date_col="obs_date",
+            label_list=["target"],
+            score_col="score",
+            model_name="new_model",
+            metric_basis="invalid",
+        )
+
+    with pytest.raises(
+        ValueError,
+        match="metric_basis='amount' requires prin_bal_amount_col and loan_amount_col",
+    ):
+        calculate_split_metrics(
+            data=df,
+            tag_col="tag",
+            date_col="obs_date",
+            label_list=["target"],
+            score_col="score",
+            model_name="new_model",
+            metric_basis="amount",
         )
 
 
@@ -248,7 +403,10 @@ def test_calculate_bin_metrics_supports_quantile_and_custom_bins_with_amount_met
         "金额坏占比",
         "放款金额占比",
         "逾期本金占比",
-        "金额lift",
+        "10%金额lift",
+        "5%金额lift",
+        "2%金额lift",
+        "1%金额lift",
     }
     assert expected_amount_columns.issubset(q_table.columns)
     assert expected_amount_columns.issubset(custom_table.columns)

@@ -18,6 +18,7 @@ MAIN_SHEET_KEY_ORDER = [
 APPENDIX_SHEET_KEY_ORDER = [
     "dimensional_comparison",
     "model_comparison",
+    "amount_metrics",
     "portrait",
 ]
 SHEET_KEY_ORDER = [*MAIN_SHEET_KEY_ORDER, *APPENDIX_SHEET_KEY_ORDER]
@@ -38,6 +39,7 @@ SHEET_NAME_SELECTOR_MAP = {
     "模型表现": "model_performance",
     "分维度对比": "dimensional_comparison",
     "新老模型对比": "model_comparison",
+    "金额指标": "amount_metrics",
     "画像变量": "portrait",
 }
 
@@ -52,6 +54,7 @@ MAIN_SHEET_OUTPUT_NAME_MAP = {
 APPENDIX_SHEET_LABEL_MAP = {
     "dimensional_comparison": "分维度对比",
     "model_comparison": "新老模型对比",
+    "amount_metrics": "金额指标",
     "portrait": "画像变量",
 }
 
@@ -89,12 +92,14 @@ def resolve_optional_sheet_availability(
     score_list: Sequence[str],
     var_list: Sequence[str],
     model_adapter: ModelAdapter,
+    has_amount_metrics: bool = False,
 ) -> Dict[str, bool]:
     """Resolve optional sheet availability under the current report context."""
     has_oot = bool((data[tag_col] == "oot").any())
     return {
         "dimensional_comparison": bool(dim_list) and has_oot,
         "model_comparison": bool(score_list),
+        "amount_metrics": bool(has_amount_metrics),
         "portrait": bool(var_list) and has_oot,
         "scorecard_details": model_adapter.model_family == "scorecard",
     }
@@ -122,7 +127,7 @@ def resolve_build_keys(
     build_keys = set(output_keys)
     if "overview" in output_keys:
         build_keys.add("model_performance")
-        for appendix_key in APPENDIX_SHEET_KEY_ORDER:
+        for appendix_key in ["dimensional_comparison", "model_comparison", "portrait"]:
             if availability.get(appendix_key, False):
                 build_keys.add(appendix_key)
     return [key for key in SHEET_KEY_ORDER if key in build_keys]

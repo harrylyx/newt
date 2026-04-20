@@ -105,6 +105,9 @@ def build_report_result(
         score_list=score_list,
         var_list=var_list,
         model_adapter=model_adapter,
+        has_amount_metrics=(
+            prin_bal_amount_col is not None and loan_amount_col is not None
+        ),
     )
     output_sheet_keys = sheet_registry.filter_output_sheet_keys(
         requested_keys=selected_sheets,
@@ -150,6 +153,7 @@ def build_report_result(
                 score_metric_options, primary_score_name
             ),
             metrics_mode=resolved_options.metrics_mode,
+            metric_basis="count",
             prin_bal_amount_col=prin_bal_amount_col,
             loan_amount_col=loan_amount_col,
             build_context=context,
@@ -315,6 +319,21 @@ def build_report_result(
             oot_frame=shared_oot_frame,
             prin_bal_amount_col=prin_bal_amount_col,
             loan_amount_col=loan_amount_col,
+            build_context=context,
+        ),
+        "amount_metrics": lambda: appendix_sheets.build_amount_metrics_sheet(
+            data=data,
+            tag_col=tag_col,
+            month_col=month_col,
+            raw_date_col=raw_date_col,
+            label_list=label_list,
+            primary_model_name=primary_score_name,
+            primary_score_col=primary_report_score,
+            model_columns=score_model_columns,
+            dim_list=dim_list,
+            score_metric_options=score_metric_options,
+            prin_bal_amount_col=str(prin_bal_amount_col),
+            loan_amount_col=str(loan_amount_col),
             build_context=context,
         ),
         "portrait": lambda: appendix_sheets.build_portrait_sheet(

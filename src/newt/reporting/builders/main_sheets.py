@@ -346,6 +346,27 @@ def build_variable_analysis_sheet(
         time.perf_counter() - step_start,
         len(feature_table),
     )
+
+    # Hide gain/weight columns for LR-style and scorecard models to avoid
+    # misinterpreting proxy importance as tree gain.
+    wrapped_model = getattr(model_adapter, "model", None)
+    model_class_name = getattr(
+        getattr(wrapped_model, "__class__", None), "__name__", ""
+    )
+    model_module_name = getattr(
+        getattr(wrapped_model, "__class__", None), "__module__", ""
+    )
+    model_class_name = str(model_class_name).lower()
+    model_module_name = str(model_module_name).lower()
+    hide_gain_weight_columns = model_adapter.model_family == "scorecard" or (
+        "logistic" in model_class_name or "logistic" in model_module_name
+    )
+    if hide_gain_weight_columns and not feature_table.empty:
+        feature_table = feature_table.drop(
+            columns=["gain", "gain_per", "weight", "weight_per"],
+            errors="ignore",
+        )
+
     if feature_table.empty:
         top_features: List[str] = []
     elif model_adapter.model_family == "scorecard":
@@ -382,12 +403,20 @@ def build_variable_analysis_sheet(
 
     def _run_feature_job(
         job: Tuple[int, str]
-    ) -> Tuple[int, str, str, str, pd.DataFrame, pd.DataFrame, float]:
+    ) -> Tuple[int, str, str, str, pd.DataFrame, pd.DataFrame, pd.DataFrame, float]:
         rank, feature_name = job
         feature_start = time.perf_counter()
         edges = feature_artifacts.edges_by_feature.get(feature_name)
         if edges is None:
             edges = build_reference_quantile_bins(train_frame[feature_name], bins=10)
+        train_bins = feature_artifacts.train_bin_stats_by_feature.get(feature_name)
+        if train_bins is None:
+            train_bins = feature_metrics._build_feature_bin_stats(
+                frame=train_frame,
+                feature=feature_name,
+                label_col=primary_label,
+                edges=edges,
+            )
         oot_bins = feature_artifacts.oot_bin_stats_by_feature.get(feature_name)
         if oot_bins is None:
             oot_bins = feature_metrics._build_feature_bin_stats(
@@ -427,13 +456,14 @@ def build_variable_analysis_sheet(
             feature_name,
             full_title,
             chart_title,
+            train_bins,
             oot_bins,
             monthly_table,
             time.perf_counter() - feature_start,
         )
 
     feature_results: List[
-        Tuple[int, str, str, str, pd.DataFrame, pd.DataFrame, float]
+        Tuple[int, str, str, str, pd.DataFrame, pd.DataFrame, pd.DataFrame, float]
     ] = []
     if use_parallel_features:
         worker_cap = min(build_context.options.max_workers, len(feature_jobs))
@@ -452,18 +482,37 @@ def build_variable_analysis_sheet(
         feature_name,
         full_title,
         chart_title,
+        train_bins,
         oot_bins,
         monthly_table,
         elapsed,
     ) in feature_results:
+        train_block_title = f"{full_title} 训练分箱表"
+        oot_block_title = f"{full_title} OOT分箱表"
         blocks.append(
             ReportBlock(
                 title=full_title,
                 blank_rows_after=0,
             )
         )
-        blocks.append(ReportBlock(title=f"{full_title} 分箱表", data=oot_bins))
+        blocks.append(ReportBlock(title=train_block_title, data=train_bins))
+        blocks.append(ReportBlock(title=oot_block_title, data=oot_bins))
         blocks.append(ReportBlock(title=f"{full_title} 按月效果", data=monthly_table))
+        if not train_bins.empty:
+            blocks.append(
+                ReportBlock(
+                    title="",
+                    chart=ReportChart(
+                        chart_type="combo",
+                        category_column="bin",
+                        value_columns=["total_prop"],
+                        secondary_value_columns=["bad_rate"],
+                        title=f"{chart_title} 训练",
+                        source_block_title=train_block_title,
+                    ),
+                    blank_rows_after=1,
+                )
+            )
         if not oot_bins.empty:
             blocks.append(
                 ReportBlock(
@@ -473,8 +522,8 @@ def build_variable_analysis_sheet(
                         category_column="bin",
                         value_columns=["total_prop"],
                         secondary_value_columns=["bad_rate"],
-                        title=chart_title,
-                        source_block_title=f"{full_title} 分箱表",
+                        title=f"{chart_title} OOT",
+                        source_block_title=oot_block_title,
                     ),
                     blank_rows_after=2,
                 )
@@ -482,9 +531,10 @@ def build_variable_analysis_sheet(
         feature_timings.append((feature_name, elapsed))
         LOGGER.debug(
             "build_variable_analysis_sheet feature finished | feature=%s "
-            "elapsed=%.3fs oot_bins=%d monthly_rows=%d",
+            "elapsed=%.3fs train_bins=%d oot_bins=%d monthly_rows=%d",
             feature_name,
             elapsed,
+            len(train_bins),
             len(oot_bins),
             len(monthly_table),
         )

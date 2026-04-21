@@ -388,8 +388,10 @@ def test_scorecard_variable_analysis_does_not_truncate_to_top_30(monkeypatch):
         build_context=None,
     )
 
-    feature_bin_blocks = [b for b in sheet.blocks if b.title.endswith(" 分箱表")]
-    assert len(feature_bin_blocks) == 31
+    train_bin_blocks = [b for b in sheet.blocks if b.title.endswith("训练分箱表")]
+    oot_bin_blocks = [b for b in sheet.blocks if b.title.endswith("OOT分箱表")]
+    assert len(train_bin_blocks) == 31
+    assert len(oot_bin_blocks) == 31
 
 
 @pytest.mark.parametrize("engine", ["python", "rust"])

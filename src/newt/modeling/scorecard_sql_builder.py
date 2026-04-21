@@ -40,14 +40,17 @@ class ScorecardSQLBuilder:
             if include_breakdown:
                 select_columns.append(f"{feature_expr} AS {feature}_points")
 
-        score_terms = [self._format_number(self.spec.intercept_points)] + feature_terms
-        score_expression = " + ".join(score_terms)
+        score_expression = self._build_score_expression(feature_terms)
         select_columns.append(f"{score_expression} AS {score_alias}")
 
         lines = ["SELECT"]
         for idx, column in enumerate(select_columns):
-            suffix = "," if idx < len(select_columns) - 1 else ""
-            lines.append(f"  {column}{suffix}")
+            rendered = [f"  {line}" for line in column.splitlines()]
+            if idx < len(select_columns) - 1:
+                rendered[-1] = f"{rendered[-1]},"
+            lines.extend(rendered)
+            if idx < len(select_columns) - 1:
+                lines.append("")
         lines.append(f"FROM {table_name}")
         return "\n".join(lines)
 
@@ -71,7 +74,7 @@ class ScorecardSQLBuilder:
                 f"WHEN {feature} IS NOT NULL THEN "
                 f"{self._format_number(non_missing_points)}"
             )
-            return "(CASE " + " ".join(clauses) + " ELSE 0.0 END)"
+            return self._render_case_expression(clauses)
 
         split_values = [float(value) for value in splits]
         split_texts = [self._format_number(value) for value in split_values]
@@ -96,7 +99,27 @@ class ScorecardSQLBuilder:
             f"WHEN {feature} > {split_texts[-1]} THEN "
             f"{self._format_number(score_map.get(last_label, 0.0))}"
         )
-        return "(CASE " + " ".join(clauses) + " ELSE 0.0 END)"
+        return self._render_case_expression(clauses)
+
+    def _render_case_expression(self, clauses: List[str]) -> str:
+        """Render a formatted CASE expression block."""
+        lines = ["(", "  CASE"]
+        lines.extend([f"    {clause}" for clause in clauses])
+        lines.append("    ELSE 0.0")
+        lines.append("  END")
+        lines.append(")")
+        return "\n".join(lines)
+
+    def _build_score_expression(self, feature_terms: List[str]) -> str:
+        """Build the formatted total score expression."""
+        lines = ["(", f"  {self._format_number(self.spec.intercept_points)}"]
+        for feature_expr in feature_terms:
+            feature_lines = feature_expr.splitlines()
+            lines.append("")
+            lines.append(f"  + {feature_lines[0]}")
+            lines.extend([f"    {line}" for line in feature_lines[1:]])
+        lines.append(")")
+        return "\n".join(lines)
 
     def _format_number(self, value: float) -> str:
         """Format finite numeric values for SQL output."""

@@ -136,6 +136,10 @@ result.plot()
 # 获取 WOE 映射
 print(result.woe_map())
 
+# 推荐的手工调箱方式（不要直接操作内部 binners_）
+print(binner.get_splits('age'))
+binner.set_splits('age', [25.0, 40.0, 55.0])
+
 # 遍历所有特征
 for feat in binner:
     print(f"特征：{feat}")
@@ -865,7 +869,7 @@ fig = plot_iv_ranking(
 
 ## 11. Excel 模型报告
 
-`newt.Report` 可以基于已有样本、模型对象和分数字段生成多 sheet 的 Excel 模型报告，适合输出总览、模型设计、变量分析和模型表现。
+`newt.Report` 可以基于已有样本、模型对象和分数字段生成多 sheet 的 Excel 模型报告，支持总览、模型设计、变量分析、模型表现，并会根据输入条件生成可选附录页（分维度对比、新老模型对比、金额指标、画像变量）。
 
 ```python
 from newt import Report
@@ -880,6 +884,8 @@ report = Report(
     score_list=["score_old"],
     dim_list=["channel"],
     var_list=["age", "income"],
+    prin_bal_amount_col="prin_bal_amount",  # 可选；需与 loan_amount_col 成对传入
+    loan_amount_col="loan_amount",          # 可选
     feature_path="./feature_dict.csv",
     report_out_path="./out/model_report.xlsx",
     engine="rust",           # 默认
@@ -911,13 +917,17 @@ report.generate()
 | `thirdparty_info_period1_6` | `近6个月三方查询次数` | `thirdparty` | `thirdparty_info` |
 
   兼容说明：如果历史字典仍使用 `表名`，报表会自动映射到 `指标表英文名`。
-- `sheet_list` 可选传入序号 `1-4` 或名称来控制输出页面；不传时默认输出四个 sheet
+- `sheet_list` 可选传入序号 `1-5` 或名称来控制输出页面：
+  `1=overview`、`2=model_design`、`3=variable_analysis`、`4=model_performance`、`5=scorecard_details`
+- 名称可选值包括：
+  `总览`、`模型设计`、`变量分析`、`模型表现`、`评分卡计算明细`、`分维度对比`、`新老模型对比`、`金额指标`、`画像变量`
+- 不传 `sheet_list` 时，会输出当前输入条件下“可用”的全部页面（是否可用取决于 OOT/tag 覆盖、对比分数字段、模型类型、金额列等）
 - `engine` 控制报表计算引擎：`rust`（默认）或 `python`
 - `max_workers` 控制并行计算线程数；默认是 `min(8, cpu_count)`
 - `parallel_sheets` 控制是否并行计算各个 sheet（Excel 写入仍是串行）
 - `memory_mode` 控制内存策略：`compact`（默认）或 `standard`。Compact 模式通过使用下采样类型和优化的按月转换逻辑，显著降低处理千万级数据时的内存占用。
 - `metrics_mode` 控制指标计算模式：`exact`（默认）或 `binned`（更快、近似）
-- `prin_bal_amount_col` 与 `loan_amount_col` 可成对传入，用于在相关报表表格（按 tag/按月模型效果、分维度对比、新老模型对比）中输出金额维度指标
+- `prin_bal_amount_col` 与 `loan_amount_col` 可成对传入，用于输出金额维度指标，并启用可选附录页 `金额指标`
 - 如果你只想看某一部分报表，可以只传对应的 sheet 名称或编号
 - 跑报表开发和验收时，建议使用 `uv sync --group dev`
 
@@ -962,6 +972,13 @@ print(tag_metrics)
 print(month_metrics)
 ```
 
+说明：
+
+- 核心输出指标始终是人头口径：
+  `总, 好, 坏, 坏占比, KS, AUC, 10%lift, 5%lift, 2%lift, 1%lift`。
+- 当 `prin_bal_amount_col` 与 `loan_amount_col` 成对传入时，会追加金额扩展指标：
+  `放款金额, 逾期本金, 金额坏占比, 金额AUC, 金额KS, 10%金额lift, 5%金额lift, 2%金额lift, 1%金额lift`。
+
 ### 12.2. 分维度对比
 
 比较按自定义维度拆分的指标（通常仅适用于 OOT 样本）。
@@ -982,6 +999,11 @@ dim_metrics = calculate_dimensional_comparison(
 
 print(dim_metrics)
 ```
+
+说明：
+
+- 仅当金额列成对传入时，才会追加金额扩展指标：
+  `放款金额, 逾期本金, 金额坏占比, 金额AUC, 金额KS, 10%金额lift, 5%金额lift, 2%金额lift, 1%金额lift`。
 
 ### 12.3. 新老模型对比
 
@@ -1009,6 +1031,11 @@ compare_metrics = calculate_model_comparison(
 print(compare_metrics)
 ```
 
+说明：
+
+- 仅当金额列成对传入时，才会追加金额扩展指标：
+  `放款金额, 逾期本金, 金额坏占比, 金额AUC, 金额KS, 10%金额lift, 5%金额lift, 2%金额lift, 1%金额lift`。
+
 ### 12.4. 分箱指标
 
 直接计算分箱层面的模型指标，并可选输出金额维度指标。
@@ -1034,6 +1061,12 @@ custom_bin_metrics = calculate_bin_metrics(
     bins=[-float('inf'), 0.2, 0.5, 0.8, float('inf')],
 )
 ```
+
+说明：
+
+- `calculate_bin_metrics` 保持旧版金额列行为。
+- 当金额列成对传入时，追加金额列为：
+  `逾期本金, 放款金额, 金额坏占比, 放款金额占比, 逾期本金占比, 金额lift`。
 
 ---
 

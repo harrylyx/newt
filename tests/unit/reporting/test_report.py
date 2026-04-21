@@ -261,22 +261,27 @@ def test_report_formats_iv_with_four_decimals_and_places_chart_after_monthly_tab
     )
     assert worksheet.cell(bin_header_row + 1, bin_iv_column).number_format == "0.0000"
     first_bin_block = next(
-        block for block in analysis_sheet.blocks if block.title.endswith("分箱表")
+        block for block in analysis_sheet.blocks if block.title.endswith("训练分箱表")
     )
     min_values = first_bin_block.data["min"].dropna().tolist()
     assert min_values == sorted(min_values)
 
     variable_sheet = report.result_.get_sheet("2.变量分析")
-    first_bin_title = next(
-        block.title for block in variable_sheet.blocks if block.title.endswith("分箱表")
+    first_train_bin_title = next(
+        block.title for block in variable_sheet.blocks if block.title.endswith("训练分箱表")
     )
-    first_monthly_title = first_bin_title.replace("分箱表", "按月效果")
+    first_oot_bin_title = first_train_bin_title.replace("训练分箱表", "OOT分箱表")
+    first_monthly_title = first_train_bin_title.replace("训练分箱表", "按月效果")
     monthly_title_row = next(
         row[0].row
         for row in worksheet.iter_rows()
         if any(cell.value == first_monthly_title for cell in row)
     )
 
+    chart_blocks = [block for block in variable_sheet.blocks if block.chart is not None]
+    chart_sources = [block.chart.source_block_title for block in chart_blocks]
+    assert first_train_bin_title in chart_sources
+    assert first_oot_bin_title in chart_sources
     assert worksheet._charts
     assert worksheet._charts[0].anchor._from.row + 1 > monthly_title_row
 
@@ -906,6 +911,12 @@ def test_report_supports_scorecard_model_with_lr_summary_and_details_sheet(
         "ci_upper",
         "odds_ratio",
     }.issubset(feature_table.columns)
+    assert {
+        "gain",
+        "gain_per",
+        "weight",
+        "weight_per",
+    }.isdisjoint(set(feature_table.columns))
     assert feature_table["vars"].tolist() == ["feature_a", "feature_b"]
     assert feature_table["p_value"].notna().all()
 
@@ -919,6 +930,38 @@ def test_report_supports_scorecard_model_with_lr_summary_and_details_sheet(
     assert {"base_score", "pdo", "intercept_points"}.issubset(base_block.columns)
     assert {"变量", "分箱", "分值"}.issubset(points_block.columns)
     assert "Intercept" in points_block["变量"].values
+
+
+def test_report_hides_gain_weight_columns_for_logistic_models(
+    tmp_path,
+    report_frame,
+):
+    class FakeLogisticModel:
+        def __init__(self):
+            self.feature_names_in_ = np.array(["feature_a", "feature_b"])
+
+    output_path = tmp_path / "logistic_variable_analysis.xlsx"
+    report = Report(
+        data=report_frame,
+        model=FakeLogisticModel(),
+        tag="tag",
+        score_col="score_new",
+        date_col="obs_date",
+        label_list=["label_main"],
+        sheet_list=["变量分析"],
+        report_out_path=str(output_path),
+    )
+
+    report.generate()
+
+    variable_sheet = report.result_.get_sheet("2.变量分析")
+    feature_table = variable_sheet.get_block("二、变量分析").data
+    assert {
+        "gain",
+        "gain_per",
+        "weight",
+        "weight_per",
+    }.isdisjoint(set(feature_table.columns))
 
 
 def test_report_scorecard_variable_analysis_uses_scorecard_bin_rules_for_iv_and_psi(
@@ -942,14 +985,20 @@ def test_report_scorecard_variable_analysis_uses_scorecard_bin_rules_for_iv_and_
 
     variable_sheet = report.result_.get_sheet("2.变量分析")
     feature_table = variable_sheet.get_block("二、变量分析").data.set_index("vars")
-    feature_a_bin = variable_sheet.get_block("1.feature_a 分箱表").data
-    feature_a_non_missing = feature_a_bin.loc[feature_a_bin["bin"] != "Missing"]
+    feature_a_train_bin = variable_sheet.get_block("1.feature_a 训练分箱表").data
+    feature_a_oot_bin = variable_sheet.get_block("1.feature_a OOT分箱表").data
+    feature_a_non_missing = feature_a_train_bin.loc[
+        feature_a_train_bin["bin"] != "Missing"
+    ]
 
     # fake_scorecard_model uses split=10.0 for feature_a.
     assert len(feature_a_non_missing) == 2
     assert feature_a_non_missing["max"].dropna().min() == pytest.approx(10.0)
     assert feature_table.loc["feature_a", "iv_train"] == pytest.approx(
-        float(feature_a_bin["iv"].sum())
+        float(feature_a_train_bin["iv"].sum())
+    )
+    assert feature_table.loc["feature_a", "iv_oot"] == pytest.approx(
+        float(feature_a_oot_bin["iv"].sum())
     )
 
     train_feature = report_frame.loc[report_frame["tag"] == "train", "feature_a"]
@@ -959,15 +1008,16 @@ def test_report_scorecard_variable_analysis_uses_scorecard_bin_rules_for_iv_and_
     def _bin_counts(values: pd.Series) -> np.ndarray:
         numeric = pd.to_numeric(values, errors="coerce").to_numpy(dtype=float)
         non_missing_bins = len(edges) - 1
-        indices = np.empty(numeric.shape[0], dtype=np.int64)
-        missing = np.isnan(numeric)
+        labels = pd.cut(
+            pd.Series(numeric),
+            bins=edges,
+            include_lowest=True,
+            labels=False,
+        )
+        indices = labels.to_numpy(dtype=float)
+        missing = np.isnan(indices)
         indices[missing] = non_missing_bins
-        if (~missing).any():
-            indices[~missing] = np.searchsorted(
-                edges[1:-1],
-                numeric[~missing],
-                side="right",
-            )
+        indices = indices.astype(np.int64)
         return np.bincount(indices, minlength=non_missing_bins + 1).astype(float)
 
     expected_counts = _bin_counts(train_feature)
@@ -980,6 +1030,63 @@ def test_report_scorecard_variable_analysis_uses_scorecard_bin_rules_for_iv_and_
         np.sum((actual_prop - expected_prop) * np.log(actual_prop / expected_prop))
     )
     assert feature_table.loc["feature_a", "psi"] == pytest.approx(expected_psi)
+
+
+def test_report_scorecard_variable_analysis_uses_high_precision_split_boundaries(
+    tmp_path,
+    report_frame,
+    fake_scorecard_model,
+):
+    from newt.modeling.scorecard import Scorecard
+
+    split = 10.123456789
+    payload = fake_scorecard_model.to_dict()
+    payload["binning_rules"]["feature_a"]["splits"] = [split]
+    payload["features"]["feature_a"] = [
+        {"feature": "feature_a", "bin": f"(-inf, {split}]", "woe": -0.4, "points": 8.0},
+        {"feature": "feature_a", "bin": f"({split}, inf]", "woe": 0.6, "points": -12.0},
+        {"feature": "feature_a", "bin": "Missing", "woe": 0.0, "points": 0.0},
+    ]
+    precise_scorecard = Scorecard().from_dict(payload)
+
+    frame = report_frame.copy()
+    near_boundary = [split - 1e-9, split, split + 1e-9]
+    frame.loc[:, "feature_a"] = [
+        near_boundary[idx % len(near_boundary)] for idx in range(len(frame))
+    ]
+
+    output_path = tmp_path / "scorecard_precise_split_report.xlsx"
+    report = Report(
+        data=frame,
+        model=precise_scorecard,
+        tag="tag",
+        score_col="score_new",
+        date_col="obs_date",
+        label_list=["label_main"],
+        sheet_list=["变量分析"],
+        report_out_path=str(output_path),
+    )
+    report.generate()
+
+    variable_sheet = report.result_.get_sheet("2.变量分析")
+    train_bins = variable_sheet.get_block("1.feature_a 训练分箱表").data
+    non_missing = train_bins.loc[train_bins["bin"] != "Missing"]
+    assert len(non_missing) == 2
+    assert non_missing["max"].dropna().min() == pytest.approx(split)
+
+    train_subset = frame.loc[
+        (frame["tag"] == "train") & frame["label_main"].isin([0, 1]), "feature_a"
+    ]
+    expected_lower_total = int(
+        (pd.to_numeric(train_subset, errors="coerce") <= split).sum()
+    )
+    expected_upper_total = int(
+        (pd.to_numeric(train_subset, errors="coerce") > split).sum()
+    )
+    lower_total = int(non_missing.sort_values("max").iloc[0]["total"])
+    upper_total = int(non_missing.sort_values("max").iloc[1]["total"])
+    assert lower_total == expected_lower_total
+    assert upper_total == expected_upper_total
 
 
 def test_report_scorecard_model_performance_includes_lr_params(

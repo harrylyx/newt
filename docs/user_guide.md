@@ -141,6 +141,10 @@ result.plot()
 # Get WOE mapping
 print(result.woe_map())
 
+# Recommended split editing workflow (instead of touching internal binners_)
+print(binner.get_splits('age'))
+binner.set_splits('age', [25.0, 40.0, 55.0])
+
 # Loop through all features
 for feat in binner:
     print(f"Feature: {feat}")
@@ -870,7 +874,7 @@ fig = plot_iv_ranking(
 
 ## 11. Excel Model Report
 
-`newt.Report` generates a multi-sheet Excel model report from prepared sample data, a trained model object, and an existing score column. It is intended for overview, model design, variable analysis, and model performance reporting.
+`newt.Report` generates a multi-sheet Excel model report from prepared sample data, a trained model object, and an existing score column. It covers overview, model design, variable analysis, model performance, and optional appendix sheets (dimensional comparison, model comparison, amount metrics, portrait variables) based on your inputs.
 
 ```python
 from newt import Report
@@ -885,6 +889,8 @@ report = Report(
     score_list=["score_old"],
     dim_list=["channel"],
     var_list=["age", "income"],
+    prin_bal_amount_col="prin_bal_amount",  # optional; must pair with loan_amount_col
+    loan_amount_col="loan_amount",          # optional
     feature_path="./feature_dict.csv",
     report_out_path="./out/model_report.xlsx",
     engine="rust",           # default
@@ -916,13 +922,17 @@ Notes:
 | `thirdparty_info_period1_6` | `近6个月三方查询次数` | `thirdparty` | `thirdparty_info` |
 
   Compatibility note: legacy dictionaries that still use `表名` are auto-mapped to `指标表英文名`.
-- `sheet_list` can optionally select sheets by index `1-4` or by name; if omitted, all four sheets are generated
+- `sheet_list` can optionally select sheets by index `1-5` or by name:
+  `1=overview`, `2=model_design`, `3=variable_analysis`, `4=model_performance`, `5=scorecard_details`
+- Name selectors include:
+  `总览`, `模型设计`, `变量分析`, `模型表现`, `评分卡计算明细`, `分维度对比`, `新老模型对比`, `金额指标`, `画像变量`
+- If omitted, all available sheets are generated (availability still depends on inputs, e.g., OOT/tag coverage, benchmark score columns, model family, and amount columns)
 - `engine` controls report compute engine: `rust` (default) or `python`
 - `max_workers` controls compute parallelism; default is `min(8, cpu_count)`
 - `parallel_sheets` enables concurrent sheet computation (Excel write remains sequential)
 - `memory_mode` controls runtime memory strategy: `compact` (default) or `standard`. Compact mode significantly reduces memory usage for 10M+ rows by using downcasted types and optimized monthly transformations.
 - `metrics_mode` controls metric computation mode: `exact` (default) or `binned` (faster, approximate)
-- `prin_bal_amount_col` and `loan_amount_col` can be passed together to enable amount-based metrics in related report tables (split metrics, dimensional comparison, and model comparison)
+- `prin_bal_amount_col` and `loan_amount_col` can be passed together to enable amount-based metrics and the optional appendix sheet `金额指标`
 - If you only need part of the report, pass just the sheet names or indexes you want
 - For report development and validation, use `uv sync --group dev`
 
@@ -965,6 +975,13 @@ print(tag_metrics)
 print(month_metrics)
 ```
 
+Notes:
+
+- Core output metrics are always headcount-based:
+  `总, 好, 坏, 坏占比, KS, AUC, 10%lift, 5%lift, 2%lift, 1%lift`.
+- When `prin_bal_amount_col` and `loan_amount_col` are provided together, amount extension metrics are appended:
+  `放款金额, 逾期本金, 金额坏占比, 金额AUC, 金额KS, 10%金额lift, 5%金额lift, 2%金额lift, 1%金额lift`.
+
 ### 12.2. Dimensional Comparison
 
 Compare metrics split by custom dimensions (only applies to OOT samples typically).
@@ -985,6 +1002,11 @@ dim_metrics = calculate_dimensional_comparison(
 
 print(dim_metrics)
 ```
+
+Notes:
+
+- Amount extension metrics are appended only when both amount columns are provided:
+  `放款金额, 逾期本金, 金额坏占比, 金额AUC, 金额KS, 10%金额lift, 5%金额lift, 2%金额lift, 1%金额lift`.
 
 ### 12.3. Model Comparison
 
@@ -1012,6 +1034,11 @@ compare_metrics = calculate_model_comparison(
 print(compare_metrics)
 ```
 
+Notes:
+
+- Amount extension metrics are appended only when both amount columns are provided:
+  `放款金额, 逾期本金, 金额坏占比, 金额AUC, 金额KS, 10%金额lift, 5%金额lift, 2%金额lift, 1%金额lift`.
+
 ### 12.4. Bin Metrics
 
 Calculate bin-level performance metrics directly, with optional amount metrics.
@@ -1037,6 +1064,12 @@ custom_bin_metrics = calculate_bin_metrics(
     bins=[-float('inf'), 0.2, 0.5, 0.8, float('inf')],
 )
 ```
+
+Notes:
+
+- `calculate_bin_metrics` keeps the legacy amount output set.
+- When amount columns are provided, appended amount columns are:
+  `逾期本金, 放款金额, 金额坏占比, 放款金额占比, 逾期本金占比, 金额lift`.
 
 ---
 

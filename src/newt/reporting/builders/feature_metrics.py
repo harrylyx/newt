@@ -22,6 +22,23 @@ from . import group_metrics
 
 LOGGER = logging.getLogger("newt.reporting.tables")
 
+FEATURE_BIN_STATS_COLUMNS = [
+    "bin",
+    "min",
+    "max",
+    "goods",
+    "bads",
+    "total",
+    "total_prop",
+    "good_prop",
+    "bad_prop",
+    "bad_rate",
+    "woe",
+    "iv",
+    "ks",
+    "lift",
+]
+
 
 def _build_feature_analysis_table(
     train_frame: pd.DataFrame,
@@ -319,15 +336,16 @@ def _build_feature_bin_stats(
     label_col: str,
     edges: Sequence[float],
 ) -> pd.DataFrame:
+    empty_result = pd.DataFrame(columns=FEATURE_BIN_STATS_COLUMNS)
     if frame.empty:
-        return pd.DataFrame()
+        return empty_result
     values, labels = _extract_feature_arrays(frame, feature, label_col)
     if values.size == 0:
-        return pd.DataFrame()
+        return empty_result
 
     edges_array = np.asarray(edges, dtype=float)
     if len(edges_array) < 2:
-        return pd.DataFrame()
+        return empty_result
 
     bin_indices = _assign_bin_indices(values, edges_array)
     non_missing_bins = len(edges_array) - 1
@@ -364,7 +382,7 @@ def _build_feature_bin_stats(
 
     grouped = pd.DataFrame(rows)
     if grouped.empty:
-        return grouped
+        return empty_result
 
     grouped["total_prop"] = grouped["total"] / max(grouped["total"].sum(), 1)
     grouped["good_prop"] = grouped["goods"] / max(grouped["goods"].sum(), 1)
@@ -389,24 +407,7 @@ def _build_feature_bin_stats(
     grouped["ks"] = abs(grouped["cum_bads_prop"] - grouped["cum_goods_prop"])
     overall_bad_rate = grouped["bads"].sum() / max(grouped["total"].sum(), 1)
     grouped["lift"] = grouped["bad_rate"] / max(overall_bad_rate, 1e-8)
-    return grouped[
-        [
-            "bin",
-            "min",
-            "max",
-            "goods",
-            "bads",
-            "total",
-            "total_prop",
-            "good_prop",
-            "bad_prop",
-            "bad_rate",
-            "woe",
-            "iv",
-            "ks",
-            "lift",
-        ]
-    ].reset_index(drop=True)
+    return grouped[FEATURE_BIN_STATS_COLUMNS].reset_index(drop=True)
 
 
 def _build_feature_monthly_metrics(
@@ -548,7 +549,7 @@ def _assign_bin_indices(values: np.ndarray, edges: np.ndarray) -> np.ndarray:
         indices[~nan_mask] = np.searchsorted(
             edges[1:-1],
             values[~nan_mask],
-            side="right",
+            side="left",
         ).astype(np.int32)
     return indices
 

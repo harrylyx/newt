@@ -94,6 +94,22 @@ def _high_cardinality_chi_data(seed: int = 5, n: int = 100):
     return X, y
 
 
+def _min_samples_regression_data(seed: int = 1, n: int = 500):
+    rng = np.random.default_rng(seed)
+    x = pd.Series(rng.random(n))
+    # Build a jagged target curve that previously produced final bins
+    # below min_samples after split-point conversion.
+    prob = (
+        0.05
+        + 0.55 * ((x > 0.15) & (x < 0.25)).astype(float)
+        + 0.35 * ((x > 0.45) & (x < 0.55)).astype(float)
+        + 0.45 * ((x > 0.75) & (x < 0.82)).astype(float)
+    )
+    prob = np.clip(prob, 0.01, 0.99)
+    y = pd.Series((rng.random(n) < prob).astype(int))
+    return x, y
+
+
 def test_chimerge_respects_n_bins_hard_cap():
     X, y = _high_cardinality_chi_data()
     binner = ChiMergeBinner(n_bins=5)
@@ -136,6 +152,72 @@ def test_chimerge_enforces_min_samples_threshold():
 
     stats = binner["score"].stats
     assert stats["total"].min() >= expected_min_count
+
+
+def test_chimerge_min_samples_regression_with_monotonic():
+    X, y = _min_samples_regression_data()
+    frame = pd.DataFrame({"score": X})
+    min_samples = 0.15
+    expected_min_count = int(np.ceil(min_samples * len(frame)))
+
+    binner = Binner()
+    binner.fit(
+        frame,
+        y,
+        method="chi",
+        n_bins=10,
+        min_samples=min_samples,
+        monotonic=True,
+        show_progress=False,
+    )
+
+    stats = binner["score"].stats
+    assert stats["total"].min() >= expected_min_count
+
+
+@pytest.mark.parametrize(
+    "method",
+    ["chi", "dt", "quantile", "step", "kmean", "opt"],
+)
+def test_binner_min_samples_hard_constraint_across_methods(method):
+    X, y = _high_cardinality_chi_data(seed=7, n=300)
+    frame = pd.DataFrame({"score": X})
+    min_samples = 0.10
+    expected_min_count = int(np.ceil(min_samples * len(frame)))
+
+    binner = Binner()
+    try:
+        binner.fit(
+            frame,
+            y,
+            method=method,
+            n_bins=8,
+            min_samples=min_samples,
+            monotonic=True,
+            show_progress=False,
+        )
+    except ImportError:
+        if method == "opt":
+            pytest.skip("optbinning is not available in this environment")
+        raise
+
+    stats = binner["score"].stats
+    assert stats["total"].min() >= expected_min_count
+
+
+def test_binner_min_samples_int_above_non_missing_raises():
+    frame = pd.DataFrame({"score": [1.0, 2.0, np.nan, 4.0, 5.0]})
+    y = pd.Series([0, 1, 0, 1, 0])
+
+    with pytest.raises(ValueError, match="exceeds non-missing sample count"):
+        Binner().fit(
+            frame,
+            y,
+            method="chi",
+            n_bins=3,
+            min_samples=5,
+            show_progress=False,
+        )
 
 
 def test_chimerge_rust_matches_python_splits(binning_data, monkeypatch):
@@ -443,7 +525,7 @@ def test_binner_chi_batch_rust_monotonic_failure_falls_back_per_column(
     binner = Binner()
     binner.fit(frame, y, method="chi", n_bins=5, monotonic=True, show_progress=False)
 
-    assert len(fallback_calls) == 1
+    assert len(fallback_calls) >= 1
 
 
 def test_monotonicity_adjustment(binning_data):

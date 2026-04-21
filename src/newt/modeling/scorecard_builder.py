@@ -39,15 +39,41 @@ class ScorecardBuilder:
         feature_scores = {}
         binning_rules = {}
         feature_names = []
+        feature_woe_maps: Dict[str, Dict[str, float]] = {}
+        missing_binning_features = []
+        missing_woe_features = []
 
-        for feature, coefficient in coefficients.items():
+        for feature, _coefficient in coefficients.items():
             if not self._has_binning_rule(binner, feature):
+                missing_binning_features.append(feature)
                 continue
 
             woe_map = self._get_woe_map(binner, feature)
             if not woe_map:
+                missing_woe_features.append(feature)
                 continue
+            feature_woe_maps[feature] = woe_map
 
+        if missing_binning_features or missing_woe_features:
+            parts = []
+            if missing_binning_features:
+                parts.append(
+                    "missing binning rules for features: "
+                    + ", ".join(sorted(set(missing_binning_features)))
+                )
+            if missing_woe_features:
+                parts.append(
+                    "missing WOE mappings for features: "
+                    + ", ".join(sorted(set(missing_woe_features)))
+                )
+            raise ValueError(
+                "Scorecard.from_model requires complete binner coverage; "
+                + "; ".join(parts)
+                + "."
+            )
+
+        for feature, coefficient in coefficients.items():
+            woe_map = feature_woe_maps[feature]
             rows = []
             for bin_label, woe in woe_map.items():
                 rows.append(

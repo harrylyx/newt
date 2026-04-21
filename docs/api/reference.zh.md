@@ -60,3 +60,11 @@
     options:
       members:
         - Report
+
+::: newt.reporting.interactive
+    options:
+      members:
+        - calculate_split_metrics
+        - calculate_dimensional_comparison
+        - calculate_model_comparison
+        - calculate_bin_metrics

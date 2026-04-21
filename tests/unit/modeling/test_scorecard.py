@@ -54,6 +54,22 @@ def _build_numeric_scorecard() -> Scorecard:
     )
 
 
+def _build_multi_feature_scorecard() -> Scorecard:
+    X = pd.DataFrame(
+        {
+            "x": [1, 2, 3, np.nan, 5, 6, np.nan, 8, 9, 10],
+            "y": [10, 8, 7, 6, 5, 4, 3, 2, np.nan, 1],
+        }
+    )
+    y = pd.Series([0, 0, 0, 1, 1, 1, 1, 1, 1, 1], name="target")
+    binner = Binner()
+    binner.fit(X, y, method="quantile", n_bins=2)
+    return Scorecard().from_model(
+        {"intercept": 0.0, "coefficients": {"x": 1.0, "y": -0.5}},
+        binner,
+    )
+
+
 def test_scorecard_init():
     sc = Scorecard(base_score=600, pdo=50)
     assert sc.base_score == 600
@@ -307,20 +323,56 @@ def test_scorecard_from_model_old_signature_raises_type_error(mock_components):
         )
 
 
+def test_scorecard_from_model_raises_when_binner_missing_model_feature():
+    X = pd.DataFrame({"x": [1, 2, 3, np.nan, 5, 6, np.nan, 8, 9, 10]})
+    y = pd.Series([0, 0, 0, 1, 1, 1, 1, 1, 1, 1], name="target")
+    binner = Binner()
+    binner.fit(X, y, method="quantile", n_bins=2)
+
+    scorecard = Scorecard()
+    with pytest.raises(ValueError, match="missing binning rules for features: y"):
+        scorecard.from_model(
+            {"intercept": 0.0, "coefficients": {"x": 1.0, "y": 0.5}},
+            binner,
+        )
+
+
+def test_scorecard_from_model_raises_when_woe_mapping_missing():
+    binner = Binner().load({"x": [5.0]})
+    scorecard = Scorecard()
+
+    with pytest.raises(ValueError, match="missing WOE mappings for features: x"):
+        scorecard.from_model(
+            {"intercept": 0.0, "coefficients": {"x": 1.0}},
+            binner,
+        )
+
+
 def test_scorecard_to_sql_returns_select_query():
     scorecard = _build_numeric_scorecard()
 
     sql = scorecard.to_sql()
 
     assert sql.startswith("SELECT")
-    assert "CASE WHEN x IS NULL THEN" in sql
-    assert "ELSE 0.0 END" in sql
+    assert "CASE" in sql
+    assert "WHEN x IS NULL THEN" in sql
+    assert "ELSE 0.0" in sql
+    assert "\n        END\n" in sql
     assert " AS score" in sql
     assert "FROM input_table" in sql
 
 
+def test_scorecard_to_sql_is_pretty_formatted():
+    scorecard = _build_multi_feature_scorecard()
+
+    sql = scorecard.to_sql()
+
+    assert "CASE\n" in sql
+    assert "\n  \n    + (" in sql
+
+
 def test_scorecard_to_sql_includes_feature_breakdown():
-    scorecard = _build_numeric_scorecard()
+    scorecard = _build_multi_feature_scorecard()
 
     sql = scorecard.to_sql(
         table_name="credit_input",
@@ -329,6 +381,8 @@ def test_scorecard_to_sql_includes_feature_breakdown():
     )
 
     assert "AS x_points" in sql
+    assert "AS y_points" in sql
+    assert "AS x_points,\n\n  (" in sql
     assert " AS final_score" in sql
     assert "FROM credit_input" in sql
 

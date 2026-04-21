@@ -25,6 +25,47 @@ from .supervised import (
 from .unsupervised import EqualFrequencyBinner, EqualWidthBinner, KMeansBinner
 
 
+def _resolve_min_samples_count(
+    min_samples: Union[int, float],
+    sample_count: int,
+    context: str,
+) -> int:
+    """Resolve min_samples into an absolute threshold for a feature."""
+    if sample_count <= 0:
+        return 1
+
+    if isinstance(min_samples, bool):
+        raise TypeError(f"{context}: min_samples must be int or float, got bool.")
+
+    if isinstance(min_samples, (int, np.integer)):
+        value = int(min_samples)
+        if value <= 0:
+            raise ValueError(f"{context}: min_samples must be > 0, got {value}.")
+        if value > sample_count:
+            raise ValueError(
+                f"{context}: min_samples={value} exceeds non-missing sample count "
+                f"{sample_count}."
+            )
+        return value
+
+    if isinstance(min_samples, (float, np.floating)):
+        value = float(min_samples)
+        if not np.isfinite(value):
+            raise ValueError(f"{context}: min_samples must be finite, got {value}.")
+        if value <= 0.0:
+            raise ValueError(f"{context}: min_samples must be > 0, got {value}.")
+        if value > 1.0:
+            raise ValueError(
+                f"{context}: float min_samples must be in (0, 1], got {value}."
+            )
+        return max(1, int(np.ceil(value * sample_count)))
+
+    raise TypeError(
+        f"{context}: min_samples must be int or float, "
+        f"got {type(min_samples).__name__}."
+    )
+
+
 class BinningResult:
     """Proxy object for accessing binning results of a single feature.
 
@@ -156,6 +197,102 @@ class Binner(BinnerStatsMixin, BinnerIOMixin):
         self._features: List[str] = []
         self._missing_label = "Missing"
 
+    @staticmethod
+    def _count_bins_from_splits(values: pd.Series, splits: List[float]) -> List[int]:
+        """Count samples per bin under ``pd.cut(..., right=True)`` semantics."""
+        if values.empty:
+            return [0]
+        if not splits:
+            return [int(values.shape[0])]
+
+        split_array = np.asarray(splits, dtype=np.float64)
+        value_array = values.to_numpy(dtype=np.float64, copy=False)
+        bin_index = np.searchsorted(split_array, value_array, side="right")
+        counts = np.bincount(bin_index, minlength=len(split_array) + 1)
+        return counts.astype(int).tolist()
+
+    @staticmethod
+    def _select_split_to_merge(counts: List[int], small_bin_index: int) -> int:
+        """Select one split index to remove for a small bin."""
+        if len(counts) <= 1:
+            raise ValueError("At least two bins are required to merge.")
+
+        last_bin_index = len(counts) - 1
+        if small_bin_index <= 0:
+            return 0
+        if small_bin_index >= last_bin_index:
+            return last_bin_index - 1
+
+        left_count = counts[small_bin_index - 1]
+        right_count = counts[small_bin_index + 1]
+        if left_count <= right_count:
+            return small_bin_index - 1
+        return small_bin_index
+
+    def _converge_feature_splits(
+        self,
+        binner: BaseBinner,
+        col_data: pd.Series,
+        y_series: Optional[pd.Series],
+        min_sample_count: Optional[int],
+    ) -> List[float]:
+        """Converge feature splits under min-sample and monotonic constraints."""
+        current_splits = sorted(list(set(getattr(binner, "splits_", []))))
+        valid_mask = col_data.notna()
+        X_valid = col_data[valid_mask]
+        if X_valid.empty:
+            return current_splits
+
+        y_valid = y_series[valid_mask] if y_series is not None else None
+
+        while True:
+            if binner.monotonic and y_valid is not None and current_splits:
+                current_splits = sorted(
+                    list(
+                        set(
+                            binner._adjust_monotonicity(
+                                X_valid, y_valid, current_splits
+                            )
+                        )
+                    )
+                )
+
+            if min_sample_count is None:
+                break
+
+            counts = self._count_bins_from_splits(X_valid, current_splits)
+            small_bin_index = next(
+                (idx for idx, count in enumerate(counts) if count < min_sample_count),
+                None,
+            )
+            if small_bin_index is None or not current_splits:
+                break
+
+            split_index = self._select_split_to_merge(counts, small_bin_index)
+            current_splits.pop(split_index)
+
+        return current_splits
+
+    def _store_feature_binner(
+        self,
+        feature: str,
+        binner: BaseBinner,
+        col_data: pd.Series,
+        y_series: Optional[pd.Series],
+        min_sample_count: Optional[int],
+    ) -> None:
+        """Finalize and store one fitted feature binner."""
+        final_splits = self._converge_feature_splits(
+            binner=binner,
+            col_data=col_data,
+            y_series=y_series,
+            min_sample_count=min_sample_count,
+        )
+        binner.splits_ = final_splits
+        binner.is_fitted_ = True
+        self.binners_[feature] = binner
+        self.rules_[feature] = final_splits
+
     @property
     def woe_encoders_(self) -> Dict[str, Any]:
         """Get WOE encoders dictionary (for backward compatibility).
@@ -246,6 +383,20 @@ class Binner(BinnerStatsMixin, BinnerIOMixin):
         else:
             numeric_cols = list(X.select_dtypes(include=[np.number]).columns)
 
+        feature_min_samples: Dict[str, Optional[int]] = {
+            col: None for col in numeric_cols
+        }
+        if min_samples is not None:
+            for col in numeric_cols:
+                valid_count = int(X[col].notna().sum())
+                if valid_count <= 0:
+                    continue
+                feature_min_samples[col] = _resolve_min_samples_count(
+                    min_samples=min_samples,
+                    sample_count=valid_count,
+                    context=f"Binner.fit(feature='{col}')",
+                )
+
         self._features = numeric_cols
 
         # tqdm for progress tracking
@@ -317,8 +468,13 @@ class Binner(BinnerStatsMixin, BinnerIOMixin):
                 col_data = meta["col_data"]
                 valid_mask = meta["valid_mask"]
                 binner.fit(col_data[valid_mask], y_series[valid_mask])
-                self.binners_[col] = binner
-                self.rules_[col] = binner.splits_
+                self._store_feature_binner(
+                    feature=col,
+                    binner=binner,
+                    col_data=col_data,
+                    y_series=y_series,
+                    min_sample_count=feature_min_samples.get(col),
+                )
                 if pbar is not None:
                     pbar.update(1)
 
@@ -415,9 +571,13 @@ class Binner(BinnerStatsMixin, BinnerIOMixin):
                                 )
 
                         binner.splits_ = split_list
-                        binner.is_fitted_ = True
-                        self.binners_[col] = binner
-                        self.rules_[col] = binner.splits_
+                        self._store_feature_binner(
+                            feature=col,
+                            binner=binner,
+                            col_data=col_data,
+                            y_series=y_series,
+                            min_sample_count=feature_min_samples.get(col),
+                        )
                     except Exception:
                         _fit_single_column_fallback(col)
                         continue
@@ -459,8 +619,13 @@ class Binner(BinnerStatsMixin, BinnerIOMixin):
                     continue
 
                 binner.fit(col_data[valid_mask], y_series[valid_mask])
-                self.binners_[col] = binner
-                self.rules_[col] = binner.splits_
+                self._store_feature_binner(
+                    feature=col,
+                    binner=binner,
+                    col_data=col_data,
+                    y_series=y_series,
+                    min_sample_count=feature_min_samples.get(col),
+                )
 
         # Calculate and store statistics
         self.fit_woe(X, y_series, show_progress=show_progress)

@@ -10,6 +10,7 @@ from typing import List, Optional, Sequence, Tuple
 
 import pandas as pd
 
+from newt._native import load_native_module
 from newt.config import LOGGING
 from newt.reporting.excel_writer import ExcelReportWriter
 from newt.reporting.model_adapter import ModelAdapter
@@ -46,7 +47,7 @@ class Report:
         feature_df (pd.DataFrame, optional): Feature dictionary DataFrame used
             for variable metadata mapping.
         report_out_path (str): File path where the Excel workbook will be saved.
-        engine (str): Calculation engine to use: 'rust' (default) or 'python'.
+        engine (str): Calculation engine: 'auto' (default), 'rust', or 'python'.
         max_workers (int, optional): Maximum parallel workers for computation.
         parallel_sheets (bool): Whether to calculate different sheets in parallel.
         memory_mode (str): Memory usage strategy: 'compact' (default) or 'standard'.
@@ -83,7 +84,7 @@ class Report:
     sheet_list: Sequence[object] = field(default_factory=list)
     feature_df: Optional[pd.DataFrame] = None
     report_out_path: str = "./out/model_report.xlsx"
-    engine: str = "rust"
+    engine: str = "auto"
     max_workers: Optional[int] = None
     parallel_sheets: bool = True
     memory_mode: str = "compact"
@@ -98,8 +99,9 @@ class Report:
         _configure_report_logger()
         self._validate_runtime_options()
         resolved_workers = self._resolve_max_workers()
+        resolved_engine = self._resolve_engine()
         build_options = ReportBuildOptions(
-            engine=self.engine,
+            engine=resolved_engine,
             max_workers=resolved_workers,
             parallel_sheets=bool(self.parallel_sheets),
             memory_mode=self.memory_mode,
@@ -259,8 +261,8 @@ class Report:
             raise ValueError(f"Missing required columns: {sorted(set(missing))}")
 
     def _validate_runtime_options(self) -> None:
-        if self.engine not in {"rust", "python"}:
-            raise ValueError("engine must be 'rust' or 'python'")
+        if self.engine not in {"auto", "rust", "python"}:
+            raise ValueError("engine must be 'auto', 'rust' or 'python'")
         if self.memory_mode not in {"compact", "standard"}:
             raise ValueError("memory_mode must be 'compact' or 'standard'")
         if self.metrics_mode not in {"exact", "binned"}:
@@ -277,6 +279,19 @@ class Report:
             return max(1, int(self.max_workers))
         cpu_total = os.cpu_count() or 1
         return max(1, min(8, cpu_total))
+
+    def _resolve_engine(self) -> str:
+        """Resolve user-facing engine option to concrete runtime engine."""
+        native_module = load_native_module()
+        if self.engine == "auto":
+            return "rust" if native_module is not None else "python"
+        if self.engine == "rust" and native_module is None:
+            raise ImportError(
+                "Rust engine requested but native extension is unavailable. "
+                "Use engine='auto' or engine='python', or install a wheel with "
+                "the native extension."
+            )
+        return self.engine
 
 
 def _normalize_month(value: object) -> str:

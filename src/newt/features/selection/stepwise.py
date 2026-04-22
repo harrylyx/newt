@@ -89,7 +89,7 @@ class StepwiseSelector:
         max_iter: int = 100,
         fit_intercept: bool = True,
         exclude: Optional[List[str]] = None,
-        engine: str = "rust",
+        engine: str = "auto",
         verbose: bool = True,
     ):
         """
@@ -122,8 +122,8 @@ class StepwiseSelector:
         exclude : List[str], optional
             Features to always keep in the model (force include).
         engine : str
-            Computation engine: 'rust' or 'python'. Defaults to 'rust' and
-            falls back to 'python' if the Rust extension is unavailable.
+            Computation engine: 'auto', 'rust', or 'python'. Defaults to 'auto'
+            (prefer Rust, fallback to Python when Rust is unavailable).
         verbose : bool
             Whether to show progress bars during selection.
         """
@@ -131,8 +131,8 @@ class StepwiseSelector:
             raise ValueError("direction must be 'forward', 'backward', or 'both'")
         if criterion not in ("pvalue", "aic", "bic"):
             raise ValueError("criterion must be 'pvalue', 'aic', or 'bic'")
-        if engine not in ("rust", "python"):
-            raise ValueError("engine must be 'rust' or 'python'")
+        if engine not in ("auto", "rust", "python"):
+            raise ValueError("engine must be 'auto', 'rust' or 'python'")
 
         self.direction = direction
         self.criterion = criterion
@@ -141,7 +141,16 @@ class StepwiseSelector:
         self.max_iter = max_iter
         self.fit_intercept = fit_intercept
         self.exclude = exclude or []
-        self.engine = engine if (engine == "python" or HAS_RUST) else "python"
+        if engine == "auto":
+            self.engine = "rust" if HAS_RUST else "python"
+        else:
+            if engine == "rust" and not HAS_RUST:
+                raise ImportError(
+                    "Rust engine requested but native extension is unavailable. "
+                    "Use engine='auto' or engine='python', or install a wheel with "
+                    "the native extension."
+                )
+            self.engine = engine
         self.verbose = verbose
 
         # Fitted attributes

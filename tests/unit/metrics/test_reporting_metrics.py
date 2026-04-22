@@ -1,5 +1,9 @@
+import importlib
+from unittest.mock import patch
+
 import numpy as np
 import pandas as pd
+import pytest
 
 from newt.metrics import (
     calculate_feature_psi_against_base,
@@ -121,6 +125,41 @@ def test_psi_batch_rust_engine_matches_python_engine():
     )
 
     assert np.allclose(rust_values, python_values, equal_nan=True)
+
+
+def test_psi_batch_rust_raises_and_auto_falls_back_when_extension_missing():
+    reference = pd.Series([0.1, 0.2, 0.2, 0.5, 0.8, np.nan])
+    groups = [
+        pd.Series([0.1, 0.3, 0.4, np.nan]),
+        pd.Series([0.6, 0.8, 0.9, np.nan, np.nan]),
+    ]
+
+    original_import = importlib.import_module
+
+    def selective_import(name, *args, **kwargs):
+        if name in ("newt._newt_native", "_newt_native"):
+            raise ImportError(f"mocked missing: {name}")
+        return original_import(name, *args, **kwargs)
+
+    python_values = calculate_psi_batch(
+        expected=reference,
+        actual_groups=groups,
+        engine="python",
+    )
+    with patch.object(importlib, "import_module", side_effect=selective_import):
+        with pytest.raises(ImportError, match="native extension is unavailable"):
+            calculate_psi_batch(
+                expected=reference,
+                actual_groups=groups,
+                engine="rust",
+            )
+        auto_values = calculate_psi_batch(
+            expected=reference,
+            actual_groups=groups,
+            engine="auto",
+        )
+
+    assert np.allclose(auto_values, python_values, equal_nan=True)
 
 
 def test_psi_batch_rust_matches_scalar_calculate_psi_with_exclude_strategy():

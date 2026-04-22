@@ -92,6 +92,7 @@ def calculate_latest_month_psi(
     tag_col: str,
     month_col: str,
     score_col: str,
+    engine: str = "auto",
 ) -> pd.DataFrame:
     """Calculate PSI for each month against the latest month within each tag."""
     grouped = calculate_grouped_psi(
@@ -101,7 +102,7 @@ def calculate_latest_month_psi(
         reference_mode="latest",
         reference_col=month_col,
         partition_cols=[tag_col],
-        engine="rust",
+        engine=engine,
         include_stats=False,
     )
     if grouped.empty:

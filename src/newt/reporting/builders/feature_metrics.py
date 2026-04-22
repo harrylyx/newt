@@ -59,10 +59,10 @@ def _build_feature_analysis_table(
 
     table_start = time.perf_counter()
     step_start = time.perf_counter()
-    train_iv = _calculate_batch_iv_with_fallback(
+    train_iv = _calculate_batch_iv_with_engine(
         train_frame.loc[:, feature_cols],
         train_frame[label_col],
-        engine=build_context.options.engine if build_context else "rust",
+        engine=build_context.options.engine if build_context else "auto",
     )
     LOGGER.debug(
         "build_feature_analysis_table step finished | step=calculate_train_iv "
@@ -73,10 +73,10 @@ def _build_feature_analysis_table(
 
     step_start = time.perf_counter()
     oot_iv = (
-        _calculate_batch_iv_with_fallback(
+        _calculate_batch_iv_with_engine(
             oot_frame.loc[:, feature_cols],
             oot_frame[label_col],
-            engine=build_context.options.engine if build_context else "rust",
+            engine=build_context.options.engine if build_context else "auto",
         )
         if not oot_frame.empty
         else pd.DataFrame({"feature": feature_cols, "iv": np.nan})
@@ -259,17 +259,12 @@ def _build_feature_analysis_table(
     return result, artifacts
 
 
-def _calculate_batch_iv_with_fallback(
+def _calculate_batch_iv_with_engine(
     X: pd.DataFrame,
     y: pd.Series,
-    engine: str = "rust",
+    engine: str = "auto",
 ) -> pd.DataFrame:
-    if engine == "python":
-        return calculate_batch_iv(X, y, engine="python")
-    try:
-        return calculate_batch_iv(X, y, engine="rust")
-    except Exception:
-        return calculate_batch_iv(X, y, engine="python")
+    return calculate_batch_iv(X, y, engine=engine)
 
 
 def _lookup_iv_value(iv_table: pd.DataFrame, feature: str) -> float:

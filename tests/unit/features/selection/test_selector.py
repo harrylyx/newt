@@ -2,6 +2,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
+from newt._native import load_native_module
 from newt.features.selection import FeatureSelector
 
 
@@ -154,3 +155,85 @@ def test_selector_exposes_analysis_and_selection_results(sample_data):
     assert hasattr(fs, "selection_result_")
     assert fs.analysis_result_.summary.equals(fs.eda_summary_)
     assert fs.selection_result_.selected_features == fs.selected_features_
+
+
+def test_selector_engine_validation():
+    with pytest.raises(ValueError, match="engine must be one of"):
+        FeatureSelector(engine="invalid")
+
+
+def test_selector_auto_falls_back_without_native(monkeypatch, sample_data):
+    X, y = sample_data
+    monkeypatch.setattr(
+        "newt.features.analysis.correlation.load_native_module", lambda: None
+    )
+    monkeypatch.setattr(
+        "newt.features.analysis.batch_iv.load_native_module", lambda: None
+    )
+    monkeypatch.setattr("newt.metrics.binary_metrics._load_rust_module", lambda: None)
+
+    fs = FeatureSelector(
+        engine="auto",
+        metrics=["iv", "ks", "lift_10", "missing_rate", "correlation"],
+    )
+    fs.fit(X, y)
+
+    summary = fs.eda_summary_.set_index("feature")
+    assert not summary.empty
+    assert pd.notna(summary.loc["x1", "iv"])
+    assert pd.notna(summary.loc["x1", "ks"])
+    assert pd.notna(summary.loc["x1", "lift_10"])
+
+
+def test_selector_rust_requires_native(monkeypatch, sample_data):
+    X, y = sample_data
+    monkeypatch.setattr(
+        "newt.features.selection.analyzer.require_native_module",
+        lambda: (_ for _ in ()).throw(ImportError("missing native")),
+    )
+    fs = FeatureSelector(engine="rust", metrics=["iv", "missing_rate", "correlation"])
+    with pytest.raises(ImportError, match="missing native"):
+        fs.fit(X, y)
+
+
+@pytest.mark.skipif(
+    load_native_module() is None, reason="native extension not available"
+)
+def test_selector_rust_matches_python_metrics():
+    rng = np.random.default_rng(20260422)
+    n = 600
+    x1 = rng.normal(size=n)
+    x2 = rng.normal(size=n)
+    cat = np.where(x1 > 0.3, "A", "B")
+    target_prob = 1.0 / (1.0 + np.exp(-(1.5 * x1 - 0.8 * x2)))
+    y = pd.Series((rng.random(n) < target_prob).astype(int))
+
+    X = pd.DataFrame(
+        {
+            "x1": x1,
+            "x2": x2,
+            "x3": x1 * 0.95 + rng.normal(scale=0.02, size=n),
+            "cat": cat,
+        }
+    )
+
+    metrics = ["iv", "ks", "lift_10", "missing_rate", "correlation"]
+    fs_python = FeatureSelector(engine="python", metrics=metrics).fit(X, y)
+    fs_rust = FeatureSelector(engine="rust", metrics=metrics).fit(X, y)
+
+    py = fs_python.eda_summary_.set_index("feature")
+    rust = fs_rust.eda_summary_.set_index("feature")
+
+    for metric, atol in [
+        ("iv", 1e-6),
+        ("ks", 1e-6),
+        ("lift_10", 1e-6),
+        ("correlation", 1e-8),
+    ]:
+        py_values = py[metric].to_numpy(dtype=float)
+        rust_values = rust[metric].to_numpy(dtype=float)
+        assert np.allclose(py_values, rust_values, atol=atol, equal_nan=True)
+
+    fs_python.select(iv_threshold=0.02, missing_threshold=0.8, corr_threshold=0.8)
+    fs_rust.select(iv_threshold=0.02, missing_threshold=0.8, corr_threshold=0.8)
+    assert set(fs_python.selected_features_) == set(fs_rust.selected_features_)

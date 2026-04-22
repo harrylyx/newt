@@ -33,7 +33,7 @@ newt/
 
 **Key API Patterns**:
 - **Binner**: Uses a Mixin pattern (`BinnerStatsMixin`, etc.) and `__getitem__` for `binner['feat']` access.
-- **Rust First**: Core performance paths (Binning, Selection, IV, PSI) default to Rust with Python fallback.
+- **Engine Convention**: Engine-aware APIs should follow one rule set: `engine="auto"` by default (prefer Rust, fallback to Python), `engine="rust"` is strict (no fallback), `engine="python"` forces Python.
 
 ## 3. Standards
 

@@ -9,7 +9,7 @@ A lightweight Python toolkit for efficient feature analysis and statistical diag
 - **Feature Analysis**: Robust binning statistics and transformation workflows.
 - **Feature Selection**: Pipeline-style feature selection (IV, PSI, VIF, Stepwise).
 - **Scorecard Generation**: End-to-end scorecard generation and scoring.
-- **High Performance**: High-performance Rust engine for core performance paths (Binning, Selection, IV, PSI).
+- **High Performance**: Rust-accelerated core paths with component-specific engine defaults (for example, IV/FeatureSelector/Report use `auto`).
 
 ## Installation
 

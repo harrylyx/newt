@@ -42,9 +42,13 @@ When installed from an official wheel, it works immediately:
 ```python
 from newt.features.analysis import calculate_batch_iv, calculate_iv
 
-# Uses the Rust engine by default
+# Default: engine="auto" (prefer Rust, fallback to Python)
 single = calculate_iv(df, target="target", feature="age")
 batch = calculate_batch_iv(X, y)
+
+# Force Rust
+single_rust = calculate_iv(df, target="target", feature="age", engine="rust")
+batch_rust = calculate_batch_iv(X, y, engine="rust")
 
 # Explicit Python fallback
 single_py = calculate_iv(df, target="target", feature="age", engine="python")
@@ -52,8 +56,18 @@ batch_py = calculate_batch_iv(X, y, engine="python")
 ```
 
 If the Rust extension is not available (e.g. source install without Rust
-toolchain), requesting `engine="rust"` raises a clear `ImportError` with
-instructions. The Python fallback is always available via `engine="python"`.
+toolchain), `engine="auto"` automatically falls back to Python. Requesting
+`engine="rust"` raises a clear `ImportError` with instructions. The Python
+implementation is always available via `engine="python"`.
+
+Engine defaults are component-specific:
+
+- `calculate_iv` / `calculate_batch_iv`: `engine="auto"` by default.
+- `FeatureSelector` / `FeatureAnalyzer`: `engine="auto"` by default.
+- `Report`: `engine="auto"` by default.
+- `StepwiseSelector`: `engine="auto"` by default.
+
+For these APIs, `engine="rust"` is strict: if native extension is unavailable, an error is raised.
 
 ### Optional `opt` Method Dependency Scope
 
@@ -215,7 +229,8 @@ from newt.features.selection import FeatureSelector
 # Initialize with desired metrics
 selector = FeatureSelector(
     metrics=['iv', 'missing_rate', 'ks', 'correlation'],
-    iv_bins=10
+    iv_bins=10,
+    engine='auto'  # default: auto (prefer Rust, fallback to Python)
 )
 
 # Calculate statistics
@@ -248,13 +263,13 @@ X_filtered = selector.transform(df)
 ```python
 from newt.features.selection import StepwiseSelector
 
-# Initialize with the high-performance Rust parallel engine (default)
+# Initialize with auto engine (default: prefer Rust, fallback to Python)
 stepwise = StepwiseSelector(
     direction='both',    # 'forward', 'backward', or 'both'
     criterion='aic',     # 'pvalue', 'aic', or 'bic'
     p_enter=0.05,
     p_remove=0.10,
-    engine='rust',       # 'rust' (parallel) or 'python' (statsmodels serial)
+    engine='auto',       # 'auto' | 'rust' | 'python'
     verbose=True         # Show tqdm progress bar
 )
 
@@ -826,7 +841,7 @@ df = pd.read_csv('credit_data.csv')
 target = 'default'
 
 # 2. Feature selection
-selector = FeatureSelector()
+selector = FeatureSelector()  # default engine='auto'
 selector.fit(df, df[target])
 selector.select(iv_threshold=0.02)
 X = selector.transform(df)
@@ -898,7 +913,7 @@ report = Report(
     loan_amount_col="loan_amount",          # optional
     feature_df=feature_df,                  # optional
     report_out_path="./out/model_report.xlsx",
-    engine="rust",           # default
+    engine="auto",           # default: prefer Rust, fallback to Python
     max_workers=8,           # default: min(8, cpu_count)
     parallel_sheets=True,    # default
     memory_mode="compact",   # default: "compact" | "standard"
@@ -932,7 +947,7 @@ Notes:
 - Name selectors include:
   `总览`, `模型设计`, `变量分析`, `模型表现`, `评分卡计算明细`, `分维度对比`, `新老模型对比`, `金额指标`, `画像变量`
 - If omitted, all available sheets are generated (availability still depends on inputs, e.g., OOT/tag coverage, benchmark score columns, model family, and amount columns)
-- `engine` controls report compute engine: `rust` (default) or `python`
+- `engine` controls report compute engine: `auto` (default), `rust`, or `python`
 - `max_workers` controls compute parallelism; default is `min(8, cpu_count)`
 - `parallel_sheets` enables concurrent sheet computation (Excel write remains sequential)
 - `memory_mode` controls runtime memory strategy: `compact` (default) or `standard`. Compact mode significantly reduces memory usage for 10M+ rows by using downcasted types and optimized monthly transformations.

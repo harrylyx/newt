@@ -98,14 +98,26 @@ maturin develop --manifest-path rust/newt_native/Cargo.toml --release
 
 ### Native Engine Defaults
 
-Core performance paths (IV, PSI, Binning, Selection) use the Rust engine by default.
+Engine defaults are component-specific:
+
+- `calculate_iv` / `calculate_batch_iv`: `engine="auto"` by default
+  (prefer Rust, fallback to Python when native extension is unavailable).
+- `FeatureSelector` / `FeatureAnalyzer`: `engine="auto"` by default.
+- `Report`: `engine="auto"` by default.
+- `StepwiseSelector`: `engine="auto"` by default.
+
+Across these APIs, `engine="rust"` is strict: if the native extension is unavailable, an error is raised.
 
 ```python
 from newt.features.analysis import calculate_batch_iv, calculate_iv
 
-# Default: Rust engine
+# Default: auto (prefer Rust, fallback to Python)
 single = calculate_iv(df, target="target", feature="age")
 batch = calculate_batch_iv(X, y)
+
+# Force Rust
+single_rust = calculate_iv(df, target="target", feature="age", engine="rust")
+batch_rust = calculate_batch_iv(X, y, engine="rust")
 
 # Explicit Python fallback
 single_py = calculate_iv(df, target="target", feature="age", engine="python")
@@ -140,7 +152,7 @@ pipeline = (
 scores = pipeline.score(X_new)
 
 # Option 2: Using individual components
-# Feature selection
+# Feature selection (default engine='auto')
 selector = FeatureSelector()
 selector.fit(df, df[target])
 selector.select(iv_threshold=0.02)
@@ -204,7 +216,8 @@ binner.fit(X, y, method='opt', monotonic='descending')
 ### Pre-Filtering (EDA-based)
 ```python
 selector = FeatureSelector(
-    metrics=['iv', 'missing_rate', 'ks', 'correlation']
+    metrics=['iv', 'missing_rate', 'ks', 'correlation'],
+    engine='auto'  # default: auto (prefer Rust, fallback to Python)
 )
 selector.fit(df, df[target])
 selector.select(

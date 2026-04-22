@@ -2,6 +2,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
+from newt._native import load_native_module
 from newt.features.analysis.correlation import (
     calculate_correlation_matrix,
     get_high_correlation_pairs,
@@ -58,6 +59,37 @@ def test_correlation(analysis_data):
             found_x1_x2 = True
             break
     assert found_x1_x2
+
+
+@pytest.mark.skipif(
+    load_native_module() is None, reason="native extension not available"
+)
+@pytest.mark.parametrize(
+    "method,atol",
+    [
+        ("pearson", 1e-8),
+        ("spearman", 1e-8),
+        ("kendall", 1e-6),
+    ],
+)
+def test_correlation_rust_matches_python(analysis_data, method, atol):
+    df = analysis_data[["x1", "x2", "x3"]]
+    py_corr = calculate_correlation_matrix(df, method=method, engine="python")
+    rust_corr = calculate_correlation_matrix(df, method=method, engine="rust")
+
+    assert np.allclose(
+        py_corr.to_numpy(),
+        rust_corr.to_numpy(),
+        atol=atol,
+        equal_nan=True,
+    )
+
+    py_pairs = get_high_correlation_pairs(py_corr, threshold=0.2, engine="python")
+    rust_pairs = get_high_correlation_pairs(rust_corr, threshold=0.2, engine="rust")
+    assert len(py_pairs) == len(rust_pairs)
+    for left, right in zip(py_pairs, rust_pairs):
+        assert {left["var1"], left["var2"]} == {right["var1"], right["var2"]}
+        assert np.isclose(left["correlation"], right["correlation"], atol=atol)
 
 
 def test_iv_calculator(analysis_data):

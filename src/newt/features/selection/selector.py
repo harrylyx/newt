@@ -39,6 +39,7 @@ class FeatureSelector:
         iv_bins: int = BINNING.DEFAULT_BUCKETS,
         lift_k: float = 0.1,
         corr_method: str = "pearson",
+        engine: str = "auto",
     ):
         """Initialize the FeatureSelector.
 
@@ -48,15 +49,18 @@ class FeatureSelector:
             iv_bins: Number of bins for initial IV calculation.
             lift_k: Fraction of population to use for Lift calculation (e.g., top 10%).
             corr_method: Correlation method ('pearson', 'spearman', 'kendall').
+            engine: Execution engine ('auto', 'rust', 'python').
         """
         self._analyzer = FeatureAnalyzer(
             metrics=metrics,
             iv_bins=iv_bins,
             lift_k=lift_k,
             corr_method=corr_method,
+            engine=engine,
         )
-        self._filter = FeatureSelectionFilter()
+        self._filter = FeatureSelectionFilter(engine=engine)
         self.metrics: Set[str] = set(self._analyzer.metrics)
+        self.engine = engine
 
         self.eda_summary_: pd.DataFrame = pd.DataFrame()
         self.analysis_result_: Optional[FeatureAnalysisResult] = None

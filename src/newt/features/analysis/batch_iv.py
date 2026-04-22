@@ -1,16 +1,18 @@
-"""Batch IV calculation helpers with a Rust-backed engine."""
+"""Batch IV calculation helpers with Rust-first engine support."""
 
 from __future__ import annotations
 
-from typing import Optional, Sequence
+from typing import Dict, Optional, Sequence
 
 import numpy as np
 import pandas as pd
 
-from newt._native import require_native_module
+from newt._native import load_native_module, require_native_module
 from newt.config import BINNING
 
-from .iv_math import calculate_iv_from_counts
+from .iv_math import build_iv_summary, calculate_iv_from_counts, prepare_feature_for_iv
+
+VALID_ENGINES = frozenset(["auto", "rust", "python"])
 
 
 def calculate_batch_iv(
@@ -19,19 +21,24 @@ def calculate_batch_iv(
     features: Optional[Sequence[str]] = None,
     bins: int = BINNING.DEFAULT_BUCKETS,
     epsilon: float = BINNING.DEFAULT_EPSILON,
-    engine: str = "rust",
+    engine: str = "auto",
 ) -> pd.DataFrame:
     """Calculate IV for many features."""
+    if engine not in VALID_ENGINES:
+        raise ValueError(
+            f"engine must be one of {sorted(VALID_ENGINES)}, got: {engine}"
+        )
+
     feature_names = list(features) if features is not None else X.columns.tolist()
     target = pd.to_numeric(y, errors="coerce")
     valid_target = target.isin([0, 1])
-    target_values = target.loc[valid_target].astype(int).tolist()
+    target_valid = target.loc[valid_target].astype(int)
 
     if engine == "python":
         values = [
-            _calculate_single_iv(
-                pd.to_numeric(X.loc[valid_target, feature], errors="coerce"),
-                target.loc[valid_target].astype(int),
+            _calculate_single_iv_mixed(
+                X.loc[valid_target, feature],
+                target_valid,
                 bins=bins,
                 epsilon=epsilon,
             )
@@ -39,52 +46,173 @@ def calculate_batch_iv(
         ]
         return pd.DataFrame({"feature": feature_names, "iv": values})
 
-    if engine != "rust":
-        raise ValueError("engine must be 'rust' or 'python'")
-
-    rust_module = _load_rust_extension()
-
-    # Prefer numpy path (zero-copy, avoids per-feature List[Optional[float]])
-    numpy_fn = getattr(rust_module, "calculate_batch_iv_numpy", None)
-    if callable(numpy_fn):
-        feature_arrays = [
-            np.ascontiguousarray(
-                pd.to_numeric(
-                    X.loc[valid_target, feature],
-                    errors="coerce",
-                ).to_numpy(dtype=np.float64),
-            )
-            for feature in feature_names
-        ]
-        target_array = np.ascontiguousarray(
-            target.loc[valid_target].astype(np.int64).to_numpy()
+    if engine == "rust":
+        value_map = _calculate_batch_iv_rust(
+            X=X,
+            target=target_valid,
+            feature_names=feature_names,
+            bins=bins,
+            epsilon=epsilon,
+            strict=True,
+            fallback=False,
         )
-        values = numpy_fn(
-            feature_arrays,
-            target_array,
-            int(bins),
-            float(epsilon),
+    else:
+        value_map = _calculate_batch_iv_rust(
+            X=X,
+            target=target_valid,
+            feature_names=feature_names,
+            bins=bins,
+            epsilon=epsilon,
+            strict=False,
+            fallback=True,
         )
-        return pd.DataFrame({"feature": feature_names, "iv": values})
 
-    # Legacy path: List[Optional[float]]
-    feature_vectors = [
-        [
-            None if pd.isna(value) else float(value)
-            for value in pd.to_numeric(
-                X.loc[valid_target, feature],
-                errors="coerce",
-            ).tolist()
-        ]
-        for feature in feature_names
-    ]
-    values = rust_module.calculate_batch_iv(
-        feature_vectors,
-        target_values,
-        int(bins),
-        float(epsilon),
+    return pd.DataFrame(
+        {
+            "feature": feature_names,
+            "iv": [float(value_map.get(feature, np.nan)) for feature in feature_names],
+        }
     )
-    return pd.DataFrame({"feature": feature_names, "iv": values})
+
+
+def _calculate_batch_iv_rust(
+    X: pd.DataFrame,
+    target: pd.Series,
+    feature_names: Sequence[str],
+    bins: int,
+    epsilon: float,
+    strict: bool,
+    fallback: bool,
+) -> Dict[str, float]:
+    module = require_native_module() if strict else load_native_module()
+    if module is None:
+        if fallback:
+            return _calculate_batch_iv_python_subset(
+                X=X,
+                target=target,
+                feature_names=feature_names,
+                bins=bins,
+                epsilon=epsilon,
+            )
+        raise ImportError("Rust native extension is unavailable.")
+
+    results: Dict[str, float] = {}
+    numeric_features = [
+        feature
+        for feature in feature_names
+        if pd.api.types.is_numeric_dtype(X[feature])
+    ]
+    categorical_features = [
+        feature for feature in feature_names if feature not in numeric_features
+    ]
+
+    if numeric_features:
+        try:
+            numpy_fn = getattr(module, "calculate_batch_iv_numpy", None)
+            if not callable(numpy_fn):
+                raise RuntimeError("Rust numeric batch IV function is unavailable.")
+
+            feature_arrays = [
+                np.ascontiguousarray(
+                    pd.to_numeric(
+                        X.loc[target.index, feature],
+                        errors="coerce",
+                    ).to_numpy(dtype=np.float64)
+                )
+                for feature in numeric_features
+            ]
+            target_array = np.ascontiguousarray(target.to_numpy(dtype=np.int64))
+            values = numpy_fn(feature_arrays, target_array, int(bins), float(epsilon))
+            results.update(
+                {
+                    feature: float(value)
+                    for feature, value in zip(numeric_features, values)
+                }
+            )
+        except Exception:
+            if fallback:
+                results.update(
+                    _calculate_batch_iv_python_subset(
+                        X=X,
+                        target=target,
+                        feature_names=numeric_features,
+                        bins=bins,
+                        epsilon=epsilon,
+                    )
+                )
+            else:
+                raise
+
+    if categorical_features:
+        try:
+            categorical_fn = getattr(module, "calculate_batch_categorical_iv", None)
+            if not callable(categorical_fn):
+                raise RuntimeError("Rust categorical batch IV function is unavailable.")
+
+            feature_vectors = []
+            for feature in categorical_features:
+                series = X.loc[target.index, feature]
+                vector = series.astype("object").where(series.notna(), None).tolist()
+                feature_vectors.append(vector)
+            values = categorical_fn(feature_vectors, target.astype(int).tolist())
+            results.update(
+                {
+                    feature: float(value)
+                    for feature, value in zip(categorical_features, values)
+                }
+            )
+        except Exception:
+            if fallback:
+                results.update(
+                    _calculate_batch_iv_python_subset(
+                        X=X,
+                        target=target,
+                        feature_names=categorical_features,
+                        bins=bins,
+                        epsilon=epsilon,
+                    )
+                )
+            else:
+                raise
+
+    return results
+
+
+def _calculate_batch_iv_python_subset(
+    X: pd.DataFrame,
+    target: pd.Series,
+    feature_names: Sequence[str],
+    bins: int,
+    epsilon: float,
+) -> Dict[str, float]:
+    return {
+        feature: _calculate_single_iv_mixed(
+            X.loc[target.index, feature],
+            target,
+            bins=bins,
+            epsilon=epsilon,
+        )
+        for feature in feature_names
+    }
+
+
+def _calculate_single_iv_mixed(
+    series: pd.Series,
+    target: pd.Series,
+    bins: int,
+    epsilon: float,
+) -> float:
+    if pd.api.types.is_numeric_dtype(series):
+        return _calculate_single_iv(
+            pd.to_numeric(series, errors="coerce"),
+            target,
+            bins=bins,
+            epsilon=epsilon,
+        )
+
+    prepared = prepare_feature_for_iv(series, buckets=bins)
+    _, iv_value = build_iv_summary(prepared, target)
+    return float(iv_value)
 
 
 def _calculate_single_iv(
@@ -93,7 +221,7 @@ def _calculate_single_iv(
     bins: int,
     epsilon: float,
 ) -> float:
-    """Python reference implementation for IV."""
+    """Python reference implementation for numeric IV."""
     numeric = pd.to_numeric(series, errors="coerce")
     non_missing = numeric.dropna()
     if non_missing.empty or non_missing.nunique() <= 1:
@@ -115,7 +243,6 @@ def _calculate_single_iv(
     if total_good == 0 or total_bad == 0:
         return 0.0
 
-    # Kept for API compatibility; toad-compatible smoothing is now fixed.
     _ = epsilon
     return calculate_iv_from_counts(good_counts, bad_counts)
 
@@ -145,11 +272,5 @@ def _bin_index(value: object, edges: np.ndarray) -> int:
 
 
 def _load_rust_extension():
-    """Import the compiled Rust extension from the package.
-
-    In installed environments the extension is available as
-    ``newt._newt_native``. If the extension is not present (e.g. when
-    installed from a pure-Python sdist without a Rust toolchain), a clear
-    ``ImportError`` is raised.  No hidden local compilation is attempted.
-    """
+    """Compatibility helper retained for packaging tests."""
     return require_native_module()

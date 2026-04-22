@@ -35,6 +35,29 @@ fn calculate_single_iv(feature: &[Option<f64>], target: &[i64], bins: usize, _ep
     iv_from_counts(&good_counts, &bad_counts)
 }
 
+fn calculate_single_categorical_iv(feature: &[Option<String>], target: &[i64]) -> f64 {
+    let mut counts: HashMap<String, (f64, f64)> = HashMap::new();
+
+    for (value, label) in feature.iter().zip(target.iter()) {
+        let key = value.clone().unwrap_or_else(|| "__MISSING__".to_string());
+        let entry = counts.entry(key).or_insert((0.0_f64, 0.0_f64));
+        if *label == 1 {
+            entry.1 += 1.0;
+        } else {
+            entry.0 += 1.0;
+        }
+    }
+
+    if counts.is_empty() {
+        return 0.0;
+    }
+
+    let (good_counts, bad_counts): (Vec<f64>, Vec<f64>) =
+        counts.values().map(|(good, bad)| (*good, *bad)).unzip();
+
+    iv_from_counts(&good_counts, &bad_counts)
+}
+
 fn calculate_single_iv_f64(feature: &[f64], target: &[i64], bins: usize, _epsilon: f64) -> f64 {
     let values: Vec<f64> = feature
         .iter()
@@ -147,37 +170,47 @@ fn calculate_categorical_iv(feature: Vec<Option<String>>, target: Vec<i64>) -> P
         ));
     }
 
-    let mut counts: HashMap<String, (f64, f64)> = HashMap::new();
+    if target.iter().any(|label| *label != 0 && *label != 1) {
+        return Err(pyo3::exceptions::PyValueError::new_err(
+            "Target values must be binary (0/1).",
+        ));
+    }
 
-    for (value, label) in feature.iter().zip(target.iter()) {
-        if *label != 0 && *label != 1 {
+    Ok(calculate_single_categorical_iv(&feature, &target))
+}
+
+#[pyfunction]
+fn calculate_batch_categorical_iv(
+    features: Vec<Vec<Option<String>>>,
+    target: Vec<i64>,
+) -> PyResult<Vec<f64>> {
+    if target.iter().any(|label| *label != 0 && *label != 1) {
+        return Err(pyo3::exceptions::PyValueError::new_err(
+            "Target values must be binary (0/1).",
+        ));
+    }
+
+    for feature in &features {
+        if feature.len() != target.len() {
             return Err(pyo3::exceptions::PyValueError::new_err(
-                "Target values must be binary (0/1).",
+                "Feature length must match target length.",
             ));
         }
-
-        let key = value.clone().unwrap_or_else(|| "__MISSING__".to_string());
-        let entry = counts.entry(key).or_insert((0.0_f64, 0.0_f64));
-        if *label == 1 {
-            entry.1 += 1.0;
-        } else {
-            entry.0 += 1.0;
-        }
     }
 
-    if counts.is_empty() {
-        return Ok(0.0);
-    }
-
-    let (good_counts, bad_counts): (Vec<f64>, Vec<f64>) =
-        counts.values().map(|(good, bad)| (*good, *bad)).unzip();
-
-    Ok(iv_from_counts(&good_counts, &bad_counts))
+    Ok(features
+        .par_iter()
+        .map(|feature| calculate_single_categorical_iv(feature, &target))
+        .collect())
 }
 
 pub(crate) fn register(module: &Bound<'_, PyModule>) -> PyResult<()> {
     module.add_function(pyo3::wrap_pyfunction!(calculate_batch_iv, module)?)?;
     module.add_function(pyo3::wrap_pyfunction!(calculate_batch_iv_numpy, module)?)?;
     module.add_function(pyo3::wrap_pyfunction!(calculate_categorical_iv, module)?)?;
+    module.add_function(pyo3::wrap_pyfunction!(
+        calculate_batch_categorical_iv,
+        module
+    )?)?;
     Ok(())
 }

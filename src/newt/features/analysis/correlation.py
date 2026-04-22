@@ -3,62 +3,137 @@ from typing import Dict, List, Union
 import numpy as np
 import pandas as pd
 
+from newt._native import load_native_module, require_native_module
+
+VALID_CORRELATION_METHODS = frozenset(["pearson", "kendall", "spearman"])
+VALID_ENGINES = frozenset(["auto", "rust", "python"])
+
 
 def calculate_correlation_matrix(
-    df: pd.DataFrame, method: str = "pearson"
+    df: pd.DataFrame,
+    method: str = "pearson",
+    engine: str = "auto",
 ) -> pd.DataFrame:
-    """
-    Calculate correlation matrix for a DataFrame.
+    """Calculate a feature correlation matrix."""
+    if method not in VALID_CORRELATION_METHODS:
+        raise ValueError(
+            f"method must be one of {sorted(VALID_CORRELATION_METHODS)}, got: {method}"
+        )
+    if engine not in VALID_ENGINES:
+        raise ValueError(
+            f"engine must be one of {sorted(VALID_ENGINES)}, got: {engine}"
+        )
 
-    Args:
-        df: Input DataFrame.
-        method: Correlation method ('pearson', 'kendall', 'spearman').
-
-    Returns:
-        pd.DataFrame: Correlation matrix.
-    """
-    # Select only numeric columns for correlation
     numeric_df = df.select_dtypes(include=[np.number])
     if numeric_df.empty:
         return pd.DataFrame()
 
-    return numeric_df.corr(method=method)
+    if engine == "python":
+        return numeric_df.corr(method=method)
+
+    if engine == "rust":
+        return _calculate_correlation_matrix_rust(
+            numeric_df, method=method, strict=True
+        )
+
+    try:
+        return _calculate_correlation_matrix_rust(
+            numeric_df, method=method, strict=False
+        )
+    except Exception:
+        return numeric_df.corr(method=method)
 
 
 def get_high_correlation_pairs(
-    corr_matrix: pd.DataFrame, threshold: float = 0.8
+    corr_matrix: pd.DataFrame,
+    threshold: float = 0.8,
+    engine: str = "auto",
 ) -> List[Dict[str, Union[str, float]]]:
-    """
-    Identify pairs of variables with correlation above a threshold.
+    """Identify pairs of variables with correlation above a threshold."""
+    if engine not in VALID_ENGINES:
+        raise ValueError(
+            f"engine must be one of {sorted(VALID_ENGINES)}, got: {engine}"
+        )
+    if corr_matrix.empty:
+        return []
 
-    Args:
-        corr_matrix: Correlation matrix.
-        threshold: Absolute correlation threshold to identify high correlation.
+    if engine == "python":
+        return _get_high_correlation_pairs_python(corr_matrix, threshold)
 
-    Returns:
-        List of dictionaries with 'var1', 'var2', and 'correlation'.
-    """
+    if engine == "rust":
+        return _get_high_correlation_pairs_rust(corr_matrix, threshold, strict=True)
+
+    try:
+        return _get_high_correlation_pairs_rust(corr_matrix, threshold, strict=False)
+    except Exception:
+        return _get_high_correlation_pairs_python(corr_matrix, threshold)
+
+
+def _calculate_correlation_matrix_rust(
+    numeric_df: pd.DataFrame,
+    method: str,
+    strict: bool,
+) -> pd.DataFrame:
+    module = require_native_module() if strict else load_native_module()
+    if module is None:
+        raise ImportError("Rust native extension is unavailable.")
+
+    rust_fn = getattr(module, "calculate_correlation_matrix_numpy", None)
+    if not callable(rust_fn):
+        raise RuntimeError("Rust correlation function is unavailable.")
+
+    columns = [
+        np.ascontiguousarray(
+            pd.to_numeric(numeric_df[column], errors="coerce").to_numpy(
+                dtype=np.float64
+            )
+        )
+        for column in numeric_df.columns
+    ]
+    matrix = rust_fn(columns, str(method))
+    return pd.DataFrame(matrix, index=numeric_df.columns, columns=numeric_df.columns)
+
+
+def _get_high_correlation_pairs_rust(
+    corr_matrix: pd.DataFrame,
+    threshold: float,
+    strict: bool,
+) -> List[Dict[str, Union[str, float]]]:
+    module = require_native_module() if strict else load_native_module()
+    if module is None:
+        raise ImportError("Rust native extension is unavailable.")
+
+    rust_fn = getattr(module, "extract_high_correlation_pairs_numpy", None)
+    if not callable(rust_fn):
+        raise RuntimeError("Rust high-correlation extraction function is unavailable.")
+
+    matrix = np.ascontiguousarray(corr_matrix.to_numpy(dtype=np.float64))
+    rows = [np.ascontiguousarray(matrix[idx, :]) for idx in range(matrix.shape[0])]
+    raw_pairs = rust_fn(rows, float(threshold))
+    columns = corr_matrix.columns.to_list()
+    return [
+        {
+            "var1": str(columns[left]),
+            "var2": str(columns[right]),
+            "correlation": float(corr),
+        }
+        for left, right, corr in raw_pairs
+    ]
+
+
+def _get_high_correlation_pairs_python(
+    corr_matrix: pd.DataFrame,
+    threshold: float,
+) -> List[Dict[str, Union[str, float]]]:
     high_corr_pairs = []
 
-    # improved efficiency: use upper triangle to avoid duplicates and self-correlation
-    # keeps strict upper triangle (k=1), so diagonal is excluded
-
-    # Mask the lower triangle and diagonal
     mask = np.triu(np.ones(corr_matrix.shape), k=1).astype(bool)
-
-    # Use where to get indices of upper triangle elements
-    # But standard iteration might be clearer or stack?
-    # Stack approach:
     upper = corr_matrix.where(mask)
-
-    # Stack and filter
     pairs = upper.stack()
-    high_corr = pairs[pairs.abs() >= threshold]
+    high_corr = pairs[pairs.abs() >= abs(threshold)]
 
     for (var1, var2), val in high_corr.items():
         high_corr_pairs.append({"var1": var1, "var2": var2, "correlation": float(val)})
 
-    # Sort by absolute correlation descending
-    high_corr_pairs.sort(key=lambda x: abs(x["correlation"]), reverse=True)
-
+    high_corr_pairs.sort(key=lambda item: abs(item["correlation"]), reverse=True)
     return high_corr_pairs

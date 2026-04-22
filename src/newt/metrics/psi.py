@@ -13,6 +13,7 @@ from newt.config import BINNING
 
 NAN_STRATEGIES = frozenset(["separate", "exclude"])
 REFERENCE_MODES = frozenset(["latest", "value"])
+VALID_ENGINES = frozenset(["auto", "rust", "python"])
 
 
 @dataclass(frozen=True)
@@ -75,7 +76,7 @@ def calculate_psi_batch(
     buckets: int = BINNING.DEFAULT_BUCKETS,
     include_nan: bool = True,
     nan_strategy: Optional[str] = None,
-    engine: str = "rust",
+    engine: str = "auto",
 ) -> List[float]:
     """Calculate PSI values for multiple groups against a single reference distribution.
 
@@ -89,19 +90,26 @@ def calculate_psi_batch(
         buckets: Number of quantiles for discretization.
         include_nan: Whether to include NaNs.
         nan_strategy: 'separate' or 'exclude'.
-        engine: Computation engine to use: 'rust' (highly recommended) or 'python'.
+        engine: Computation engine: 'auto', 'rust', or 'python'.
 
     Returns:
         List[float]: A list of PSI values, one for each group in actual_groups.
 
     Examples:
         >>> actuals = [oct_data, nov_data, dec_data]
-        >>> psis = calculate_psi_batch(jan_baseline, actuals, engine='rust')
+        >>> psis = calculate_psi_batch(jan_baseline, actuals, engine='auto')
     """
     if buckets < 1:
         raise ValueError("buckets must be >= 1")
+    if engine not in VALID_ENGINES:
+        raise ValueError(
+            f"engine must be one of {sorted(VALID_ENGINES)}, got: {engine}"
+        )
 
-    strategy = _resolve_nan_strategy(include_nan=include_nan, nan_strategy=nan_strategy)
+    strategy = _resolve_nan_strategy(
+        include_nan=include_nan,
+        nan_strategy=nan_strategy,
+    )
     expected_values = _to_numeric_array(expected)
     reference = _build_psi_reference(
         expected=expected_values,
@@ -114,9 +122,17 @@ def calculate_psi_batch(
         return []
 
     if engine == "rust":
+        return _calculate_psi_batch_with_rust(
+            reference=reference,
+            actual_groups=groups,
+            strict=True,
+        )
+
+    if engine == "auto":
         rust_values = _calculate_psi_batch_with_rust(
             reference=reference,
             actual_groups=groups,
+            strict=False,
         )
         if rust_values is not None:
             return rust_values
@@ -133,24 +149,41 @@ def calculate_feature_psi_pairs_batch(
     buckets: int = BINNING.DEFAULT_BUCKETS,
     include_nan: bool = True,
     nan_strategy: Optional[str] = None,
-    engine: str = "rust",
+    engine: str = "auto",
 ) -> List[float]:
     """Calculate PSI for many (expected, actual) feature pairs."""
     if buckets < 1:
         raise ValueError("buckets must be >= 1")
     if len(expected_groups) != len(actual_groups):
         raise ValueError("expected_groups and actual_groups must have the same length")
+    if engine not in VALID_ENGINES:
+        raise ValueError(
+            f"engine must be one of {sorted(VALID_ENGINES)}, got: {engine}"
+        )
 
-    strategy = _resolve_nan_strategy(include_nan=include_nan, nan_strategy=nan_strategy)
+    strategy = _resolve_nan_strategy(
+        include_nan=include_nan,
+        nan_strategy=nan_strategy,
+    )
     expected_arrays = [_to_numeric_array(values) for values in expected_groups]
     actual_arrays = [_to_numeric_array(values) for values in actual_groups]
 
     if engine == "rust":
+        return _calculate_feature_psi_pairs_with_rust(
+            expected_groups=expected_arrays,
+            actual_groups=actual_arrays,
+            buckets=buckets,
+            strategy=strategy,
+            strict=True,
+        )
+
+    if engine == "auto":
         rust_values = _calculate_feature_psi_pairs_with_rust(
             expected_groups=expected_arrays,
             actual_groups=actual_arrays,
             buckets=buckets,
             strategy=strategy,
+            strict=False,
         )
         if rust_values is not None:
             return rust_values
@@ -181,7 +214,7 @@ def calculate_grouped_psi(
     buckets: int = BINNING.DEFAULT_BUCKETS,
     include_nan: bool = True,
     nan_strategy: Optional[str] = None,
-    engine: str = "rust",
+    engine: str = "auto",
     include_stats: bool = False,
 ) -> pd.DataFrame:
     """Calculate PSI for grouped DataFrame slices (e.g., month-over-month).
@@ -203,7 +236,7 @@ def calculate_grouped_psi(
         buckets: Number of quantiles for discretization.
         include_nan: Whether to include NaNs.
         nan_strategy: 'separate' or 'exclude'.
-        engine: Computation engine ('rust' or 'python').
+        engine: Computation engine ('auto', 'rust', or 'python').
         include_stats: Whether to include sample counts and missing rates in output.
 
     Returns:
@@ -345,7 +378,7 @@ def calculate_feature_psi_against_base(
     buckets: int = BINNING.DEFAULT_BUCKETS,
     include_nan: bool = True,
     nan_strategy: Optional[str] = None,
-    engine: str = "rust",
+    engine: str = "auto",
     include_stats: bool = True,
 ) -> pd.DataFrame:
     """Calculate stability (PSI) for multiple features against a fixed baseline slice.
@@ -364,7 +397,7 @@ def calculate_feature_psi_against_base(
         buckets: Number of quantiles for discretization.
         include_nan: Whether to include NaNs.
         nan_strategy: 'separate' or 'exclude'.
-        engine: Computation engine ('rust' or 'python').
+        engine: Computation engine ('auto', 'rust', or 'python').
         include_stats: Whether to include sample counts in the output.
 
     Returns:
@@ -575,9 +608,14 @@ def _calculate_psi_batch_with_python(
 def _calculate_psi_batch_with_rust(
     reference: _PsiReference,
     actual_groups: Sequence[Union[np.ndarray, list, pd.Series]],
+    strict: bool,
 ) -> Optional[List[float]]:
     module = _load_rust_module()
     if module is None:
+        if strict:
+            raise ImportError(
+                "Rust engine requested but native extension is unavailable."
+            )
         return None
 
     # Prefer numpy path (zero-copy, avoids List[Optional[float]] overhead)
@@ -597,11 +635,18 @@ def _calculate_psi_batch_with_rust(
             )
             return [float(item) for item in values]
         except Exception:
+            if strict:
+                raise RuntimeError("Rust PSI batch execution failed.")
             pass  # fall through to legacy path
 
     # Legacy path: List[Optional[float]]
     legacy_fn = getattr(module, "calculate_psi_batch_from_edges", None)
     if not callable(legacy_fn):
+        if strict:
+            raise RuntimeError(
+                "Rust engine requested but PSI batch function is unavailable "
+                "in native extension."
+            )
         return None
     try:
         group_values = [_to_optional_float_list(group) for group in actual_groups]
@@ -625,6 +670,8 @@ def _calculate_psi_batch_with_rust(
             )
         return [float(item) for item in values]
     except Exception:
+        if strict:
+            raise RuntimeError("Rust PSI batch execution failed.")
         return None
 
 
@@ -633,13 +680,23 @@ def _calculate_feature_psi_pairs_with_rust(
     actual_groups: Sequence[np.ndarray],
     buckets: int,
     strategy: str,
+    strict: bool,
 ) -> Optional[List[float]]:
     module = _load_rust_module()
     if module is None:
+        if strict:
+            raise ImportError(
+                "Rust engine requested but native extension is unavailable."
+            )
         return None
 
     fn = getattr(module, "calculate_feature_psi_pairs_numpy", None)
     if not callable(fn):
+        if strict:
+            raise RuntimeError(
+                "Rust engine requested but calculate_feature_psi_pairs_numpy "
+                "is unavailable in native extension."
+            )
         return None
 
     try:
@@ -661,6 +718,8 @@ def _calculate_feature_psi_pairs_with_rust(
         )
         return [float(item) for item in values]
     except Exception:
+        if strict:
+            raise RuntimeError("Rust feature PSI pairs execution failed.")
         return None
 
 

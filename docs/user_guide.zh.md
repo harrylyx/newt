@@ -40,16 +40,29 @@ Newt 包含一个高性能的 Rust 扩展，用于加速核心计算路径，包
 ```python
 from newt.features.analysis import calculate_batch_iv, calculate_iv
 
-# 默认使用 Rust 引擎
+# 默认：engine="auto"（优先 Rust，不可用时回退 Python）
 single = calculate_iv(df, target="target", feature="age")
 batch = calculate_batch_iv(X, y)
+
+# 强制使用 Rust
+single_rust = calculate_iv(df, target="target", feature="age", engine="rust")
+batch_rust = calculate_batch_iv(X, y, engine="rust")
 
 # 显式使用 Python 回退实现
 single_py = calculate_iv(df, target="target", feature="age", engine="python")
 batch_py = calculate_batch_iv(X, y, engine="python")
 ```
 
-如果 Rust 扩展不可用（例如从源码安装且没有 Rust 工具链），请求 `engine="rust"` 会抛出明确的 `ImportError` 并附带安装指引。Python 回退实现始终可通过 `engine="python"` 使用。
+如果 Rust 扩展不可用（例如从源码安装且没有 Rust 工具链），`engine="auto"` 会自动回退到 Python；显式请求 `engine="rust"` 会抛出明确的 `ImportError` 并附带安装指引。Python 实现始终可通过 `engine="python"` 使用。
+
+各组件的默认引擎并不完全相同：
+
+- `calculate_iv` / `calculate_batch_iv`：默认 `engine="auto"`。
+- `FeatureSelector` / `FeatureAnalyzer`：默认 `engine="auto"`。
+- `Report`：默认 `engine="auto"`。
+- `StepwiseSelector`：默认 `engine="auto"`。
+
+以上接口里，`engine="rust"` 是严格模式：如果本机没有可用的原生扩展，会直接报错。
 
 ### `opt` 方法的可选依赖范围
 
@@ -210,7 +223,8 @@ from newt.features.selection import FeatureSelector
 # 使用所需指标初始化
 selector = FeatureSelector(
     metrics=['iv', 'missing_rate', 'ks', 'correlation'],
-    iv_bins=10
+    iv_bins=10,
+    engine='auto'  # 默认：auto（优先 Rust，不可用时回退 Python）
 )
 
 # 计算统计量
@@ -243,13 +257,13 @@ X_filtered = selector.transform(df)
 ```python
 from newt.features.selection import StepwiseSelector
 
-# 使用高性能 Rust 并行引擎初始化（默认）
+# 使用 auto 引擎初始化（默认：优先 Rust，不可用时回退 Python）
 stepwise = StepwiseSelector(
     direction='both',    # 可选 'forward', 'backward', 或 'both'
     criterion='aic',     # 可选 'pvalue', 'aic', 或 'bic'
     p_enter=0.05,
     p_remove=0.10,
-    engine='rust',       # 'rust'（高性能并行）或 'python'（传统 statsmodels）
+    engine='auto',       # 'auto' | 'rust' | 'python'
     verbose=True         # 显示 tqdm 进度条
 )
 
@@ -821,7 +835,7 @@ df = pd.read_csv('credit_data.csv')
 target = 'default'
 
 # 2. 特征选择
-selector = FeatureSelector()
+selector = FeatureSelector()  # 默认 engine='auto'
 selector.fit(df, df[target])
 selector.select(iv_threshold=0.02)
 X = selector.transform(df)
@@ -893,7 +907,7 @@ report = Report(
     loan_amount_col="loan_amount",          # 可选
     feature_df=feature_df,                  # 可选
     report_out_path="./out/model_report.xlsx",
-    engine="rust",           # 默认
+    engine="auto",           # 默认：优先 Rust，不可用时回退 Python
     max_workers=8,           # 默认: min(8, cpu_count)
     parallel_sheets=True,    # 默认
     memory_mode="compact",   # 默认: "compact" | "standard"
@@ -927,7 +941,7 @@ report.generate()
 - 名称可选值包括：
   `总览`、`模型设计`、`变量分析`、`模型表现`、`评分卡计算明细`、`分维度对比`、`新老模型对比`、`金额指标`、`画像变量`
 - 不传 `sheet_list` 时，会输出当前输入条件下“可用”的全部页面（是否可用取决于 OOT/tag 覆盖、对比分数字段、模型类型、金额列等）
-- `engine` 控制报表计算引擎：`rust`（默认）或 `python`
+- `engine` 控制报表计算引擎：`auto`（默认）、`rust` 或 `python`
 - `max_workers` 控制并行计算线程数；默认是 `min(8, cpu_count)`
 - `parallel_sheets` 控制是否并行计算各个 sheet（Excel 写入仍是串行）
 - `memory_mode` 控制内存策略：`compact`（默认）或 `standard`。Compact 模式通过使用下采样类型和优化的按月转换逻辑，显著降低处理千万级数据时的内存占用。

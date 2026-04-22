@@ -22,16 +22,16 @@ Test Environment:
 
 ## Usage
 
-By default, `StepwiseSelector` uses the Rust engine if the extension is installed.
+By default, `StepwiseSelector` uses `engine='auto'` (prefer Rust; fallback to Python when Rust is unavailable).
 
 ```python
 from newt.features.selection import StepwiseSelector
 
-# Uses high-performance Rust parallel engine by default
+# Uses auto engine by default (prefer Rust)
 selector = StepwiseSelector(
     direction='forward',
     criterion='aic',
-    engine='rust',
+    engine='auto',
     verbose=True
 )
 

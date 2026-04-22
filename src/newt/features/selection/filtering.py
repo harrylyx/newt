@@ -11,6 +11,9 @@ from newt.results import FeatureAnalysisResult, FeatureSelectionResult
 class FeatureSelectionFilter:
     """Apply threshold-based filtering to an analysis result."""
 
+    def __init__(self, engine: str = "auto"):
+        self.engine = engine
+
     def select(
         self,
         analysis: FeatureAnalysisResult,
@@ -98,7 +101,11 @@ class FeatureSelectionFilter:
         final_selection = [column for column in candidates if column not in corr_matrix]
 
         sub_matrix = corr_matrix.loc[valid_candidates, valid_candidates]
-        high_corr_pairs = get_high_correlation_pairs(sub_matrix, threshold)
+        high_corr_pairs = get_high_correlation_pairs(
+            sub_matrix,
+            threshold,
+            engine=self.engine,
+        )
 
         to_remove: Set[str] = set()
         corr_reasons: Dict[str, List[Tuple[str, float]]] = {}

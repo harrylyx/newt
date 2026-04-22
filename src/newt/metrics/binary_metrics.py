@@ -334,11 +334,25 @@ def calculate_binary_metrics_batch(
 
     Args:
         groups: Sequence of (y_true, y_score) array pairs.
-        engine: ``"python"`` or ``"rust"`` (Phase 2).
+        engine: ``"python"``, ``"rust"``, or ``"auto"``.
     """
     levels = tuple(lift_levels) if lift_levels is not None else PERCENT_LEVELS
 
+    if engine not in {"python", "rust", "auto"}:
+        raise ValueError("engine must be 'python', 'rust' or 'auto'")
+
     if engine == "rust":
+        return _rust_binary_metrics_batch(
+            groups=groups,
+            lift_use_descending_score=lift_use_descending_score,
+            reverse_auc_label=reverse_auc_label,
+            metrics_mode=metrics_mode,
+            bins=bins,
+            levels=levels,
+            strict=True,
+        )
+
+    if engine == "auto":
         rust_result = _rust_binary_metrics_batch(
             groups=groups,
             lift_use_descending_score=lift_use_descending_score,
@@ -346,6 +360,7 @@ def calculate_binary_metrics_batch(
             metrics_mode=metrics_mode,
             bins=bins,
             levels=levels,
+            strict=False,
         )
         if rust_result is not None:
             return rust_result
@@ -371,13 +386,23 @@ def _rust_binary_metrics_batch(
     metrics_mode: str,
     bins: int,
     levels: Tuple[float, ...],
+    strict: bool,
 ) -> Optional[List[Dict[str, float]]]:
     module = _load_rust_module()
     if module is None:
+        if strict:
+            raise ImportError(
+                "Rust engine requested but native extension is unavailable."
+            )
         return None
 
     fn = getattr(module, "calculate_binary_metrics_batch_numpy", None)
     if not callable(fn):
+        if strict:
+            raise RuntimeError(
+                "Rust engine requested but calculate_binary_metrics_batch_numpy "
+                "is unavailable in native extension."
+            )
         return None
 
     try:
@@ -400,6 +425,8 @@ def _rust_binary_metrics_batch(
         )
         return [{str(key): float(val) for key, val in row.items()} for row in values]
     except Exception:
+        if strict:
+            raise RuntimeError("Rust binary metrics execution failed.")
         return None
 
 

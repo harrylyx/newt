@@ -1,5 +1,6 @@
 mod binary_metrics;
 mod binning;
+mod correlation;
 mod iv;
 mod logit;
 mod psi;
@@ -12,6 +13,7 @@ fn _newt_native(_py: Python<'_>, module: &Bound<'_, PyModule>) -> PyResult<()> {
     iv::register(module)?;
     psi::register(module)?;
     binary_metrics::register(module)?;
+    correlation::register(module)?;
     binning::register(module)?;
     logit::register(module)?;
     Ok(())

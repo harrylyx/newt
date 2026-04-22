@@ -4,6 +4,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
+import newt.features.analysis.iv_calculator as iv_calculator_module
 from newt.features.analysis.iv_calculator import calculate_iv
 from newt.features.analysis.iv_math import prepare_feature_for_iv
 
@@ -113,6 +114,21 @@ def test_calculate_iv_rust_matches_python():
 
     assert rust_numeric["iv"] == pytest.approx(py_numeric["iv"], abs=1e-9)
     assert rust_categorical["iv"] == pytest.approx(py_categorical["iv"], abs=1e-9)
+
+
+def test_calculate_iv_default_auto_matches_python_when_native_unavailable(monkeypatch):
+    df = _build_small_dataset()
+    monkeypatch.setattr(iv_calculator_module, "load_native_module", lambda: None)
+
+    default_result = calculate_iv(df, target="target", feature="cat", buckets=5)
+    python_result = calculate_iv(
+        df,
+        target="target",
+        feature="cat",
+        buckets=5,
+        engine="python",
+    )
+    assert default_result["iv"] == pytest.approx(python_result["iv"], abs=1e-9)
 
 
 def test_userinfo_24_iv_regression_matches_toad():

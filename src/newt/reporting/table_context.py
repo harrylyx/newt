@@ -14,7 +14,7 @@ import pandas as pd
 class ReportBuildOptions:
     """Runtime knobs for report compute path."""
 
-    engine: str = "rust"
+    engine: str = "auto"
     max_workers: int = 4
     parallel_sheets: bool = True
     memory_mode: str = "compact"

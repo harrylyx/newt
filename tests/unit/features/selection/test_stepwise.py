@@ -5,6 +5,7 @@ import pandas as pd
 import pytest
 import statsmodels.api as sm
 
+import newt.features.selection.stepwise as stepwise_module
 from newt.features.selection.stepwise import StepwiseSelector
 
 try:
@@ -59,6 +60,7 @@ class TestStepwiseSelectorInit:
         assert selector.criterion == "aic"
         assert selector.p_enter == 0.05
         assert selector.p_remove == 0.10
+        assert selector.engine in {"rust", "python"}
         assert not selector.is_fitted_
 
     def test_custom_init(self):
@@ -90,6 +92,18 @@ class TestStepwiseSelectorInit:
         """Test invalid engine raises error."""
         with pytest.raises(ValueError):
             StepwiseSelector(engine="invalid")
+
+    def test_auto_engine_falls_back_to_python_without_rust(self, monkeypatch):
+        """Auto engine should resolve to python when Rust extension is unavailable."""
+        monkeypatch.setattr(stepwise_module, "HAS_RUST", False)
+        selector = StepwiseSelector(engine="auto")
+        assert selector.engine == "python"
+
+    def test_rust_engine_raises_without_rust(self, monkeypatch):
+        """Strict rust mode should raise when native extension is unavailable."""
+        monkeypatch.setattr(stepwise_module, "HAS_RUST", False)
+        with pytest.raises(ImportError, match="Rust engine requested"):
+            StepwiseSelector(engine="rust")
 
 
 class TestStepwiseSelectorFit:

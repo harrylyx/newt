@@ -4,6 +4,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
+import newt.reporting.report as report_module
 from newt.reporting import Report
 
 openpyxl = pytest.importorskip("openpyxl")
@@ -825,7 +826,44 @@ def test_report_runtime_option_validation_rejects_invalid_engine(
         engine="invalid-engine",
     )
 
-    with pytest.raises(ValueError, match="engine must be 'rust' or 'python'"):
+    with pytest.raises(ValueError, match="engine must be 'auto', 'rust' or 'python'"):
+        report.generate()
+
+
+def test_report_auto_engine_resolves_to_python_when_native_missing(
+    report_frame,
+    fake_lightgbm_model,
+    monkeypatch,
+):
+    report = Report(
+        data=report_frame,
+        model=fake_lightgbm_model,
+        tag="tag",
+        score_col="score_new",
+        date_col="obs_date",
+        label_list=["label_main"],
+        engine="auto",
+    )
+    monkeypatch.setattr(report_module, "load_native_module", lambda: None)
+    assert report._resolve_engine() == "python"
+
+
+def test_report_rust_engine_raises_when_native_missing(
+    report_frame,
+    fake_lightgbm_model,
+    monkeypatch,
+):
+    report = Report(
+        data=report_frame,
+        model=fake_lightgbm_model,
+        tag="tag",
+        score_col="score_new",
+        date_col="obs_date",
+        label_list=["label_main"],
+        engine="rust",
+    )
+    monkeypatch.setattr(report_module, "load_native_module", lambda: None)
+    with pytest.raises(ImportError, match="Rust engine requested"):
         report.generate()
 
 

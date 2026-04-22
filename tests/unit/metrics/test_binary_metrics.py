@@ -91,7 +91,27 @@ def test_calculate_binary_metrics_batch_rust_matches_python_exact():
         _assert_metric_dict_close(rust_row, python_row, atol=1e-6)
 
 
-def test_binary_metrics_batch_rust_falls_back_when_extension_missing():
+def test_binary_metrics_batch_rust_raises_when_extension_missing():
+    groups = [
+        (
+            np.array([0.0, 1.0, 1.0, 0.0, -1.0]),
+            np.array([0.1, 0.9, 0.8, 0.3, np.nan]),
+        )
+    ]
+
+    original_import = importlib.import_module
+
+    def selective_import(name, *args, **kwargs):
+        if name in ("newt._newt_native", "_newt_native"):
+            raise ImportError(f"mocked missing: {name}")
+        return original_import(name, *args, **kwargs)
+
+    with patch.object(importlib, "import_module", side_effect=selective_import):
+        with pytest.raises(ImportError, match="native extension is unavailable"):
+            calculate_binary_metrics_batch(groups=groups, engine="rust")
+
+
+def test_binary_metrics_batch_auto_falls_back_when_extension_missing():
     groups = [
         (
             np.array([0.0, 1.0, 1.0, 0.0, -1.0]),
@@ -108,9 +128,9 @@ def test_binary_metrics_batch_rust_falls_back_when_extension_missing():
 
     python_metrics = calculate_binary_metrics_batch(groups=groups, engine="python")
     with patch.object(importlib, "import_module", side_effect=selective_import):
-        rust_metrics = calculate_binary_metrics_batch(groups=groups, engine="rust")
+        auto_metrics = calculate_binary_metrics_batch(groups=groups, engine="auto")
 
-    _assert_metric_dict_close(rust_metrics[0], python_metrics[0], atol=1e-8)
+    _assert_metric_dict_close(auto_metrics[0], python_metrics[0], atol=1e-8)
 
 
 def test_feature_psi_pairs_batch_rust_matches_python():

@@ -71,7 +71,7 @@ def build_report_result(
     score_direction_summary: pd.DataFrame,
     dim_list: Sequence[str],
     var_list: Sequence[str],
-    feature_path: Optional[str],
+    feature_df: Optional[pd.DataFrame],
     selected_sheets: Sequence[str],
     prin_bal_amount_col: Optional[str] = None,
     loan_amount_col: Optional[str] = None,
@@ -171,7 +171,7 @@ def build_report_result(
     feature_dict = pd.DataFrame()
     if any(key in build_sheet_keys for key in ["variable_analysis", "portrait"]):
         step_start = time.perf_counter()
-        feature_dict = feature_metrics._load_feature_dictionary(feature_path)
+        feature_dict = feature_metrics._load_feature_dictionary_from_df(feature_df)
         _log_context_stage(
             context,
             "load_feature_dictionary",

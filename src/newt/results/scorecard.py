@@ -1,7 +1,7 @@
 """Result and specification objects for scorecard building and scoring."""
 
 from dataclasses import dataclass, field
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
 import numpy as np
 import pandas as pd
@@ -23,6 +23,35 @@ def _is_supported_lr_param(value: Any) -> bool:
     if isinstance(value, float):
         return bool(np.isfinite(value))
     return False
+
+
+def _normalize_points_decimals(value: Any) -> Optional[int]:
+    if value is None:
+        return None
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise ValueError("points_decimals must be a non-negative integer or None")
+    if value < 0:
+        raise ValueError("points_decimals must be a non-negative integer or None")
+    return int(value)
+
+
+def _extract_bin_left_boundary(bin_label: Any) -> float:
+    text = str(bin_label).strip()
+    if text == "":
+        return float("inf")
+    if "," not in text:
+        return float("inf")
+    left_text = (
+        text.replace("[", "").replace("(", "").split(",", maxsplit=1)[0].strip().lower()
+    )
+    if left_text in {"-inf", "-infinity"}:
+        return float("-inf")
+    if left_text in {"inf", "+inf", "infinity", "+infinity"}:
+        return float("inf")
+    try:
+        return float(left_text)
+    except (TypeError, ValueError):
+        return float("inf")
 
 
 @dataclass
@@ -115,6 +144,7 @@ class ScorecardSpec:
     factor: float
     offset: float
     intercept_points: float
+    points_decimals: Optional[int] = None
     feature_names: List[str] = field(default_factory=list)
     feature_scores: Dict[str, FeatureScoreSpec] = field(default_factory=dict)
     binning_rules: Dict[str, BinningRuleSpec] = field(default_factory=dict)
@@ -133,7 +163,7 @@ class ScorecardSpec:
             }
         ]
 
-        for feature in self.feature_names:
+        for feature in self._ordered_feature_names():
             feature_spec = self.feature_scores.get(feature)
             if feature_spec is None:
                 continue
@@ -143,7 +173,7 @@ class ScorecardSpec:
 
     def to_dict(self) -> Dict[str, Any]:
         """Serialize the scorecard specification."""
-        return {
+        payload = {
             "base_score": self.base_score,
             "pdo": self.pdo,
             "base_odds": float(self.base_odds),
@@ -152,8 +182,9 @@ class ScorecardSpec:
             "intercept_points": float(self.intercept_points),
             "feature_names": list(self.feature_names),
             "features": {
-                feature: score_spec.to_dict()["rows"]
-                for feature, score_spec in self.feature_scores.items()
+                feature: self.feature_scores[feature].to_dict()["rows"]
+                for feature in self._ordered_feature_names()
+                if feature in self.feature_scores
             },
             "binning_rules": {
                 feature: rule.to_dict() for feature, rule in self.binning_rules.items()
@@ -177,6 +208,9 @@ class ScorecardSpec:
                 if _is_supported_lr_param(value)
             },
         }
+        if self.points_decimals is not None:
+            payload["points_decimals"] = int(self.points_decimals)
+        return payload
 
     @classmethod
     def from_dict(cls, payload: Dict[str, Any]) -> "ScorecardSpec":
@@ -196,6 +230,7 @@ class ScorecardSpec:
             factor=float(payload["factor"]),
             offset=float(payload["offset"]),
             intercept_points=float(payload["intercept_points"]),
+            points_decimals=_normalize_points_decimals(payload.get("points_decimals")),
             feature_names=list(payload.get("feature_names", [])),
             feature_scores=feature_scores,
             binning_rules=binning_rules,
@@ -220,3 +255,61 @@ class ScorecardSpec:
                 if _is_supported_lr_param(value)
             },
         )
+
+    def normalize_points_precision(self) -> None:
+        """Apply optional points rounding precision to intercept and bin rows."""
+        decimals = _normalize_points_decimals(self.points_decimals)
+        self.points_decimals = decimals
+        if decimals is None:
+            return
+
+        self.intercept_points = float(np.round(self.intercept_points, decimals))
+        for feature_spec in self.feature_scores.values():
+            normalized_rows: List[Dict[str, Any]] = []
+            for row in feature_spec.rows:
+                normalized = dict(row)
+                if "points" in normalized and _is_finite_number(normalized["points"]):
+                    normalized["points"] = float(
+                        np.round(normalized["points"], decimals)
+                    )
+                normalized_rows.append(normalized)
+            feature_spec.rows = normalized_rows
+
+    def normalize_feature_row_order(self) -> None:
+        """Sort feature rows by bin boundary with Missing at the end."""
+        for feature in self._ordered_feature_names():
+            feature_spec = self.feature_scores.get(feature)
+            if feature_spec is None:
+                continue
+            missing_label = "Missing"
+            rule = self.binning_rules.get(feature)
+            if rule is not None:
+                missing_label = str(rule.missing_label)
+            feature_spec.rows = sorted(
+                [dict(row) for row in feature_spec.rows],
+                key=lambda row: self._feature_row_sort_key(row, missing_label),
+            )
+
+    def _ordered_feature_names(self) -> List[str]:
+        """Return feature names ordered by model list then any residual keys."""
+        ordered: List[str] = []
+        seen = set()
+        for feature in self.feature_names:
+            if feature in self.feature_scores and feature not in seen:
+                ordered.append(feature)
+                seen.add(feature)
+        for feature in self.feature_scores.keys():
+            if feature not in seen:
+                ordered.append(feature)
+                seen.add(feature)
+        return ordered
+
+    def _feature_row_sort_key(
+        self,
+        row: Dict[str, Any],
+        missing_label: str,
+    ) -> tuple:
+        label = str(row.get("bin", ""))
+        is_missing = 1 if label == str(missing_label) else 0
+        left = _extract_bin_left_boundary(label)
+        return (is_missing, left, label)

@@ -144,3 +144,31 @@ def test_generate_scorecard_requires_woe_transform(sample_data):
 
     with pytest.raises(ValueError, match="woe_transform"):
         pipeline.generate_scorecard()
+
+
+def test_pipeline_generate_scorecard_supports_points_decimals():
+    rng = np.random.default_rng(7)
+    X_train = pd.DataFrame(
+        {
+            "feature1": rng.normal(0, 1, 200),
+            "feature2": rng.normal(0, 1, 200),
+        }
+    )
+    y_train = (X_train["feature1"] + 0.4 * X_train["feature2"] > 0).astype(int)
+
+    pipeline = (
+        ScorecardPipeline(X_train, y_train)
+        .prefilter(iv_threshold=0.0, missing_threshold=1.0, corr_threshold=0.99)
+        .bin(method="quantile", n_bins=4)
+        .woe_transform()
+        .postfilter(psi_threshold=1.0, vif_threshold=50.0)
+        .build_model()
+        .generate_scorecard(points_decimals=2)
+    )
+
+    assert pipeline.scorecard_ is not None
+    assert pipeline.scorecard_.points_decimals == 2
+    scores = pipeline.score(X_train.head(20))
+    assert np.allclose(
+        scores.to_numpy(dtype=float), np.round(scores.to_numpy(dtype=float), 2)
+    )

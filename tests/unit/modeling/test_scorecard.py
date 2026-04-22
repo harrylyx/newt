@@ -167,6 +167,112 @@ def test_scorecard_score(mock_components):
     assert scores.dtype == float
 
 
+def test_scorecard_points_decimals_rounds_points_and_scores():
+    X = pd.DataFrame({"x": [1, 2, 3, np.nan, 5, 6, np.nan, 8, 9, 10]})
+    y = pd.Series([0, 0, 0, 1, 1, 1, 1, 1, 1, 1], name="target")
+    binner = Binner()
+    binner.fit(X, y, method="quantile", n_bins=2)
+
+    scorecard_raw = Scorecard().from_model(
+        {"intercept": 0.0, "coefficients": {"x": 1.0}},
+        binner,
+    )
+    scorecard_rounded = Scorecard(points_decimals=2).from_model(
+        {"intercept": 0.0, "coefficients": {"x": 1.0}},
+        binner,
+    )
+
+    exported = scorecard_rounded.export()
+    assert np.allclose(
+        exported["points"].to_numpy(dtype=float),
+        np.round(exported["points"].to_numpy(dtype=float), 2),
+    )
+    assert scorecard_rounded.intercept_points_ == pytest.approx(
+        np.round(scorecard_rounded.intercept_points_, 2)
+    )
+
+    scores_raw = scorecard_raw.score(X)
+    scores_rounded = scorecard_rounded.score(X)
+    assert np.allclose(
+        scores_rounded.to_numpy(dtype=float),
+        np.round(scores_raw.to_numpy(dtype=float), 2),
+    )
+
+
+def test_scorecard_points_decimals_uses_bankers_rounding_for_ties():
+    scorecard = _build_numeric_scorecard()
+    payload = scorecard.to_dict()
+    payload["points_decimals"] = 0
+    payload["intercept_points"] = 2.5
+    payload["features"]["x"][0]["points"] = 1.5
+    payload["features"]["x"][1]["points"] = 2.5
+
+    restored = Scorecard().from_dict(payload)
+    exported = restored.export()
+    x_rows = exported.loc[exported["feature"] == "x", "points"].to_numpy(dtype=float)
+
+    assert restored.intercept_points_ == pytest.approx(2.0)
+    assert x_rows[0] == pytest.approx(2.0)
+    assert x_rows[1] == pytest.approx(2.0)
+
+
+def test_scorecard_points_decimals_default_none_keeps_payload_compatible():
+    scorecard = _build_numeric_scorecard()
+    payload = scorecard.to_dict()
+
+    assert "points_decimals" not in payload
+    restored = Scorecard().from_dict(payload)
+    assert restored.points_decimals is None
+
+
+def test_scorecard_from_dict_reorders_feature_bins_and_keeps_missing_last():
+    scorecard = _build_multi_feature_scorecard()
+    payload = scorecard.to_dict()
+    payload["feature_names"] = ["x", "y"]
+
+    for feature in payload["feature_names"]:
+        rows = list(payload["features"][feature])
+        missing_rows = [row for row in rows if str(row["bin"]) == "Missing"]
+        non_missing_rows = [row for row in rows if str(row["bin"]) != "Missing"]
+        payload["features"][feature] = missing_rows + list(reversed(non_missing_rows))
+
+    restored = Scorecard().from_dict(payload)
+    export_table = restored.export()
+
+    assert export_table.iloc[0]["feature"] == "Intercept"
+    assert list(dict.fromkeys(export_table["feature"]))[:3] == ["Intercept", "x", "y"]
+
+    for feature in ["x", "y"]:
+        bins = export_table.loc[export_table["feature"] == feature, "bin"].tolist()
+        assert bins[-1] == "Missing"
+        left_bounds = []
+        for label in bins[:-1]:
+            left_text = (
+                str(label).replace("[", "").replace("(", "").split(",", maxsplit=1)[0]
+            ).strip()
+            if left_text == "-inf":
+                left_bounds.append(float("-inf"))
+            else:
+                left_bounds.append(float(left_text))
+        assert left_bounds == sorted(left_bounds)
+
+        serialized_bins = [
+            row["bin"] for row in restored.to_dict()["features"][feature]
+        ]
+        assert serialized_bins == bins
+
+
+def test_scorecard_points_decimals_invalid_raises():
+    with pytest.raises(
+        ValueError, match="points_decimals must be a non-negative integer or None"
+    ):
+        Scorecard(points_decimals=-1)
+    with pytest.raises(
+        ValueError, match="points_decimals must be a non-negative integer or None"
+    ):
+        Scorecard(points_decimals=1.5)
+
+
 def test_scorecard_export(mock_components):
     model, binner = mock_components
     sc = Scorecard()
@@ -292,6 +398,28 @@ def test_scorecard_dump_load_round_trip(tmp_path):
 
     pd.testing.assert_series_equal(scorecard.score(X), restored.score(X))
     assert restored.to_sql() == scorecard.to_sql()
+
+
+def test_scorecard_dump_load_round_trip_with_points_decimals(tmp_path):
+    X = pd.DataFrame({"x": [1, 2, 3, np.nan, 5, 6, np.nan, 8, 9, 10]})
+    y = pd.Series([0, 0, 0, 1, 1, 1, 1, 1, 1, 1], name="target")
+    binner = Binner()
+    binner.fit(X, y, method="quantile", n_bins=2)
+
+    scorecard = Scorecard(points_decimals=2).from_model(
+        {"intercept": 0.0, "coefficients": {"x": 1.0}},
+        binner,
+    )
+    path = tmp_path / "scorecard-rounded.json"
+    scorecard.dump(path)
+
+    restored = Scorecard.load(path)
+    assert restored.points_decimals == 2
+    pd.testing.assert_series_equal(scorecard.score(X), restored.score(X))
+    assert np.allclose(
+        restored.export()["points"].to_numpy(dtype=float),
+        np.round(restored.export()["points"].to_numpy(dtype=float), 2),
+    )
 
 
 def test_scorecard_payload_contains_lr_snapshot_without_training_data(mock_components):

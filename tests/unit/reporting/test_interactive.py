@@ -272,6 +272,41 @@ def test_calculate_model_comparison_supports_score_type_and_amount_metrics():
     assert compare_prob.columns[: len(expected_prefix)].tolist() == expected_prefix
 
 
+def test_calculate_model_comparison_uses_positive_score_intersection():
+    df = _build_dummy_data()
+    df.loc[1, "old_score"] = np.nan
+    df.loc[2, "old_score"] = 0.0
+    df.loc[4, "old_score"] = -0.1
+
+    compare_df = calculate_model_comparison(
+        data=df,
+        tag_col="tag",
+        date_col="obs_date",
+        label_list=["target"],
+        model_columns=[("new_model", "score"), ("old_model", "old_score")],
+        group_mode="tag",
+    )
+
+    new_rows = compare_df.loc[compare_df["模型"] == "new_model"].set_index("样本集")
+    old_rows = compare_df.loc[compare_df["模型"] == "old_model"].set_index("样本集")
+    assert (new_rows["总"] == old_rows["总"]).all()
+
+    score = pd.to_numeric(df["score"], errors="coerce")
+    old_score = pd.to_numeric(df["old_score"], errors="coerce")
+    intersection_mask = (
+        score.notna()
+        & old_score.notna()
+        & np.isfinite(score.to_numpy(dtype=float))
+        & np.isfinite(old_score.to_numpy(dtype=float))
+        & score.gt(0)
+        & old_score.gt(0)
+    )
+    expected_counts = df.loc[intersection_mask].groupby("tag").size()
+    for tag_value, expected_total in expected_counts.items():
+        assert int(new_rows.loc[tag_value, "总"]) == int(expected_total)
+        assert int(old_rows.loc[tag_value, "总"]) == int(expected_total)
+
+
 def test_calculate_split_metrics_amount_auc_and_ks_are_weighted():
     df = pd.DataFrame(
         {

@@ -422,11 +422,17 @@ def _build_model_pair_comparison(
     if group_mode not in {"tag", "month"}:
         raise ValueError(f"Unknown comparison mode: {group_mode}")
 
+    score_columns = [score_col for _, score_col in model_columns]
+    filtered_data = _filter_model_comparison_intersection(
+        data=data,
+        score_columns=score_columns,
+    )
+
     group_cols = [tag_col] if group_mode == "tag" else [month_col]
     frames: List[pd.DataFrame] = []
     latest_map_by_model = {
         model_name: _build_latest_month_psi_map(
-            data,
+            filtered_data,
             month_col=month_col,
             score_col=score_col,
             build_context=build_context,
@@ -436,12 +442,13 @@ def _build_model_pair_comparison(
 
     for model_name, score_col in model_columns:
         for label_col in label_list:
-            train_reference = data.loc[
-                (data[tag_col] == "train") & data[label_col].isin([0, 1]),
+            train_reference = filtered_data.loc[
+                (filtered_data[tag_col] == "train")
+                & filtered_data[label_col].isin([0, 1]),
                 score_col,
             ]
             table = _build_group_metrics(
-                data=data,
+                data=filtered_data,
                 group_cols=group_cols,
                 label_col=label_col,
                 score_col=score_col,
@@ -463,6 +470,8 @@ def _build_model_pair_comparison(
                 )
             frames.append(table)
 
+    if not frames:
+        return pd.DataFrame()
     combined = pd.concat(frames, ignore_index=True)
     model_order = {
         model_name: index for index, (model_name, _) in enumerate(model_columns)
@@ -472,6 +481,28 @@ def _build_model_pair_comparison(
         model_order=model_order,
         group_mode=group_mode,
     )
+
+
+def _filter_model_comparison_intersection(
+    data: pd.DataFrame,
+    score_columns: Sequence[str],
+) -> pd.DataFrame:
+    if not score_columns:
+        return data
+    missing = [column for column in score_columns if column not in data.columns]
+    if missing:
+        raise ValueError(f"Missing required columns: {sorted(set(missing))}")
+
+    intersection_mask = pd.Series(True, index=data.index, dtype=bool)
+    for score_col in score_columns:
+        numeric = pd.to_numeric(data[score_col], errors="coerce")
+        finite_mask = pd.Series(
+            np.isfinite(numeric.to_numpy(dtype=float, copy=False)),
+            index=data.index,
+        )
+        valid_mask = numeric.notna() & finite_mask & numeric.gt(0)
+        intersection_mask &= valid_mask
+    return data.loc[intersection_mask].copy()
 
 
 def _build_group_metrics(
@@ -504,6 +535,7 @@ def _build_group_metrics(
         loan_amount_col=loan_amount_col,
     )
     group_key = (
+        id(data),
         tuple(group_cols),
         label_col,
         score_col,

@@ -699,8 +699,7 @@ def test_report_feature_dictionary_headers_and_title_right_text(
     report_frame,
     fake_lightgbm_model,
 ):
-    feature_dict_path = tmp_path / "feature_dict.csv"
-    pd.DataFrame(
+    feature_df = pd.DataFrame(
         [
             {
                 "英文名": "feature_a",
@@ -721,7 +720,7 @@ def test_report_feature_dictionary_headers_and_title_right_text(
                 "指标表英文名": "metric_profile_income",
             },
         ]
-    ).to_csv(feature_dict_path, index=False)
+    )
 
     output_path = tmp_path / "feature_dict_report.xlsx"
     report = Report(
@@ -732,7 +731,7 @@ def test_report_feature_dictionary_headers_and_title_right_text(
         date_col="obs_date",
         label_list=["label_main"],
         var_list=["profile_income"],
-        feature_path=str(feature_dict_path),
+        feature_df=feature_df,
         sheet_list=["变量分析", "画像变量"],
         report_out_path=str(output_path),
     )
@@ -827,6 +826,27 @@ def test_report_runtime_option_validation_rejects_invalid_engine(
     )
 
     with pytest.raises(ValueError, match="engine must be 'rust' or 'python'"):
+        report.generate()
+
+
+def test_report_runtime_option_validation_rejects_invalid_feature_df(
+    report_frame,
+    fake_lightgbm_model,
+):
+    report = Report(
+        data=report_frame,
+        model=fake_lightgbm_model,
+        tag="tag",
+        score_col="score_new",
+        date_col="obs_date",
+        label_list=["label_main"],
+        feature_df="feature_dict.csv",
+    )
+
+    with pytest.raises(
+        ValueError,
+        match="feature_df must be a pandas DataFrame when provided",
+    ):
         report.generate()
 
 
@@ -930,6 +950,93 @@ def test_report_supports_scorecard_model_with_lr_summary_and_details_sheet(
     assert {"base_score", "pdo", "intercept_points"}.issubset(base_block.columns)
     assert {"变量", "分箱", "分值"}.issubset(points_block.columns)
     assert "Intercept" in points_block["变量"].values
+
+
+def test_report_scorecard_details_sheet_sorts_bins_and_places_missing_last(
+    tmp_path,
+    report_frame,
+    fake_scorecard_model,
+):
+    from newt.modeling.scorecard import Scorecard
+
+    payload = fake_scorecard_model.to_dict()
+    rows = payload["features"]["feature_a"]
+    missing_rows = [row for row in rows if str(row["bin"]) == "Missing"]
+    non_missing_rows = [row for row in rows if str(row["bin"]) != "Missing"]
+    payload["features"]["feature_a"] = missing_rows + list(reversed(non_missing_rows))
+    restored_scorecard = Scorecard().from_dict(payload)
+
+    output_path = tmp_path / "scorecard_details_sorted.xlsx"
+    report = Report(
+        data=report_frame,
+        model=restored_scorecard,
+        tag="tag",
+        score_col="score_new",
+        date_col="obs_date",
+        label_list=["label_main"],
+        sheet_list=["评分卡计算明细"],
+        report_out_path=str(output_path),
+    )
+    report.generate()
+
+    points_block = report.result_.get_sheet("评分卡计算明细").get_block("二、评分卡分值拆解").data
+    assert list(dict.fromkeys(points_block["变量"]))[:3] == [
+        "Intercept",
+        "feature_a",
+        "feature_b",
+    ]
+
+    feature_a_bins = points_block.loc[points_block["变量"] == "feature_a", "分箱"].tolist()
+    assert feature_a_bins[-1] == "Missing"
+
+    left_bounds = []
+    for label in feature_a_bins[:-1]:
+        left_text = (
+            str(label).replace("[", "").replace("(", "").split(",", maxsplit=1)[0]
+        ).strip()
+        left_bounds.append(float("-inf") if left_text == "-inf" else float(left_text))
+    assert left_bounds == sorted(left_bounds)
+
+
+def test_report_scorecard_details_sheet_uses_points_decimals_output(
+    tmp_path,
+    report_frame,
+    fake_scorecard_model,
+):
+    from newt.modeling.scorecard import Scorecard
+
+    payload = fake_scorecard_model.to_dict()
+    payload["points_decimals"] = 1
+    payload["intercept_points"] = 123.456
+    payload["features"]["feature_a"][0]["points"] = 12.345
+    payload["features"]["feature_a"][1]["points"] = -9.876
+    rounded_scorecard = Scorecard().from_dict(payload)
+
+    output_path = tmp_path / "scorecard_details_points_decimals.xlsx"
+    report = Report(
+        data=report_frame,
+        model=rounded_scorecard,
+        tag="tag",
+        score_col="score_new",
+        date_col="obs_date",
+        label_list=["label_main"],
+        sheet_list=["评分卡计算明细"],
+        report_out_path=str(output_path),
+    )
+    report.generate()
+
+    points_block = report.result_.get_sheet("评分卡计算明细").get_block("二、评分卡分值拆解").data
+    export_table = rounded_scorecard.export().rename(
+        columns={"feature": "变量", "bin": "分箱", "points": "分值"}
+    )
+    assert np.allclose(
+        points_block["分值"].to_numpy(dtype=float),
+        export_table["分值"].to_numpy(dtype=float),
+    )
+    assert np.allclose(
+        points_block["分值"].to_numpy(dtype=float),
+        np.round(points_block["分值"].to_numpy(dtype=float), 1),
+    )
 
 
 def test_report_hides_gain_weight_columns_for_logistic_models(
@@ -1268,9 +1375,39 @@ def test_report_supports_explicit_amount_metrics_sheet_selector(
 
     assert report.result_.sheet_names == ["附1 金额指标"]
     amount_sheet = report.result_.get_sheet("附1 金额指标")
-    assert amount_sheet.get_block("按tag模型效果").data["总"].notna().all()
-    assert amount_sheet.get_block("按月模型效果").data["AUC"].notna().all()
-    assert "10%金额lift" in amount_sheet.get_block("按tag模型效果").data.columns
+    excluded_headcount_columns = {
+        "总",
+        "好",
+        "坏",
+        "坏占比",
+        "AUC",
+        "KS",
+        "10%lift",
+        "5%lift",
+        "2%lift",
+        "1%lift",
+    }
+    required_amount_columns = {
+        "放款金额",
+        "逾期本金",
+        "金额坏占比",
+        "放款金额占比",
+        "逾期本金占比",
+        "金额AUC",
+        "金额KS",
+        "10%金额lift",
+        "5%金额lift",
+        "2%金额lift",
+        "1%金额lift",
+    }
+
+    for block_title in ["按tag模型效果", "按月模型效果", "分维度对比"]:
+        block_data = amount_sheet.get_block(block_title).data
+        assert excluded_headcount_columns.isdisjoint(set(block_data.columns))
+        assert required_amount_columns.issubset(set(block_data.columns))
+
+    assert amount_sheet.get_block("按tag模型效果").data["放款金额"].notna().all()
+    assert amount_sheet.get_block("按月模型效果").data["金额AUC"].notna().all()
 
 
 def test_report_does_not_auto_append_amount_sheet_when_sheet_list_excludes_it(
@@ -1302,6 +1439,115 @@ def test_report_does_not_auto_append_amount_sheet_when_sheet_list_excludes_it(
 
     assert "附3 金额指标" not in report.result_.sheet_names
     assert all("金额指标" not in sheet_name for sheet_name in report.result_.sheet_names)
+
+
+def test_report_model_comparison_uses_positive_score_intersection(
+    tmp_path,
+    report_frame,
+    fake_lightgbm_model,
+):
+    frame = report_frame.copy()
+    frame.loc[frame.groupby("tag").head(1).index, "score_old_a"] = 0.0
+    frame.loc[frame.groupby("tag").nth(1).index, "score_old_a"] = np.nan
+
+    output_path = tmp_path / "report_model_compare_intersection.xlsx"
+    report = Report(
+        data=frame,
+        model=fake_lightgbm_model,
+        tag="tag",
+        score_col="score_new",
+        date_col="obs_date",
+        label_list=["label_main"],
+        score_list=["score_old_a"],
+        sheet_list=["新老模型对比"],
+        report_out_path=str(output_path),
+    )
+    report.generate()
+
+    compare_sheet = report.result_.get_sheet("附1 新老模型对比")
+    tag_compare = compare_sheet.get_block("按tag新老模型对比(score_old_a)").data
+    new_model_rows = tag_compare.loc[tag_compare["模型"] == "score_new"].set_index("样本集")
+    old_model_rows = tag_compare.loc[tag_compare["模型"] == "score_old_a"].set_index(
+        "样本集"
+    )
+    assert (new_model_rows["总"] == old_model_rows["总"]).all()
+
+    score_new = pd.to_numeric(frame["score_new"], errors="coerce")
+    score_old = pd.to_numeric(frame["score_old_a"], errors="coerce")
+    intersection_mask = (
+        score_new.notna()
+        & score_old.notna()
+        & np.isfinite(score_new.to_numpy(dtype=float))
+        & np.isfinite(score_old.to_numpy(dtype=float))
+        & score_new.gt(0)
+        & score_old.gt(0)
+    )
+    expected_counts = frame.loc[intersection_mask].groupby("tag").size()
+    for tag_value, expected_total in expected_counts.items():
+        assert int(new_model_rows.loc[tag_value, "总"]) == int(expected_total)
+        assert int(old_model_rows.loc[tag_value, "总"]) == int(expected_total)
+
+
+def test_report_amount_sheet_model_comparison_uses_positive_score_intersection(
+    tmp_path,
+    report_frame,
+    fake_lightgbm_model,
+):
+    frame = report_frame.copy()
+    frame["prin_bal_amount"] = np.where(frame["label_main"] == 1, 45.0, 10.0)
+    frame["loan_amount"] = 100.0
+    frame.loc[frame.groupby("tag").head(1).index, "score_old_a"] = 0.0
+    frame.loc[frame.groupby("tag").nth(1).index, "score_old_a"] = np.nan
+
+    output_path = tmp_path / "report_amount_compare_intersection.xlsx"
+    report = Report(
+        data=frame,
+        model=fake_lightgbm_model,
+        tag="tag",
+        score_col="score_new",
+        date_col="obs_date",
+        label_list=["label_main"],
+        score_list=["score_old_a"],
+        dim_list=["channel_dim"],
+        sheet_list=["金额指标", "新老模型对比"],
+        report_out_path=str(output_path),
+        prin_bal_amount_col="prin_bal_amount",
+        loan_amount_col="loan_amount",
+    )
+    report.generate()
+
+    amount_sheet_name = next(
+        name for name in report.result_.sheet_names if "金额指标" in name
+    )
+    amount_sheet = report.result_.get_sheet(amount_sheet_name)
+    tag_compare = amount_sheet.get_block("按tag新老模型对比(score_old_a)").data
+    new_model_rows = tag_compare.loc[tag_compare["模型"] == "score_new"].set_index("样本集")
+    old_model_rows = tag_compare.loc[tag_compare["模型"] == "score_old_a"].set_index(
+        "样本集"
+    )
+    assert np.allclose(
+        new_model_rows["放款金额"].to_numpy(dtype=float),
+        old_model_rows["放款金额"].to_numpy(dtype=float),
+    )
+
+    score_new = pd.to_numeric(frame["score_new"], errors="coerce")
+    score_old = pd.to_numeric(frame["score_old_a"], errors="coerce")
+    intersection_mask = (
+        score_new.notna()
+        & score_old.notna()
+        & np.isfinite(score_new.to_numpy(dtype=float))
+        & np.isfinite(score_old.to_numpy(dtype=float))
+        & score_new.gt(0)
+        & score_old.gt(0)
+    )
+    expected_loan = frame.loc[intersection_mask].groupby("tag")["loan_amount"].sum()
+    for tag_value, expected_value in expected_loan.items():
+        assert float(new_model_rows.loc[tag_value, "放款金额"]) == pytest.approx(
+            float(expected_value)
+        )
+        assert float(old_model_rows.loc[tag_value, "放款金额"]) == pytest.approx(
+            float(expected_value)
+        )
 
 
 def test_report_requires_amount_columns_to_be_provided_in_pairs(

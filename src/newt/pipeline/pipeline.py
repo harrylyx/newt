@@ -251,6 +251,7 @@ class ScorecardPipeline:
         base_score: int = SCORECARD.DEFAULT_BASE_SCORE,
         pdo: int = SCORECARD.DEFAULT_PDO,
         base_odds: float = SCORECARD.DEFAULT_BASE_ODDS,
+        points_decimals: Optional[int] = None,
         **kwargs,
     ) -> "ScorecardPipeline":
         """Convert the fitted logistic model into a point-based scorecard.
@@ -259,6 +260,7 @@ class ScorecardPipeline:
             base_score: The target score at 'base_odds'.
             pdo: Points to Double the Odds.
             base_odds: The odds (Good:Bad) at 'base_score'.
+            points_decimals: Optional decimal precision for scorecard points.
             **kwargs: Additional parameters passed to Scorecard.
 
         Returns:
@@ -271,6 +273,7 @@ class ScorecardPipeline:
             base_score=base_score,
             pdo=pdo,
             base_odds=base_odds,
+            points_decimals=points_decimals,
             **kwargs,
         )
         self._state = step.run(self._state)

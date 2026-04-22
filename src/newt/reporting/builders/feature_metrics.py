@@ -629,13 +629,9 @@ def _calculate_feature_metric_score(
     raise ValueError(f"Unsupported metric: {metric_name}")
 
 
-def _load_feature_dictionary(feature_path: Optional[str]) -> pd.DataFrame:
-    if not feature_path:
+def _normalize_feature_dictionary(feature_dict: pd.DataFrame) -> pd.DataFrame:
+    if feature_dict.empty:
         return pd.DataFrame()
-    path = Path(feature_path)
-    if not path.exists():
-        return pd.DataFrame()
-    feature_dict = pd.read_csv(path)
     rename_map: Dict[str, str] = {}
     metric_alias_columns: List[str] = []
     for column in feature_dict.columns:
@@ -668,6 +664,26 @@ def _load_feature_dictionary(feature_path: Optional[str]) -> pd.DataFrame:
             )
             feature_dict = feature_dict.drop(columns=[alias_column], errors="ignore")
     return feature_dict
+
+
+def _load_feature_dictionary(feature_path: Optional[str]) -> pd.DataFrame:
+    if not feature_path:
+        return pd.DataFrame()
+    path = Path(feature_path)
+    if not path.exists():
+        return pd.DataFrame()
+    feature_dict = pd.read_csv(path)
+    return _normalize_feature_dictionary(feature_dict)
+
+
+def _load_feature_dictionary_from_df(
+    feature_df: Optional[pd.DataFrame],
+) -> pd.DataFrame:
+    if feature_df is None:
+        return pd.DataFrame()
+    if not isinstance(feature_df, pd.DataFrame):
+        raise TypeError("feature_df must be a pandas DataFrame when provided")
+    return _normalize_feature_dictionary(feature_df.copy())
 
 
 def _lookup_feature_meta(feature_dict: pd.DataFrame, feature: str) -> Dict[str, object]:

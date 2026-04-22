@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from typing import List, Optional, Sequence, Tuple
 
+import numpy as np
 import pandas as pd
 
 from newt.metrics.reporting import (
@@ -14,6 +15,67 @@ from newt.reporting.table_context import ReportBuildContext
 from newt.results import ReportBlock, ReportSheet
 
 from . import feature_metrics, group_metrics
+
+_AMOUNT_SHEET_METRIC_COLUMNS = [
+    "放款金额",
+    "逾期本金",
+    "金额坏占比",
+    "放款金额占比",
+    "逾期本金占比",
+    "金额AUC",
+    "金额KS",
+    "10%金额lift",
+    "5%金额lift",
+    "2%金额lift",
+    "1%金额lift",
+]
+_AMOUNT_SHEET_PSI_COLUMNS = [
+    "train和各集合的PSI",
+    "近期月对比各集合PSI",
+]
+
+
+def _project_amount_sheet_table(
+    table: pd.DataFrame,
+    key_columns: Sequence[str],
+) -> pd.DataFrame:
+    output_columns = [
+        *key_columns,
+        *_AMOUNT_SHEET_METRIC_COLUMNS,
+        *_AMOUNT_SHEET_PSI_COLUMNS,
+    ]
+    if table.empty:
+        return pd.DataFrame(columns=output_columns)
+
+    present_key_columns = [col for col in key_columns if col in table.columns]
+    projected = table.loc[:, present_key_columns].copy()
+    value_candidates = {
+        "放款金额": ["放款金额", "总"],
+        "逾期本金": ["逾期本金", "坏"],
+        "金额坏占比": ["金额坏占比", "坏占比"],
+        "放款金额占比": ["放款金额占比"],
+        "逾期本金占比": ["逾期本金占比"],
+        "金额AUC": ["金额AUC", "AUC"],
+        "金额KS": ["金额KS", "KS"],
+        "10%金额lift": ["10%金额lift", "10%lift"],
+        "5%金额lift": ["5%金额lift", "5%lift"],
+        "2%金额lift": ["2%金额lift", "2%lift"],
+        "1%金额lift": ["1%金额lift", "1%lift"],
+    }
+    for target_col, candidates in value_candidates.items():
+        source_col = next((col for col in candidates if col in table.columns), None)
+        projected[target_col] = table[source_col] if source_col is not None else np.nan
+
+    psi_columns = [col for col in _AMOUNT_SHEET_PSI_COLUMNS if col in table.columns]
+    for psi_col in psi_columns:
+        projected[psi_col] = table[psi_col]
+
+    ordered = [
+        *[col for col in key_columns if col in projected.columns],
+        *_AMOUNT_SHEET_METRIC_COLUMNS,
+        *psi_columns,
+    ]
+    return projected.reindex(columns=ordered)
 
 
 def build_dimensional_comparison_sheet(
@@ -231,6 +293,14 @@ def build_amount_metrics_sheet(
         loan_amount_col=loan_amount_col,
         build_context=build_context,
     )
+    tag_metrics = _project_amount_sheet_table(
+        tag_metrics,
+        key_columns=["样本标签", "模型", "样本集", "观察点月"],
+    )
+    month_metrics = _project_amount_sheet_table(
+        month_metrics,
+        key_columns=["样本标签", "模型", "样本集", "观察点月"],
+    )
     blocks.append(ReportBlock(title="按tag模型效果", data=tag_metrics))
     blocks.append(ReportBlock(title="按月模型效果", data=month_metrics))
 
@@ -250,6 +320,10 @@ def build_amount_metrics_sheet(
             metric_basis="amount",
             prin_bal_amount_col=prin_bal_amount_col,
             loan_amount_col=loan_amount_col,
+        )
+        dim_table = _project_amount_sheet_table(
+            dim_table,
+            key_columns=["维度列", "维度值", "样本标签", "模型"],
         )
         blocks.append(ReportBlock(title="分维度对比", data=dim_table))
 
@@ -293,6 +367,14 @@ def build_amount_metrics_sheet(
                 prin_bal_amount_col=prin_bal_amount_col,
                 loan_amount_col=loan_amount_col,
                 build_context=build_context,
+            )
+            tag_compare = _project_amount_sheet_table(
+                tag_compare,
+                key_columns=["样本标签", "模型", "样本集", "观察点月"],
+            )
+            month_compare = _project_amount_sheet_table(
+                month_compare,
+                key_columns=["样本标签", "模型", "样本集", "观察点月"],
             )
             blocks.append(
                 ReportBlock(

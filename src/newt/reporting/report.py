@@ -43,8 +43,8 @@ class Report:
             analysis.
         sheet_list (Sequence[object]): Optional list of sheets to include
             (names or indices).
-        feature_path (str, optional): Path to a feature dictionary CSV for
-            mapping names.
+        feature_df (pd.DataFrame, optional): Feature dictionary DataFrame used
+            for variable metadata mapping.
         report_out_path (str): File path where the Excel workbook will be saved.
         engine (str): Calculation engine to use: 'rust' (default) or 'python'.
         max_workers (int, optional): Maximum parallel workers for computation.
@@ -81,7 +81,7 @@ class Report:
     dim_list: Sequence[str] = field(default_factory=list)
     var_list: Sequence[str] = field(default_factory=list)
     sheet_list: Sequence[object] = field(default_factory=list)
-    feature_path: Optional[str] = None
+    feature_df: Optional[pd.DataFrame] = None
     report_out_path: str = "./out/model_report.xlsx"
     engine: str = "rust"
     max_workers: Optional[int] = None
@@ -186,7 +186,7 @@ class Report:
             score_direction_summary=score_direction_summary,
             dim_list=self.dim_list,
             var_list=self.var_list,
-            feature_path=self.feature_path,
+            feature_df=self.feature_df,
             selected_sheets=selected_sheets,
             prin_bal_amount_col=self.prin_bal_amount_col,
             loan_amount_col=self.loan_amount_col,
@@ -267,6 +267,10 @@ class Report:
             raise ValueError("metrics_mode must be 'exact' or 'binned'")
         if self.max_workers is not None and int(self.max_workers) < 1:
             raise ValueError("max_workers must be >= 1")
+        if self.feature_df is not None and not isinstance(
+            self.feature_df, pd.DataFrame
+        ):
+            raise ValueError("feature_df must be a pandas DataFrame when provided")
 
     def _resolve_max_workers(self) -> int:
         if self.max_workers is not None:

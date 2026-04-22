@@ -411,7 +411,8 @@ from newt.modeling import Scorecard
 scorecard = Scorecard(
     base_score=600,     # 基准分数时的基准分
     pdo=50,             # 使赔率加倍的分数点数
-    base_odds=1/15      # 基准赔率（好/坏比率）
+    base_odds=1/15,     # 基准赔率（好/坏比率）
+    points_decimals=1,  # 可选：限制分值/得分小数位
 )
 
 # 从拟合的模型和分箱器构建
@@ -448,6 +449,8 @@ restored_scorecard = Scorecard.load("scorecard.json")
 ```
 
 `to_dict/from_dict` 仍保留用于兼容，但推荐优先使用 `dump/load`。
+
+`points_decimals=None`（默认）表示不做额外舍入，保持现有行为。
 
 ### 评分卡参数
 
@@ -495,7 +498,7 @@ pipeline = (
     # 步骤 6：构建模型
     .build_model()
     # 步骤 7：生成评分卡
-    .generate_scorecard(base_score=600, pdo=50)
+    .generate_scorecard(base_score=600, pdo=50, points_decimals=1)
 )
 
 # 为新数据打分
@@ -874,6 +877,8 @@ fig = plot_iv_ranking(
 ```python
 from newt import Report
 
+feature_df = pd.read_csv("./feature_dict.csv")
+
 report = Report(
     data=data,
     model=model,
@@ -886,7 +891,7 @@ report = Report(
     var_list=["age", "income"],
     prin_bal_amount_col="prin_bal_amount",  # 可选；需与 loan_amount_col 成对传入
     loan_amount_col="loan_amount",          # 可选
-    feature_path="./feature_dict.csv",
+    feature_df=feature_df,                  # 可选
     report_out_path="./out/model_report.xlsx",
     engine="rust",           # 默认
     max_workers=8,           # 默认: min(8, cpu_count)
@@ -900,7 +905,7 @@ report.generate()
 
 常用说明：
 
-- `data` 需要已经包含 `tag`、`score_col`、`date_col`、`label_list` 以及你额外传入的 `score_list`、`dim_list`、`var_list`、`feature_path` 对应列
+- `data` 需要已经包含 `tag`、`score_col`、`date_col`、`label_list` 以及你额外传入的 `score_list`、`dim_list`、`var_list` 对应列
 - `model` 只用于提取模型参数和变量重要性，不负责重新打分
 - `tag` 是样本分组列，通常取 `train` / `test` / `oot` / `oos`
 - `score_col` 是新模型的主分数字段，报表里的“主模型”都围绕它展开
@@ -909,7 +914,7 @@ report.generate()
 - `score_list` 是老模型或对照分数字段，用于和主模型做对比
 - `dim_list` 是分维度对比字段，会在“分维度对比”附录页按维度拆表展示，并同步到总览页
 - `var_list` 是画像变量列表，会在“画像变量”附录页按变量拆表展示，并同步到总览页；它不是变量分析页的开关
-- `feature_path` 是特征字典文件，建议按下面 4 列准备（表头名请保持一致）：
+- `feature_df` 是可选的特征字典 DataFrame；如果你当前是文件存储，可先 `pd.read_csv(...)` 读成 DataFrame 再传入。建议按下面 4 列准备（表头名请保持一致）：
 
 | 变量英文名 | 变量中文名 | 变量来源 | 变量指标表英文名 |
 |---|---|---|---|

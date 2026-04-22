@@ -331,7 +331,10 @@ class ScorecardStep:
             )
 
         scorecard = Scorecard(
-            base_score=self.base_score, pdo=self.pdo, base_odds=self.base_odds
+            base_score=self.base_score,
+            pdo=self.pdo,
+            base_odds=self.base_odds,
+            **self.kwargs,
         )
         scorecard.from_model(state.model, state.binner)
 

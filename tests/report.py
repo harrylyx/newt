@@ -27,7 +27,7 @@ report = Report(
         "thirdparty_info_period6_2",
         "thirdparty_info_period4_9",
     ],
-    feature_path="",
+    feature_df=pd.DataFrame(),
     report_out_path="./examples/data/test_data/model_report.xlsx",
 )
 

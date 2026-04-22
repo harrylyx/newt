@@ -416,7 +416,8 @@ from newt.modeling import Scorecard
 scorecard = Scorecard(
     base_score=600,     # Base score at base odds
     pdo=50,             # Points to double the odds
-    base_odds=1/15      # Base odds (good/bad ratio)
+    base_odds=1/15,     # Base odds (good/bad ratio)
+    points_decimals=1,  # optional: round points/scores to fixed decimals
 )
 
 # Build from fitted model and binner
@@ -453,6 +454,8 @@ restored_scorecard = Scorecard.load("scorecard.json")
 ```
 
 `to_dict/from_dict` remain available for compatibility, but `dump/load` is the recommended path.
+
+`points_decimals=None` (default) keeps the current behavior without extra rounding.
 
 ### Scorecard Parameters
 
@@ -500,7 +503,7 @@ pipeline = (
     # Step 6: Build model
     .build_model()
     # Step 7: Generate scorecard
-    .generate_scorecard(base_score=600, pdo=50)
+    .generate_scorecard(base_score=600, pdo=50, points_decimals=1)
 )
 
 # Score new data
@@ -879,6 +882,8 @@ fig = plot_iv_ranking(
 ```python
 from newt import Report
 
+feature_df = pd.read_csv("./feature_dict.csv")
+
 report = Report(
     data=data,
     model=model,
@@ -891,7 +896,7 @@ report = Report(
     var_list=["age", "income"],
     prin_bal_amount_col="prin_bal_amount",  # optional; must pair with loan_amount_col
     loan_amount_col="loan_amount",          # optional
-    feature_path="./feature_dict.csv",
+    feature_df=feature_df,                  # optional
     report_out_path="./out/model_report.xlsx",
     engine="rust",           # default
     max_workers=8,           # default: min(8, cpu_count)
@@ -905,7 +910,7 @@ report.generate()
 
 Notes:
 
-- `data` must already include `tag`, `score_col`, `date_col`, `label_list`, and any extra columns referenced by `score_list`, `dim_list`, `var_list`, or `feature_path`
+- `data` must already include `tag`, `score_col`, `date_col`, `label_list`, and any extra columns referenced by `score_list`, `dim_list`, or `var_list`
 - `model` is used for parameter extraction and feature importance, not for re-scoring
 - `tag` is the sample-split column, typically `train`, `test`, `oot`, or `oos`
 - `score_col` is the primary score column for the new model
@@ -914,7 +919,7 @@ Notes:
 - `score_list` is the list of comparison score columns for older or alternative models
 - `dim_list` is used for dimensional comparison and is rendered as one table per dimension in the appendix sheet, then mirrored into the overview sheet
 - `var_list` is used for portrait-variable comparison and is rendered as one table per variable in the appendix sheet, then mirrored into the overview sheet; it does not drive the variable-analysis sheet
-- `feature_path` is an optional feature dictionary CSV. Prepare these 4 headers exactly:
+- `feature_df` is an optional feature dictionary DataFrame. If you keep metadata in a file, load it first with `pd.read_csv(...)`. Prepare these 4 headers exactly:
 
 | Variable English Name | Variable Chinese Name | Variable Source | Metric Table English Name |
 |---|---|---|---|

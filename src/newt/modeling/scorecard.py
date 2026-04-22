@@ -37,6 +37,7 @@ class Scorecard:
         base_score: int = SCORECARD.DEFAULT_BASE_SCORE,
         pdo: int = SCORECARD.DEFAULT_PDO,
         base_odds: float = SCORECARD.DEFAULT_BASE_ODDS,
+        points_decimals: Optional[int] = None,
     ):
         """Initialize the Scorecard instance.
 
@@ -44,7 +45,9 @@ class Scorecard:
             base_score: Target score at the given base_odds.
             pdo: Points to Double the Odds (PDO).
             base_odds: Target odds at the given base_score.
+            points_decimals: Optional decimal precision for scorecard points.
         """
+        self.points_decimals = self._validate_points_decimals(points_decimals)
         self.base_score = base_score
         self.pdo = pdo
         self.base_odds = base_odds
@@ -116,6 +119,8 @@ class Scorecard:
             summary_text=self._extract_model_summary_text(model),
             intercept=self._estimate_intercept(spec, model),
         )
+        spec.points_decimals = self.points_decimals
+        self._normalize_scorecard_spec(spec)
         scorecard = self._load_spec(spec)
         scorecard.lr_snapshot_ = self._build_lr_snapshot(
             spec=spec,
@@ -137,6 +142,8 @@ class Scorecard:
         spec = ScorecardSpec.from_dict(payload)
         self.lr_model_ = None
         self._binner = None
+        self.points_decimals = self._validate_points_decimals(spec.points_decimals)
+        self._normalize_scorecard_spec(spec)
         scorecard = self._load_spec(spec)
         scorecard.lr_snapshot_ = self._normalize_lr_snapshot(payload.get("lr_snapshot"))
         return scorecard
@@ -151,6 +158,7 @@ class Scorecard:
         self.factor = spec.factor
         self.offset = spec.offset
         self.intercept_points_ = spec.intercept_points
+        self.points_decimals = self._validate_points_decimals(spec.points_decimals)
         self.feature_names_ = list(spec.feature_names)
         self.scorecard_ = {
             feature: feature_spec.to_frame()
@@ -184,7 +192,11 @@ class Scorecard:
         """
         if not self.is_built_ or self.scorer_ is None:
             raise ValueError("Scorecard is not built. Call from_model() first.")
-        return self.scorer_.score(X)
+        scores = self.scorer_.score(X)
+        if self.points_decimals is not None:
+            rounded = np.round(scores.to_numpy(dtype=float), self.points_decimals)
+            return pd.Series(rounded, index=scores.index, name=scores.name)
+        return scores
 
     def export(self) -> pd.DataFrame:
         """Export the scorecard as a single flat DataFrame.
@@ -475,3 +487,19 @@ class Scorecard:
         if not np.isfinite(numeric):
             return None
         return numeric
+
+    def _validate_points_decimals(self, value: Optional[int]) -> Optional[int]:
+        """Validate optional score decimal precision."""
+        if value is None:
+            return None
+        if isinstance(value, bool) or not isinstance(value, int):
+            raise ValueError("points_decimals must be a non-negative integer or None")
+        if value < 0:
+            raise ValueError("points_decimals must be a non-negative integer or None")
+        return int(value)
+
+    def _normalize_scorecard_spec(self, spec: ScorecardSpec) -> None:
+        """Normalize scorecard rows for stable ordering and optional precision."""
+        spec.points_decimals = self.points_decimals
+        spec.normalize_feature_row_order()
+        spec.normalize_points_precision()

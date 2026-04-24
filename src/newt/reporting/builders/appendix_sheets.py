@@ -234,7 +234,9 @@ def build_portrait_sheet(
             score_cols=[column for _, column in score_model_columns],
             variable_cols=var_list,
         )
-        portrait["模型"] = portrait["模型"].map(display_by_column).fillna(portrait["模型"])
+        portrait["模型"] = (
+            portrait["模型"].map(display_by_column).fillna(portrait["模型"])
+        )
         portrait = _reshape_portrait_table(portrait)
     feature_dict = feature_dict if feature_dict is not None else pd.DataFrame()
     blocks = [ReportBlock(title="一、画像变量均值对比", blank_rows_after=1)]

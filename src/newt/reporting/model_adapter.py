@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, Dict, List, Optional, Sequence, Tuple
+from typing import Dict, List, Optional, Sequence, Tuple
 
 import numpy as np
 import pandas as pd
@@ -13,7 +13,7 @@ import pandas as pd
 class ModelAdapter:
     """Unify feature importance and parameter extraction."""
 
-    model: Any
+    model: object
 
     def __post_init__(self) -> None:
         self.model_family = self._detect_family()
@@ -188,7 +188,9 @@ class ModelAdapter:
         ]
         rows = []
         for metric_key, display_name in order:
-            rows.append({"统计项": display_name, "数值": summary.get(metric_key, np.nan)})
+            rows.append(
+                {"统计项": display_name, "数值": summary.get(metric_key, np.nan)}
+            )
         return pd.DataFrame(rows)
 
     def get_scorecard_base_table(self) -> pd.DataFrame:
@@ -257,10 +259,10 @@ class ModelAdapter:
             return "xgboost"
         return "generic"
 
-    def _get_lightgbm_booster(self) -> Any:
+    def _get_lightgbm_booster(self) -> object:
         return getattr(self.model, "booster_", self.model)
 
-    def _get_xgboost_booster(self) -> Any:
+    def _get_xgboost_booster(self) -> object:
         # xgboost models can be sklearn wrappers (with get_booster)
         # or native Booster objects (with get_score).
         if hasattr(self.model, "get_booster"):
@@ -269,16 +271,16 @@ class ModelAdapter:
             return self.model
         raise AttributeError("Unsupported xgboost model type: missing booster handle")
 
-    def _collect_params(self) -> Dict[str, Any]:
-        params: Dict[str, Any] = {}
+    def _collect_params(self) -> Dict[str, object]:
+        params: Dict[str, object] = {}
         if hasattr(self.model, "get_params"):
             params.update(dict(self.model.get_params(deep=True)))
         for source in self._parameter_sources():
             params.update(source)
         return params
 
-    def _parameter_sources(self) -> List[Dict[str, Any]]:
-        sources: List[Dict[str, Any]] = []
+    def _parameter_sources(self) -> List[Dict[str, object]]:
+        sources: List[Dict[str, object]] = []
         raw_model_params = getattr(self.model, "params", {})
         if isinstance(raw_model_params, dict):
             sources.append(raw_model_params)
@@ -299,9 +301,9 @@ class ModelAdapter:
 
     def _resolve_param_value(
         self,
-        params: Dict[str, Any],
+        params: Dict[str, object],
         aliases: Sequence[str],
-    ) -> Any:
+    ) -> object:
         for alias in aliases:
             if alias in params:
                 return params[alias]
@@ -363,7 +365,7 @@ class ModelAdapter:
         return np.asarray(values, dtype=float)
 
     def _build_scorecard_param_table(self) -> pd.DataFrame:
-        rows: List[Dict[str, Any]] = [
+        rows: List[Dict[str, object]] = [
             {
                 "参数名称": "base_score",
                 "数值": getattr(self.model, "base_score", ""),
@@ -418,7 +420,7 @@ class ModelAdapter:
                 )
         return pd.DataFrame(rows)
 
-    def _get_scorecard_lr_parameters(self) -> Dict[str, Any]:
+    def _get_scorecard_lr_parameters(self) -> Dict[str, object]:
         """Get LR parameter snapshot from scorecard instance or serialized spec."""
         lr_params = (
             self.model.lr_parameters_ if hasattr(self.model, "lr_parameters_") else {}
@@ -487,7 +489,7 @@ class ModelAdapter:
             return output
         return {}
 
-    def _to_finite_float(self, value: Any) -> Optional[float]:
+    def _to_finite_float(self, value: object) -> Optional[float]:
         if value is None:
             return None
         try:

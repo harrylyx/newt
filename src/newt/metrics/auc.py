@@ -1,13 +1,13 @@
-from typing import Union
-
 import numpy as np
 from sklearn.metrics import roc_auc_score
 
+from newt.metrics._common import ArrayLike
+
 
 def calculate_auc(
-    y_true: Union[np.ndarray, list],
-    y_prob: Union[np.ndarray, list],
-    sample_weight: Union[np.ndarray, list, None] = None,
+    y_true: ArrayLike,
+    y_prob: ArrayLike,
+    sample_weight: ArrayLike = None,
 ) -> float:
     """
     Calculate Area Under the ROC Curve (AUC).

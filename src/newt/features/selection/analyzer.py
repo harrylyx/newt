@@ -6,6 +6,7 @@ import numpy as np
 import pandas as pd
 from scipy import stats
 
+from newt._engine import ensure_native_functions, validate_engine
 from newt._native import require_native_module
 from newt.config import BINNING
 from newt.features.analysis.batch_iv import calculate_batch_iv
@@ -44,7 +45,6 @@ LABEL_METRICS = frozenset(
 )
 
 ALL_METRICS = BASIC_METRICS | LABEL_METRICS
-VALID_ENGINES = frozenset(["auto", "rust", "python"])
 
 
 class FeatureAnalyzer:
@@ -58,10 +58,7 @@ class FeatureAnalyzer:
         corr_method: str = "pearson",
         engine: str = "auto",
     ):
-        if engine not in VALID_ENGINES:
-            raise ValueError(
-                f"engine must be one of {sorted(VALID_ENGINES)}, got: {engine}"
-            )
+        validate_engine(engine)
 
         self.iv_bins = iv_bins
         self.lift_k = lift_k
@@ -271,11 +268,14 @@ class FeatureAnalyzer:
         if "ks" in self.metrics or "lift_10" in self.metrics:
             required.append("calculate_binary_metrics_batch_numpy")
 
-        missing = [
-            name for name in required if not callable(getattr(module, name, None))
-        ]
-        if missing:
+        try:
+            ensure_native_functions(
+                module,
+                sorted(set(required)),
+                component="Rust feature analyzer engine",
+            )
+        except RuntimeError as exc:
             raise RuntimeError(
                 "Rust engine requires unavailable native functions: "
-                + ", ".join(sorted(set(missing)))
-            )
+                + str(exc).split(": ", 1)[-1]
+            ) from exc

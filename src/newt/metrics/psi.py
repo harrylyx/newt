@@ -8,12 +8,18 @@ from typing import Iterable, List, Optional, Sequence, Tuple, Union
 import numpy as np
 import pandas as pd
 
+from newt._engine import ensure_native_functions, validate_engine
 from newt._native import load_native_module
 from newt.config import BINNING
+from newt.metrics._common import (
+    build_quantile_edges,
+    count_values_by_edges,
+    psi_from_counts,
+    to_numeric_array,
+)
 
 NAN_STRATEGIES = frozenset(["separate", "exclude"])
 REFERENCE_MODES = frozenset(["latest", "value"])
-VALID_ENGINES = frozenset(["auto", "rust", "python"])
 
 
 @dataclass(frozen=True)
@@ -101,16 +107,13 @@ def calculate_psi_batch(
     """
     if buckets < 1:
         raise ValueError("buckets must be >= 1")
-    if engine not in VALID_ENGINES:
-        raise ValueError(
-            f"engine must be one of {sorted(VALID_ENGINES)}, got: {engine}"
-        )
+    validate_engine(engine)
 
     strategy = _resolve_nan_strategy(
         include_nan=include_nan,
         nan_strategy=nan_strategy,
     )
-    expected_values = _to_numeric_array(expected)
+    expected_values = to_numeric_array(expected)
     reference = _build_psi_reference(
         expected=expected_values,
         buckets=buckets,
@@ -156,17 +159,14 @@ def calculate_feature_psi_pairs_batch(
         raise ValueError("buckets must be >= 1")
     if len(expected_groups) != len(actual_groups):
         raise ValueError("expected_groups and actual_groups must have the same length")
-    if engine not in VALID_ENGINES:
-        raise ValueError(
-            f"engine must be one of {sorted(VALID_ENGINES)}, got: {engine}"
-        )
+    validate_engine(engine)
 
     strategy = _resolve_nan_strategy(
         include_nan=include_nan,
         nan_strategy=nan_strategy,
     )
-    expected_arrays = [_to_numeric_array(values) for values in expected_groups]
-    actual_arrays = [_to_numeric_array(values) for values in actual_groups]
+    expected_arrays = [to_numeric_array(values) for values in expected_groups]
+    actual_arrays = [to_numeric_array(values) for values in actual_groups]
 
     if engine == "rust":
         return _calculate_feature_psi_pairs_with_rust(
@@ -513,33 +513,14 @@ def _resolve_nan_strategy(include_nan: bool, nan_strategy: Optional[str]) -> str
     return strategy
 
 
-def _to_numeric_array(values: Union[np.ndarray, list, pd.Series]) -> np.ndarray:
-    return pd.to_numeric(
-        pd.Series(np.asarray(values).ravel()),
-        errors="coerce",
-    ).to_numpy(dtype=float)
-
-
 def _build_psi_reference(
     expected: np.ndarray,
     buckets: int,
     strategy: str,
 ) -> _PsiReference:
-    non_missing = expected[~np.isnan(expected)]
-    if non_missing.size > 0:
-        breakpoints = np.percentile(non_missing, np.linspace(0, 100, buckets + 1))
-        breakpoints = np.unique(breakpoints.astype(float))
-        if breakpoints.size < 2:
-            edges = np.array([-np.inf, np.inf], dtype=float)
-        else:
-            breakpoints[0] = -np.inf
-            breakpoints[-1] = np.inf
-            edges = breakpoints
-    else:
-        edges = np.array([-np.inf, np.inf], dtype=float)
-
+    edges = build_quantile_edges(expected, buckets)
     include_missing_bucket = strategy == "separate"
-    expected_counts = _count_values_by_edges(
+    expected_counts = count_values_by_edges(
         values=expected,
         edges=edges,
         include_missing_bucket=include_missing_bucket,
@@ -551,52 +532,20 @@ def _build_psi_reference(
     )
 
 
-def _count_values_by_edges(
-    values: np.ndarray,
-    edges: np.ndarray,
-    include_missing_bucket: bool,
-) -> np.ndarray:
-    nan_mask = np.isnan(values)
-    non_missing = values[~nan_mask]
-    counts, _ = np.histogram(non_missing, bins=np.asarray(edges, dtype=float))
-    counts = counts.astype(float)
-    if include_missing_bucket:
-        counts = np.append(counts, float(nan_mask.sum()))
-    return counts
-
-
-def _psi_from_counts(
-    expected_counts: np.ndarray,
-    actual_counts: np.ndarray,
-    epsilon: float = BINNING.DEFAULT_EPSILON,
-) -> float:
-    expected_total = float(np.sum(expected_counts))
-    actual_total = float(np.sum(actual_counts))
-    if expected_total == 0.0 or actual_total == 0.0:
-        return float("nan")
-
-    expected_percents = np.maximum(expected_counts / expected_total, epsilon)
-    actual_percents = np.maximum(actual_counts / actual_total, epsilon)
-    psi_values = (actual_percents - expected_percents) * np.log(
-        actual_percents / expected_percents
-    )
-    return float(np.sum(psi_values))
-
-
 def _calculate_psi_batch_with_python(
     reference: _PsiReference,
     actual_groups: Sequence[Union[np.ndarray, list, pd.Series]],
 ) -> List[float]:
     results: List[float] = []
     for group in actual_groups:
-        actual_values = _to_numeric_array(group)
-        actual_counts = _count_values_by_edges(
+        actual_values = to_numeric_array(group)
+        actual_counts = count_values_by_edges(
             values=actual_values,
             edges=reference.edges,
             include_missing_bucket=reference.include_missing_bucket,
         )
         results.append(
-            _psi_from_counts(
+            psi_from_counts(
                 expected_counts=reference.expected_counts,
                 actual_counts=actual_counts,
                 epsilon=reference.epsilon,
@@ -623,8 +572,7 @@ def _calculate_psi_batch_with_rust(
     if callable(numpy_fn):
         try:
             group_arrays = [
-                np.ascontiguousarray(_to_numeric_array(group))
-                for group in actual_groups
+                np.ascontiguousarray(to_numeric_array(group)) for group in actual_groups
             ]
             values = numpy_fn(
                 np.ascontiguousarray(reference.edges, dtype=np.float64),
@@ -640,14 +588,20 @@ def _calculate_psi_batch_with_rust(
             pass  # fall through to legacy path
 
     # Legacy path: List[Optional[float]]
-    legacy_fn = getattr(module, "calculate_psi_batch_from_edges", None)
-    if not callable(legacy_fn):
+    try:
+        ensure_native_functions(
+            module,
+            ["calculate_psi_batch_from_edges"],
+            component="Rust PSI engine",
+        )
+    except RuntimeError:
         if strict:
             raise RuntimeError(
                 "Rust engine requested but PSI batch function is unavailable "
                 "in native extension."
             )
         return None
+    legacy_fn = module.calculate_psi_batch_from_edges
     try:
         group_values = [_to_optional_float_list(group) for group in actual_groups]
         args_common = (
@@ -690,14 +644,20 @@ def _calculate_feature_psi_pairs_with_rust(
             )
         return None
 
-    fn = getattr(module, "calculate_feature_psi_pairs_numpy", None)
-    if not callable(fn):
+    try:
+        ensure_native_functions(
+            module,
+            ["calculate_feature_psi_pairs_numpy"],
+            component="Rust PSI engine",
+        )
+    except RuntimeError:
         if strict:
             raise RuntimeError(
                 "Rust engine requested but calculate_feature_psi_pairs_numpy "
                 "is unavailable in native extension."
             )
         return None
+    fn = module.calculate_feature_psi_pairs_numpy
 
     try:
         expected_arrays = [
@@ -726,7 +686,7 @@ def _calculate_feature_psi_pairs_with_rust(
 def _to_optional_float_list(
     values: Union[np.ndarray, list, pd.Series]
 ) -> List[Optional[float]]:
-    numeric = _to_numeric_array(values)
+    numeric = to_numeric_array(values)
     return [None if np.isnan(item) else float(item) for item in numeric.tolist()]
 
 

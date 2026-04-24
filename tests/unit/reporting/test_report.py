@@ -269,7 +269,9 @@ def test_report_formats_iv_with_four_decimals_and_places_chart_after_monthly_tab
 
     variable_sheet = report.result_.get_sheet("2.变量分析")
     first_train_bin_title = next(
-        block.title for block in variable_sheet.blocks if block.title.endswith("训练分箱表")
+        block.title
+        for block in variable_sheet.blocks
+        if block.title.endswith("训练分箱表")
     )
     first_oot_bin_title = first_train_bin_title.replace("训练分箱表", "OOT分箱表")
     first_monthly_title = first_train_bin_title.replace("训练分箱表", "按月效果")
@@ -309,17 +311,23 @@ def test_report_records_auc_only_direction_for_score_like_columns(
     report.generate()
 
     score_directions = report.result_.metadata["score_directions"]
-    score_record = next(item for item in score_directions if item["分数字段"] == "score")
+    score_record = next(
+        item for item in score_directions if item["分数字段"] == "score"
+    )
     assert score_record["原始方向"] == "高分代表低风险"
     assert score_record["报表计算方向"] == "AUC和Lift按风险方向，其余指标保持原始分数"
     assert score_record["原始AUC"] < 0.5
 
     overview_sheet = report.result_.get_sheet("总览")
     direction_block = overview_sheet.get_block("分数字段方向说明")
-    assert {"分数字段", "原始方向", "报表计算方向", "判断依据"}.issubset(direction_block.data.columns)
+    assert {"分数字段", "原始方向", "报表计算方向", "判断依据"}.issubset(
+        direction_block.data.columns
+    )
 
     paired_block = overview_sheet.get_block("按tag新老模型对比(score)").data
-    score_auc = paired_block.loc[paired_block["模型"] == "score", "AUC"].dropna().tolist()
+    score_auc = (
+        paired_block.loc[paired_block["模型"] == "score", "AUC"].dropna().tolist()
+    )
     assert score_auc
     assert min(score_auc) > 0.5
     score_lift = (
@@ -672,12 +680,18 @@ def test_report_overview_reuses_child_sheet_blocks(
             dimensional.get_block(title).data.reset_index(drop=True),
         )
     pd.testing.assert_frame_equal(
-        overview.get_block("按tag新老模型对比(score_old_a)").data.reset_index(drop=True),
-        comparison.get_block("按tag新老模型对比(score_old_a)").data.reset_index(drop=True),
+        overview.get_block("按tag新老模型对比(score_old_a)").data.reset_index(
+            drop=True
+        ),
+        comparison.get_block("按tag新老模型对比(score_old_a)").data.reset_index(
+            drop=True
+        ),
     )
     pd.testing.assert_frame_equal(
         overview.get_block("按月新老模型对比(score_old_a)").data.reset_index(drop=True),
-        comparison.get_block("按月新老模型对比(score_old_a)").data.reset_index(drop=True),
+        comparison.get_block("按月新老模型对比(score_old_a)").data.reset_index(
+            drop=True
+        ),
     )
     pd.testing.assert_frame_equal(
         overview.get_block("OOT相关性矩阵").data.reset_index(drop=True),
@@ -1017,14 +1031,18 @@ def test_report_scorecard_details_sheet_sorts_bins_and_places_missing_last(
     )
     report.generate()
 
-    points_block = report.result_.get_sheet("评分卡计算明细").get_block("二、评分卡分值拆解").data
+    points_block = (
+        report.result_.get_sheet("评分卡计算明细").get_block("二、评分卡分值拆解").data
+    )
     assert list(dict.fromkeys(points_block["变量"]))[:3] == [
         "Intercept",
         "feature_a",
         "feature_b",
     ]
 
-    feature_a_bins = points_block.loc[points_block["变量"] == "feature_a", "分箱"].tolist()
+    feature_a_bins = points_block.loc[
+        points_block["变量"] == "feature_a", "分箱"
+    ].tolist()
     assert feature_a_bins[-1] == "Missing"
 
     left_bounds = []
@@ -1063,7 +1081,9 @@ def test_report_scorecard_details_sheet_uses_points_decimals_output(
     )
     report.generate()
 
-    points_block = report.result_.get_sheet("评分卡计算明细").get_block("二、评分卡分值拆解").data
+    points_block = (
+        report.result_.get_sheet("评分卡计算明细").get_block("二、评分卡分值拆解").data
+    )
     export_table = rounded_scorecard.export().rename(
         columns={"feature": "变量", "bin": "分箱", "points": "分值"}
     )
@@ -1476,7 +1496,9 @@ def test_report_does_not_auto_append_amount_sheet_when_sheet_list_excludes_it(
     report.generate()
 
     assert "附3 金额指标" not in report.result_.sheet_names
-    assert all("金额指标" not in sheet_name for sheet_name in report.result_.sheet_names)
+    assert all(
+        "金额指标" not in sheet_name for sheet_name in report.result_.sheet_names
+    )
 
 
 def test_report_model_comparison_uses_positive_score_intersection(
@@ -1504,7 +1526,9 @@ def test_report_model_comparison_uses_positive_score_intersection(
 
     compare_sheet = report.result_.get_sheet("附1 新老模型对比")
     tag_compare = compare_sheet.get_block("按tag新老模型对比(score_old_a)").data
-    new_model_rows = tag_compare.loc[tag_compare["模型"] == "score_new"].set_index("样本集")
+    new_model_rows = tag_compare.loc[tag_compare["模型"] == "score_new"].set_index(
+        "样本集"
+    )
     old_model_rows = tag_compare.loc[tag_compare["模型"] == "score_old_a"].set_index(
         "样本集"
     )
@@ -1559,7 +1583,9 @@ def test_report_amount_sheet_model_comparison_uses_positive_score_intersection(
     )
     amount_sheet = report.result_.get_sheet(amount_sheet_name)
     tag_compare = amount_sheet.get_block("按tag新老模型对比(score_old_a)").data
-    new_model_rows = tag_compare.loc[tag_compare["模型"] == "score_new"].set_index("样本集")
+    new_model_rows = tag_compare.loc[tag_compare["模型"] == "score_new"].set_index(
+        "样本集"
+    )
     old_model_rows = tag_compare.loc[tag_compare["模型"] == "score_old_a"].set_index(
         "样本集"
     )

@@ -460,7 +460,9 @@ def calculate_bin_metrics(
     )
 
     amount_grouped = (
-        amount_frame.groupby("bin", dropna=False, sort=False)[["_逾期本金", "_放款金额"]]
+        amount_frame.groupby("bin", dropna=False, sort=False)[
+            ["_逾期本金", "_放款金额"]
+        ]
         .sum()
         .reset_index()
         .rename(columns={"_逾期本金": "逾期本金", "_放款金额": "放款金额"})
@@ -473,7 +475,9 @@ def calculate_bin_metrics(
 
     merged["金额坏占比"] = _safe_divide_series(merged["逾期本金"], merged["放款金额"])
     merged["放款金额占比"] = _safe_divide_scalar_series(merged["放款金额"], total_loan)
-    merged["逾期本金占比"] = _safe_divide_scalar_series(merged["逾期本金"], total_prin_bal)
+    merged["逾期本金占比"] = _safe_divide_scalar_series(
+        merged["逾期本金"], total_prin_bal
+    )
     if pd.isna(overall_amount_bad_rate) or overall_amount_bad_rate == 0:
         merged["金额lift"] = np.nan
     else:

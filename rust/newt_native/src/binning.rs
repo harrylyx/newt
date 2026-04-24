@@ -678,3 +678,36 @@ pub(crate) fn register(module: &Bound<'_, PyModule>) -> PyResult<()> {
     )?)?;
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn normalize_splits_sorts_and_deduplicates() {
+        let splits = normalize_splits(&[3.0, 1.0, 3.0, 2.0]);
+
+        assert_eq!(splits, vec![1.0, 2.0, 3.0]);
+    }
+
+    #[test]
+    fn build_sorted_pairs_drops_nan_feature_values() {
+        let pairs = build_sorted_pairs(&[2.0, f64::NAN, 1.0], &[0, 1, 1]);
+
+        assert_eq!(pairs, vec![(1.0, 1), (2.0, 0)]);
+    }
+
+    #[test]
+    fn compute_bin_rates_returns_rates_by_split() {
+        let pairs = vec![(1.0, 0), (2.0, 1), (3.0, 1), (4.0, 1)];
+        let rates = compute_bin_rates(&pairs, &[2.5]);
+
+        assert_eq!(rates, vec![0.5, 1.0]);
+    }
+
+    #[test]
+    fn monotonic_direction_auto_follows_endpoint_trend() {
+        assert_eq!(resolve_monotonic_direction("auto", &[0.1, 0.3]), 1);
+        assert_eq!(resolve_monotonic_direction("auto", &[0.3, 0.1]), -1);
+    }
+}

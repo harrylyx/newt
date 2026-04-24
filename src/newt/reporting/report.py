@@ -10,6 +10,7 @@ from typing import List, Optional, Sequence, Tuple
 
 import pandas as pd
 
+from newt._engine import resolve_engine
 from newt._native import load_native_module
 from newt.config import LOGGING
 from newt.reporting.excel_writer import ExcelReportWriter
@@ -282,16 +283,7 @@ class Report:
 
     def _resolve_engine(self) -> str:
         """Resolve user-facing engine option to concrete runtime engine."""
-        native_module = load_native_module()
-        if self.engine == "auto":
-            return "rust" if native_module is not None else "python"
-        if self.engine == "rust" and native_module is None:
-            raise ImportError(
-                "Rust engine requested but native extension is unavailable. "
-                "Use engine='auto' or engine='python', or install a wheel with "
-                "the native extension."
-            )
-        return self.engine
+        return resolve_engine(self.engine, loader=load_native_module)
 
 
 def _normalize_month(value: object) -> str:

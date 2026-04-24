@@ -5,7 +5,9 @@ from newt.reporting.builders import sheet_registry
 
 
 def test_sheet_registry_resolves_scorecard_sheet_by_name_and_index():
-    assert sheet_registry.resolve_sheet_keys(["评分卡计算明细"]) == ["scorecard_details"]
+    assert sheet_registry.resolve_sheet_keys(["评分卡计算明细"]) == [
+        "scorecard_details"
+    ]
     assert sheet_registry.resolve_sheet_keys([5]) == ["scorecard_details"]
 
 

@@ -174,3 +174,39 @@ pub(crate) fn quantile_linear(sorted_values: &[f64], quantile: f64) -> f64 {
     let fraction = position - lower as f64;
     sorted_values[lower] * (1.0 - fraction) + sorted_values[upper] * fraction
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn build_quantile_edges_uses_infinite_bounds() {
+        let edges = build_quantile_edges(&[3.0, 1.0, 2.0, 4.0], 2);
+
+        assert_eq!(edges[0], f64::NEG_INFINITY);
+        assert_eq!(*edges.last().unwrap(), f64::INFINITY);
+        assert!(edges.len() >= 2);
+    }
+
+    #[test]
+    fn count_with_edges_f64_tracks_missing_bucket_when_enabled() {
+        let edges = vec![f64::NEG_INFINITY, 0.0, 10.0, f64::INFINITY];
+        let counts = count_with_edges_f64(&[-1.0, 2.0, 11.0, f64::NAN], &edges, true);
+
+        assert_eq!(counts, vec![1.0, 1.0, 1.0, 1.0]);
+    }
+
+    #[test]
+    fn psi_from_counts_returns_nan_for_empty_distribution() {
+        let value = psi_from_counts(&[0.0, 0.0], &[1.0, 2.0], 1e-8);
+
+        assert!(value.is_nan());
+    }
+
+    #[test]
+    fn quantile_linear_interpolates_between_neighbors() {
+        let value = quantile_linear(&[0.0, 10.0, 20.0], 0.25);
+
+        assert_eq!(value, 5.0);
+    }
+}

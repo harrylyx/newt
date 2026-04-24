@@ -7,12 +7,11 @@ from typing import Dict, Optional, Sequence
 import numpy as np
 import pandas as pd
 
+from newt._engine import ensure_native_functions, validate_engine
 from newt._native import load_native_module, require_native_module
 from newt.config import BINNING
 
 from .iv_math import build_iv_summary, calculate_iv_from_counts, prepare_feature_for_iv
-
-VALID_ENGINES = frozenset(["auto", "rust", "python"])
 
 
 def calculate_batch_iv(
@@ -24,10 +23,7 @@ def calculate_batch_iv(
     engine: str = "auto",
 ) -> pd.DataFrame:
     """Calculate IV for many features."""
-    if engine not in VALID_ENGINES:
-        raise ValueError(
-            f"engine must be one of {sorted(VALID_ENGINES)}, got: {engine}"
-        )
+    validate_engine(engine)
 
     feature_names = list(features) if features is not None else X.columns.tolist()
     target = pd.to_numeric(y, errors="coerce")
@@ -108,9 +104,12 @@ def _calculate_batch_iv_rust(
 
     if numeric_features:
         try:
-            numpy_fn = getattr(module, "calculate_batch_iv_numpy", None)
-            if not callable(numpy_fn):
-                raise RuntimeError("Rust numeric batch IV function is unavailable.")
+            ensure_native_functions(
+                module,
+                ["calculate_batch_iv_numpy"],
+                component="Rust batch IV engine",
+            )
+            numpy_fn = module.calculate_batch_iv_numpy
 
             feature_arrays = [
                 np.ascontiguousarray(
@@ -145,9 +144,12 @@ def _calculate_batch_iv_rust(
 
     if categorical_features:
         try:
-            categorical_fn = getattr(module, "calculate_batch_categorical_iv", None)
-            if not callable(categorical_fn):
-                raise RuntimeError("Rust categorical batch IV function is unavailable.")
+            ensure_native_functions(
+                module,
+                ["calculate_batch_categorical_iv"],
+                component="Rust batch IV engine",
+            )
+            categorical_fn = module.calculate_batch_categorical_iv
 
             feature_vectors = []
             for feature in categorical_features:

@@ -82,7 +82,8 @@ For batch WOE workflows, prefer `binner.woe_transform(X)` over hand-written enco
 ### 5.1 Common Commands
 ```bash
 uv sync --group dev                # Install
-uv run black .                     # Format
+uv run black src tests benchmarks scripts  # Format
+uv run isort src tests benchmarks scripts  # Sort imports
 uv run flake8 src tests            # Lint
 uv run pytest                      # Test
 uv run pytest --cov=src/newt      # Coverage (Target: 70%)

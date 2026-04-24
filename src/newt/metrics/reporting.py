@@ -8,6 +8,11 @@ import numpy as np
 import pandas as pd
 
 from newt.config import BINNING
+from newt.metrics._common import (
+    build_score_edges,
+    count_values_by_edges,
+    psi_from_counts,
+)
 from newt.metrics.binary_metrics import (
     calculate_binary_metrics as _unified_binary_metrics,
 )
@@ -23,23 +28,8 @@ def build_reference_quantile_bins(
     bins: int = BINNING.DEFAULT_BUCKETS,
 ) -> np.ndarray:
     """Build quantile edges from a reference series."""
-    numeric = pd.to_numeric(reference, errors="coerce").dropna().to_numpy(dtype=float)
-    if numeric.size == 0:
-        return np.array([-np.inf, np.inf], dtype=float)
-
-    unique = np.unique(numeric)
-    if unique.size <= 1:
-        return np.array([-np.inf, np.inf], dtype=float)
-
-    quantiles = np.linspace(0, 1, min(bins, unique.size) + 1)
-    edges = np.quantile(numeric, quantiles)
-    edges = np.unique(edges.astype(float))
-    if edges.size < 2:
-        return np.array([-np.inf, np.inf], dtype=float)
-
-    edges[0] = -np.inf
-    edges[-1] = np.inf
-    return edges
+    numeric = pd.to_numeric(reference, errors="coerce").to_numpy(dtype=float)
+    return build_score_edges(numeric, bins)
 
 
 def assign_reference_bins(values: pd.Series, edges: Sequence[float]) -> pd.Series:
@@ -354,28 +344,15 @@ def calculate_feature_psi(
         return 0.0
     ref_counts = _count_bins(ref_numeric, edges)
     act_counts = _count_bins(act_numeric, edges)
-    return _psi_from_counts(ref_counts, act_counts)
+    return psi_from_counts(ref_counts, act_counts, epsilon=BINNING.DEFAULT_EPSILON)
 
 
 def _count_bins(values: pd.Series, edges: Sequence[float]) -> np.ndarray:
     numeric = values.to_numpy(dtype=float, copy=False)
-    nan_count = int(np.isnan(numeric).sum())
-    counts, _ = np.histogram(
-        numeric[~np.isnan(numeric)], bins=np.asarray(edges, dtype=float)
-    )
-    return np.append(counts, nan_count)
-
-
-def _psi_from_counts(expected_counts: np.ndarray, actual_counts: np.ndarray) -> float:
-    expected_total = expected_counts.sum()
-    actual_total = actual_counts.sum()
-    if expected_total == 0 or actual_total == 0:
-        return np.nan
-    epsilon = BINNING.DEFAULT_EPSILON
-    expected_pct = np.maximum(expected_counts / expected_total, epsilon)
-    actual_pct = np.maximum(actual_counts / actual_total, epsilon)
-    return float(
-        np.sum((actual_pct - expected_pct) * np.log(actual_pct / expected_pct))
+    return count_values_by_edges(
+        values=numeric,
+        edges=np.asarray(edges, dtype=float),
+        include_missing_bucket=True,
     )
 
 

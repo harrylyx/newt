@@ -305,7 +305,9 @@ class ExcelReportWriter:
             token in lower for token in ["auc", "ks", "psi", "lift", "gain", "weight"]
         ):
             return formats["decimal"]
-        if any(token in name for token in ["总", "好", "坏", "灰", "count"]) or lower in {
+        if any(
+            token in name for token in ["总", "好", "坏", "灰", "count"]
+        ) or lower in {
             "bads",
             "goods",
             "total",

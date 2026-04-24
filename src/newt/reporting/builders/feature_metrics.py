@@ -235,9 +235,9 @@ def _build_feature_analysis_table(
         artifacts.edges_by_feature[feature] = edges
         artifacts.train_bin_stats_by_feature[feature] = train_stats
         artifacts.oot_bin_stats_by_feature[feature] = oot_stats
-        artifacts.use_feature_edges_for_psi_by_feature[
-            feature
-        ] = use_feature_edges_for_psi
+        artifacts.use_feature_edges_for_psi_by_feature[feature] = (
+            use_feature_edges_for_psi
+        )
 
     result = pd.DataFrame(rows)
     if result.empty:
@@ -320,7 +320,9 @@ def _build_feature_selection_summary(
         .size()
         .reset_index(name="变量数量")
     )
-    type_table["重要性占比"] = type_table["变量数量"] / max(type_table["变量数量"].sum(), 1)
+    type_table["重要性占比"] = type_table["变量数量"] / max(
+        type_table["变量数量"].sum(), 1
+    )
     type_table = type_table.rename(columns={"来源_字典": "变量类型"})
     return base, type_table
 
@@ -761,3 +763,14 @@ def _interval_sort_key(value: object) -> float:
         return float(value)
     except (TypeError, ValueError):
         return float("inf")
+
+
+# Internal public names used across report builders. Leading-underscore aliases remain
+# for compatibility with older tests and downstream patch points.
+build_feature_analysis_table = _build_feature_analysis_table
+build_feature_bin_stats = _build_feature_bin_stats
+build_feature_monthly_metrics = _build_feature_monthly_metrics
+load_feature_dictionary = _load_feature_dictionary
+load_feature_dictionary_from_df = _load_feature_dictionary_from_df
+lookup_feature_meta = _lookup_feature_meta
+determine_feature_columns = _determine_feature_columns

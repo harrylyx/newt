@@ -65,9 +65,15 @@ def _sync_legacy_patch_points() -> None:
     feature_metrics._build_feature_bin_stats = _build_feature_bin_stats
     feature_metrics._build_feature_monthly_metrics = _build_feature_monthly_metrics
     feature_metrics._load_feature_dictionary = _load_feature_dictionary
+    feature_metrics.build_feature_analysis_table = _build_feature_analysis_table
+    feature_metrics.build_feature_bin_stats = _build_feature_bin_stats
+    feature_metrics.build_feature_monthly_metrics = _build_feature_monthly_metrics
+    feature_metrics.load_feature_dictionary = _load_feature_dictionary
 
     group_metrics._build_split_metrics_tables = _build_split_metrics_tables
     group_metrics._build_group_metrics = _build_group_metrics
+    group_metrics.build_split_metrics_tables = _build_split_metrics_tables
+    group_metrics.build_group_metrics = _build_group_metrics
 
 
 def build_report_result(

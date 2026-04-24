@@ -2,13 +2,17 @@
 
 import json
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Union
+from typing import Dict, List, Optional, Union
 
 import numpy as np
 import pandas as pd
 
 from newt.config import SCORECARD
-from newt.modeling.scorecard_builder import ScorecardBuilder
+from newt.modeling.scorecard_builder import (
+    BinnerArtifact,
+    ScorecardBuilder,
+    ScorecardModelInput,
+)
 from newt.modeling.scorecard_scorer import ScorecardScorer
 from newt.modeling.scorecard_sql_builder import ScorecardSQLBuilder
 from newt.results import ScorecardSpec
@@ -66,14 +70,14 @@ class Scorecard:
         self._model_coefs: Dict[str, float] = {}
         self.feature_statistics_: pd.DataFrame = pd.DataFrame()
         self.model_statistics_: Dict[str, float] = {}
-        self.lr_model_: Optional[Any] = None
-        self.lr_parameters_: Dict[str, Any] = {}
-        self.lr_snapshot_: Dict[str, Any] = {}
+        self.lr_model_: Optional[object] = None
+        self.lr_parameters_: Dict[str, object] = {}
+        self.lr_snapshot_: Dict[str, object] = {}
 
     def from_model(
         self,
-        model: Any,
-        binner: Any,
+        model: ScorecardModelInput,
+        binner: BinnerArtifact,
         *,
         keep_training_artifacts: bool = False,
     ) -> "Scorecard":
@@ -130,7 +134,7 @@ class Scorecard:
         )
         return scorecard
 
-    def from_dict(self, payload: Dict[str, Any]) -> "Scorecard":
+    def from_dict(self, payload: Dict[str, object]) -> "Scorecard":
         """Restore a scorecard from a serialized specification.
 
         Args:
@@ -209,11 +213,11 @@ class Scorecard:
             raise ValueError("Scorecard is not built. Call from_model() first.")
         return self.spec_.export()
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> Dict[str, object]:
         """Export the scorecard specification as a serializable dictionary.
 
         Returns:
-            Dict[str, Any]: The scorecard definition payload.
+            Dict[str, object]: The scorecard definition payload.
         """
         if not self.is_built_ or self.spec_ is None:
             raise ValueError("Scorecard is not built. Call from_model() first.")
@@ -299,13 +303,13 @@ class Scorecard:
 
     def _build_enriched_lr_parameters(
         self,
-        lr_parameters: Dict[str, Any],
+        lr_parameters: Dict[str, object],
         model_coefs: Dict[str, float],
         summary_text: str,
         intercept: float,
-    ) -> Dict[str, Any]:
+    ) -> Dict[str, object]:
         """Build compact scalar LR metadata for ScorecardSpec persistence."""
-        enriched: Dict[str, Any] = {}
+        enriched: Dict[str, object] = {}
         for key, value in dict(lr_parameters).items():
             normalized = self._as_supported_lr_scalar(value)
             if normalized is None:
@@ -326,7 +330,7 @@ class Scorecard:
             enriched[f"coef__{feature}"] = numeric
         return enriched
 
-    def _extract_model_summary_text(self, model: Any) -> str:
+    def _extract_model_summary_text(self, model: object) -> str:
         """Extract summary text from a fitted model when available."""
         if isinstance(model, dict):
             value = model.get("summary_text")
@@ -339,7 +343,7 @@ class Scorecard:
             return value if isinstance(value, str) else str(value)
         return ""
 
-    def _estimate_intercept(self, spec: ScorecardSpec, model: Any) -> float:
+    def _estimate_intercept(self, spec: ScorecardSpec, model: object) -> float:
         """Estimate intercept from model payload or score scaling parameters."""
         if isinstance(model, dict):
             numeric = self._as_finite_float(model.get("intercept"))
@@ -365,9 +369,9 @@ class Scorecard:
         model_coefs: Dict[str, float],
         feature_statistics: Dict[str, Dict[str, float]],
         model_statistics: Dict[str, float],
-    ) -> Dict[str, Any]:
+    ) -> Dict[str, object]:
         """Build lightweight LR snapshot without training samples."""
-        snapshot: Dict[str, Any] = {
+        snapshot: Dict[str, object] = {
             "schema_version": self.SERIALIZATION_VERSION,
             "fit_intercept": bool(self.lr_parameters_.get("fit_intercept", True)),
             "method": self.lr_parameters_.get("method"),
@@ -391,7 +395,7 @@ class Scorecard:
             snapshot["intercept"] = self._estimate_intercept(spec, {})
         return self._normalize_lr_snapshot(snapshot)
 
-    def _normalize_feature_statistics(self, raw: Any) -> Dict[str, Dict[str, float]]:
+    def _normalize_feature_statistics(self, raw: object) -> Dict[str, Dict[str, float]]:
         """Normalize nested feature statistics dictionary."""
         if not isinstance(raw, dict):
             return {}
@@ -409,7 +413,7 @@ class Scorecard:
                 output[str(feature)] = normalized_stats
         return output
 
-    def _normalize_model_statistics(self, raw: Any) -> Dict[str, float]:
+    def _normalize_model_statistics(self, raw: object) -> Dict[str, float]:
         """Normalize model-level statistics dictionary."""
         if not isinstance(raw, dict):
             return {}
@@ -421,7 +425,7 @@ class Scorecard:
             output[str(metric)] = numeric
         return output
 
-    def _normalize_lr_snapshot(self, raw: Any) -> Dict[str, Any]:
+    def _normalize_lr_snapshot(self, raw: object) -> Dict[str, object]:
         """Normalize persisted LR snapshot payload."""
         if not isinstance(raw, dict):
             return {}
@@ -462,7 +466,7 @@ class Scorecard:
         }
         return normalized
 
-    def _as_supported_lr_scalar(self, value: Any) -> Optional[Any]:
+    def _as_supported_lr_scalar(self, value: object) -> Optional[object]:
         """Keep scalar values that are safe to persist in ScorecardSpec."""
         if isinstance(value, bool):
             return bool(value)
@@ -476,7 +480,7 @@ class Scorecard:
             return value
         return None
 
-    def _as_finite_float(self, value: Any) -> Optional[float]:
+    def _as_finite_float(self, value: object) -> Optional[float]:
         """Convert value to finite float when possible."""
         if value is None:
             return None

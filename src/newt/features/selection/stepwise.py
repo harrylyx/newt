@@ -11,17 +11,26 @@ import numpy as np
 import pandas as pd
 from tqdm.auto import tqdm
 
+from newt._engine import resolve_engine, validate_engine
 from newt._native import load_native_module
 from newt.config import MODELING
 from newt.utils.decorators import requires_fit
 
 _RUST_MODULE = load_native_module()
 if _RUST_MODULE is not None:
-    batch_fit_logistic_regression_numpy = (
-        _RUST_MODULE.batch_fit_logistic_regression_numpy
+    batch_fit_logistic_regression_numpy = getattr(
+        _RUST_MODULE,
+        "batch_fit_logistic_regression_numpy",
+        None,
     )
-    fit_logistic_regression_numpy = _RUST_MODULE.fit_logistic_regression_numpy
-    HAS_RUST = True
+    fit_logistic_regression_numpy = getattr(
+        _RUST_MODULE,
+        "fit_logistic_regression_numpy",
+        None,
+    )
+    HAS_RUST = callable(batch_fit_logistic_regression_numpy) and callable(
+        fit_logistic_regression_numpy
+    )
 else:
     batch_fit_logistic_regression_numpy = None
     fit_logistic_regression_numpy = None
@@ -131,8 +140,10 @@ class StepwiseSelector:
             raise ValueError("direction must be 'forward', 'backward', or 'both'")
         if criterion not in ("pvalue", "aic", "bic"):
             raise ValueError("criterion must be 'pvalue', 'aic', or 'bic'")
-        if engine not in ("auto", "rust", "python"):
-            raise ValueError("engine must be 'auto', 'rust' or 'python'")
+        try:
+            validate_engine(engine)
+        except ValueError as exc:
+            raise ValueError("engine must be 'auto', 'rust' or 'python'") from exc
 
         self.direction = direction
         self.criterion = criterion
@@ -141,16 +152,15 @@ class StepwiseSelector:
         self.max_iter = max_iter
         self.fit_intercept = fit_intercept
         self.exclude = exclude or []
-        if engine == "auto":
-            self.engine = "rust" if HAS_RUST else "python"
-        else:
-            if engine == "rust" and not HAS_RUST:
-                raise ImportError(
-                    "Rust engine requested but native extension is unavailable. "
-                    "Use engine='auto' or engine='python', or install a wheel with "
-                    "the native extension."
-                )
-            self.engine = engine
+        self.engine = resolve_engine(
+            engine,
+            required_functions=[
+                "batch_fit_logistic_regression_numpy",
+                "fit_logistic_regression_numpy",
+            ],
+            component="Rust stepwise engine",
+            loader=lambda: _RUST_MODULE if HAS_RUST else None,
+        )
         self.verbose = verbose
 
         # Fitted attributes
@@ -346,6 +356,35 @@ class StepwiseSelector:
 
         return results
 
+    def _fixed_design_matrix(
+        self,
+        X: pd.DataFrame,
+        selected: List[str],
+    ) -> np.ndarray:
+        """Build the fixed design matrix used by Rust candidate evaluation."""
+        fixed_x = X[selected].values
+        if self.fit_intercept:
+            fixed_x = np.column_stack([np.ones(fixed_x.shape[0]), fixed_x])
+        return fixed_x
+
+    def _record_selection_step(
+        self,
+        iteration: int,
+        action: str,
+        feature: str,
+        value: float,
+    ) -> None:
+        """Append a normalized selection-history record."""
+        self.selection_history_.append(
+            {
+                "iteration": iteration + 1,
+                "action": action,
+                "feature": feature,
+                "criterion": self.criterion,
+                "value": value,
+            }
+        )
+
     def _forward_selection(
         self,
         X: pd.DataFrame,
@@ -371,11 +410,12 @@ class StepwiseSelector:
 
             if self.engine == "rust" and len(remaining) > 0:
                 # Parallel Batch Testing with Rust
-                fixed_x = X[selected].values
-                if self.fit_intercept:
-                    fixed_x = np.column_stack([np.ones(fixed_x.shape[0]), fixed_x])
-
-                results = self._evaluate_rust_candidates(X, y, fixed_x, remaining)
+                results = self._evaluate_rust_candidates(
+                    X,
+                    y,
+                    self._fixed_design_matrix(X, selected),
+                    remaining,
+                )
 
                 current_model = self._fit_model(X, y, selected, sm)
                 current_criterion = self._get_criterion_value(
@@ -443,15 +483,7 @@ class StepwiseSelector:
             pbar.update(1)
             pbar.set_postfix(added=best_feature)
 
-            self.selection_history_.append(
-                {
-                    "iteration": iteration + 1,
-                    "action": "add",
-                    "feature": best_feature,
-                    "criterion": self.criterion,
-                    "value": best_criterion,
-                }
-            )
+            self._record_selection_step(iteration, "add", best_feature, best_criterion)
 
         pbar.close()
         return selected
@@ -523,14 +555,8 @@ class StepwiseSelector:
             pbar.update(1)
             pbar.set_postfix(removed=worst_feature)
 
-            self.selection_history_.append(
-                {
-                    "iteration": iteration + 1,
-                    "action": "remove",
-                    "feature": worst_feature,
-                    "criterion": self.criterion,
-                    "value": worst_pvalue,
-                }
+            self._record_selection_step(
+                iteration, "remove", worst_feature, worst_pvalue
             )
 
         pbar.close()
@@ -556,10 +582,12 @@ class StepwiseSelector:
             best_criterion = np.inf if self.criterion != "pvalue" else 1.0
 
             if self.engine == "rust" and len(remaining) > 0:
-                fixed_x = X[selected].values
-                if self.fit_intercept:
-                    fixed_x = np.column_stack([np.ones(fixed_x.shape[0]), fixed_x])
-                results = self._evaluate_rust_candidates(X, y, fixed_x, remaining)
+                results = self._evaluate_rust_candidates(
+                    X,
+                    y,
+                    self._fixed_design_matrix(X, selected),
+                    remaining,
+                )
 
                 current_model = self._fit_model(X, y, selected, sm)
                 current_criterion = self._get_criterion_value(
@@ -617,14 +645,11 @@ class StepwiseSelector:
                 remaining.remove(best_feature)
                 changed = True
 
-                self.selection_history_.append(
-                    {
-                        "iteration": iteration + 1,
-                        "action": "add",
-                        "feature": best_feature,
-                        "criterion": self.criterion,
-                        "value": best_criterion,
-                    }
+                self._record_selection_step(
+                    iteration,
+                    "add",
+                    best_feature,
+                    best_criterion,
                 )
 
             # Backward step: try to remove a feature
@@ -664,14 +689,11 @@ class StepwiseSelector:
                         remaining.append(worst_feature)
                         changed = True
 
-                        self.selection_history_.append(
-                            {
-                                "iteration": iteration + 1,
-                                "action": "remove",
-                                "feature": worst_feature,
-                                "criterion": self.criterion,
-                                "value": worst_pvalue,
-                            }
+                        self._record_selection_step(
+                            iteration,
+                            "remove",
+                            worst_feature,
+                            worst_pvalue,
                         )
 
             if not changed:

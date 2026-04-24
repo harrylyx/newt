@@ -121,7 +121,7 @@ def build_report_result(
     )
 
     step_start = time.perf_counter()
-    score_metric_options = group_metrics._build_score_metric_options(
+    score_metric_options = group_metrics.build_score_metric_options(
         score_direction_summary
     )
     _log_context_stage(
@@ -141,7 +141,7 @@ def build_report_result(
         (
             shared_tag_metrics,
             shared_month_metrics,
-        ) = group_metrics._build_split_metrics_tables(
+        ) = group_metrics.build_split_metrics_tables(
             data=data,
             tag_col=tag_col,
             month_col=month_col,
@@ -149,7 +149,7 @@ def build_report_result(
             label_list=label_list,
             score_col=primary_report_score,
             model_name=primary_score_name,
-            reverse_auc_label=group_metrics._lookup_reverse_auc(
+            reverse_auc_label=group_metrics.lookup_reverse_auc(
                 score_metric_options, primary_score_name
             ),
             metrics_mode=resolved_options.metrics_mode,
@@ -171,7 +171,7 @@ def build_report_result(
     feature_dict = pd.DataFrame()
     if any(key in build_sheet_keys for key in ["variable_analysis", "portrait"]):
         step_start = time.perf_counter()
-        feature_dict = feature_metrics._load_feature_dictionary_from_df(feature_df)
+        feature_dict = feature_metrics.load_feature_dictionary_from_df(feature_df)
         _log_context_stage(
             context,
             "load_feature_dictionary",
@@ -182,7 +182,7 @@ def build_report_result(
     feature_cols: List[str] = []
     if "variable_analysis" in build_sheet_keys:
         step_start = time.perf_counter()
-        feature_cols = feature_metrics._determine_feature_columns(
+        feature_cols = feature_metrics.determine_feature_columns(
             data,
             model_features=model_adapter.get_feature_names(),
             excluded=[
@@ -222,7 +222,7 @@ def build_report_result(
         key in build_sheet_keys
         for key in ["dimensional_comparison", "model_comparison", "portrait"]
     ):
-        score_model_columns = group_metrics._resolve_score_model_columns(
+        score_model_columns = group_metrics.resolve_score_model_columns(
             primary_score_name=primary_score_name,
             score_list=score_list,
             report_score_columns=report_score_columns,
@@ -252,7 +252,7 @@ def build_report_result(
             label_list=label_list,
             score_col=primary_report_score,
             model_name=primary_score_name,
-            reverse_auc_label=group_metrics._lookup_reverse_auc(
+            reverse_auc_label=group_metrics.lookup_reverse_auc(
                 score_metric_options, primary_score_name
             ),
             metrics_mode=resolved_options.metrics_mode,
@@ -283,7 +283,7 @@ def build_report_result(
             model_name=primary_score_name,
             model_adapter=model_adapter,
             score_edges=score_edges,
-            reverse_auc_label=group_metrics._lookup_reverse_auc(
+            reverse_auc_label=group_metrics.lookup_reverse_auc(
                 score_metric_options, primary_score_name
             ),
             metrics_mode=resolved_options.metrics_mode,

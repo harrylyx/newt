@@ -1,11 +1,38 @@
 """Build scorecard specifications from fitted model components."""
 
-from typing import Any, Dict, Optional, Tuple
+from __future__ import annotations
+
+from collections.abc import Mapping as MappingABC
+from typing import Dict, Mapping, Optional, Protocol, Sequence, Tuple, Union
 
 import numpy as np
 import pandas as pd
 
 from newt.results import BinningRuleSpec, FeatureScoreSpec, ScorecardSpec
+
+
+class SerializableModel(Protocol):
+    """Model object that can expose a serializable coefficient payload."""
+
+    def to_dict(self) -> Mapping[str, object]:
+        """Return a model payload with intercept and coefficients."""
+
+
+class BinnerArtifact(Protocol):
+    """Fitted binner interface required by scorecard generation."""
+
+    rules_: Mapping[str, object]
+    binners_: Mapping[str, object]
+    woe_maps_: Mapping[str, Mapping[str, float]]
+
+    def get_splits(self, feature: str) -> Sequence[float]:
+        """Return split points for a feature."""
+
+    def get_woe_map(self, feature: str) -> Mapping[str, float]:
+        """Return WOE values for a feature."""
+
+
+ScorecardModelInput = Union[Mapping[str, object], SerializableModel]
 
 
 class ScorecardBuilder:
@@ -20,14 +47,14 @@ class ScorecardBuilder:
 
     def build(
         self,
-        model: Any,
-        binner: Any,
+        model: ScorecardModelInput,
+        binner: BinnerArtifact,
     ) -> Tuple[
         ScorecardSpec,
         Dict[str, float],
         Dict[str, Dict[str, float]],
         Dict[str, float],
-        Dict[str, Any],
+        Dict[str, object],
     ]:
         """Build a scorecard spec from fitted model components."""
         intercept, coefficients = self._extract_model_parameters(model)
@@ -109,23 +136,27 @@ class ScorecardBuilder:
         )
         return spec, coefficients, feature_statistics, model_statistics, lr_parameters
 
-    def _extract_model_parameters(self, model: Any) -> Tuple[float, Dict[str, float]]:
+    def _extract_model_parameters(
+        self, model: ScorecardModelInput
+    ) -> Tuple[float, Dict[str, float]]:
         """Extract intercept and feature coefficients from supported models."""
         if hasattr(model, "to_dict"):
-            model_dict = model.to_dict()
-        elif isinstance(model, dict):
+            model_dict = getattr(model, "to_dict")()
+        elif isinstance(model, MappingABC):
             model_dict = model
         else:
             raise ValueError("Model must be LogisticModel or dict with coefficients.")
 
         intercept = float(model_dict.get("intercept", 0.0))
+        raw_coefficients = model_dict.get("coefficients", {})
+        if not isinstance(raw_coefficients, MappingABC):
+            raise ValueError("Model coefficients must be a mapping.")
         coefficients = {
-            feature: float(coef)
-            for feature, coef in model_dict.get("coefficients", {}).items()
+            str(feature): float(coef) for feature, coef in raw_coefficients.items()
         }
         return intercept, coefficients
 
-    def _has_binning_rule(self, binner: Any, feature: str) -> bool:
+    def _has_binning_rule(self, binner: BinnerArtifact, feature: str) -> bool:
         """Check whether a feature has fitted binning rules."""
         if hasattr(binner, "rules_") and feature in binner.rules_:
             return True
@@ -133,7 +164,7 @@ class ScorecardBuilder:
             return True
         return False
 
-    def _get_splits(self, binner: Any, feature: str):
+    def _get_splits(self, binner: BinnerArtifact, feature: str) -> Sequence[float]:
         """Get fitted splits for a feature."""
         if hasattr(binner, "get_splits"):
             return binner.get_splits(feature)
@@ -143,7 +174,7 @@ class ScorecardBuilder:
             return list(getattr(binner.binners_[feature], "splits_", []))
         return []
 
-    def _get_woe_map(self, binner: Any, feature: str) -> Dict[str, float]:
+    def _get_woe_map(self, binner: BinnerArtifact, feature: str) -> Dict[str, float]:
         """Get the WOE mapping for a feature."""
         if hasattr(binner, "get_woe_map"):
             return dict(binner.get_woe_map(feature))
@@ -153,7 +184,7 @@ class ScorecardBuilder:
 
     def _extract_feature_statistics(
         self,
-        model: Any,
+        model: object,
         coefficients: Dict[str, float],
     ) -> Dict[str, Dict[str, float]]:
         """Extract feature-level logistic statistics when available."""
@@ -198,7 +229,7 @@ class ScorecardBuilder:
                 stats[feature] = feature_stats
         return stats
 
-    def _extract_model_statistics(self, model: Any) -> Dict[str, float]:
+    def _extract_model_statistics(self, model: object) -> Dict[str, float]:
         """Extract model-level logistic summary statistics when available."""
         result = getattr(model, "result_", None)
         if result is None:
@@ -220,10 +251,10 @@ class ScorecardBuilder:
             output[output_name] = numeric
         return output
 
-    def _extract_lr_parameters(self, model: Any) -> Dict[str, Any]:
+    def _extract_lr_parameters(self, model: object) -> Dict[str, object]:
         """Extract a compact, report-friendly LR parameter snapshot."""
         preferred = ("fit_intercept", "method", "maxiter", "regularization", "alpha")
-        snapshot: Dict[str, Any] = {}
+        snapshot: Dict[str, object] = {}
 
         for name in preferred:
             if not hasattr(model, name):
@@ -246,7 +277,7 @@ class ScorecardBuilder:
 
         return snapshot
 
-    def _as_finite_float(self, value: Any) -> Optional[float]:
+    def _as_finite_float(self, value: object) -> Optional[float]:
         """Normalize scalar numeric values and reject non-finite entries."""
         if value is None:
             return None
@@ -258,7 +289,7 @@ class ScorecardBuilder:
             return None
         return numeric
 
-    def _as_supported_lr_param(self, value: Any) -> Optional[Any]:
+    def _as_supported_lr_param(self, value: object) -> Optional[object]:
         """Keep only scalar values that are safe to serialize in scorecard payloads."""
         if isinstance(value, bool):
             return bool(value)

@@ -3,10 +3,10 @@ from typing import Dict, List, Union
 import numpy as np
 import pandas as pd
 
+from newt._engine import ensure_native_functions, validate_engine
 from newt._native import load_native_module, require_native_module
 
 VALID_CORRELATION_METHODS = frozenset(["pearson", "kendall", "spearman"])
-VALID_ENGINES = frozenset(["auto", "rust", "python"])
 
 
 def calculate_correlation_matrix(
@@ -19,10 +19,7 @@ def calculate_correlation_matrix(
         raise ValueError(
             f"method must be one of {sorted(VALID_CORRELATION_METHODS)}, got: {method}"
         )
-    if engine not in VALID_ENGINES:
-        raise ValueError(
-            f"engine must be one of {sorted(VALID_ENGINES)}, got: {engine}"
-        )
+    validate_engine(engine)
 
     numeric_df = df.select_dtypes(include=[np.number])
     if numeric_df.empty:
@@ -50,10 +47,7 @@ def get_high_correlation_pairs(
     engine: str = "auto",
 ) -> List[Dict[str, Union[str, float]]]:
     """Identify pairs of variables with correlation above a threshold."""
-    if engine not in VALID_ENGINES:
-        raise ValueError(
-            f"engine must be one of {sorted(VALID_ENGINES)}, got: {engine}"
-        )
+    validate_engine(engine)
     if corr_matrix.empty:
         return []
 
@@ -78,9 +72,12 @@ def _calculate_correlation_matrix_rust(
     if module is None:
         raise ImportError("Rust native extension is unavailable.")
 
-    rust_fn = getattr(module, "calculate_correlation_matrix_numpy", None)
-    if not callable(rust_fn):
-        raise RuntimeError("Rust correlation function is unavailable.")
+    ensure_native_functions(
+        module,
+        ["calculate_correlation_matrix_numpy"],
+        component="Rust correlation engine",
+    )
+    rust_fn = module.calculate_correlation_matrix_numpy
 
     columns = [
         np.ascontiguousarray(
@@ -103,9 +100,12 @@ def _get_high_correlation_pairs_rust(
     if module is None:
         raise ImportError("Rust native extension is unavailable.")
 
-    rust_fn = getattr(module, "extract_high_correlation_pairs_numpy", None)
-    if not callable(rust_fn):
-        raise RuntimeError("Rust high-correlation extraction function is unavailable.")
+    ensure_native_functions(
+        module,
+        ["extract_high_correlation_pairs_numpy"],
+        component="Rust correlation engine",
+    )
+    rust_fn = module.extract_high_correlation_pairs_numpy
 
     matrix = np.ascontiguousarray(corr_matrix.to_numpy(dtype=np.float64))
     rows = [np.ascontiguousarray(matrix[idx, :]) for idx in range(matrix.shape[0])]

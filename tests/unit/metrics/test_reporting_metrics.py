@@ -78,7 +78,9 @@ def test_summarize_label_distribution_counts_grey_good_bad(report_frame):
 
     first_row = distribution.iloc[0]
 
-    assert {"好", "坏", "灰", "总数（去掉灰样本）", "坏占比（去掉灰样本）"}.issubset(distribution.columns)
+    assert {"好", "坏", "灰", "总数（去掉灰样本）", "坏占比（去掉灰样本）"}.issubset(
+        distribution.columns
+    )
     assert first_row["渠道"] == ""
     assert first_row["灰"] >= 0
 

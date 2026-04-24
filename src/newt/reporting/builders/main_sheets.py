@@ -234,7 +234,9 @@ def build_model_design_sheet(
                     "备注": "",
                 }
             )
-    blocks.append(ReportBlock(title="建模样本分布情况表", data=pd.DataFrame(sample_rows)))
+    blocks.append(
+        ReportBlock(title="建模样本分布情况表", data=pd.DataFrame(sample_rows))
+    )
 
     effect_rows = []
     if precomputed_tag_metrics is not None and not precomputed_tag_metrics.empty:
@@ -604,7 +606,9 @@ def build_model_performance_sheet(
     build_context: Optional[ReportBuildContext] = None,
 ) -> ReportSheet:
     """Build model performance sheet."""
-    blocks = [ReportBlock(title="一、建模方法选择", data=model_adapter.get_param_table())]
+    blocks = [
+        ReportBlock(title="一、建模方法选择", data=model_adapter.get_param_table())
+    ]
     if (
         precomputed_tag_metrics is not None
         and precomputed_month_metrics is not None

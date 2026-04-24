@@ -1,6 +1,8 @@
 """Scorecard pipeline implemented as a thin coordinator around step objects."""
 
-from typing import Any, Dict, List, Optional
+from __future__ import annotations
+
+from typing import TYPE_CHECKING, Dict, List, Optional
 
 import pandas as pd
 
@@ -15,6 +17,12 @@ from newt.pipeline.steps import (
     StepwiseStep,
     WoeTransformStep,
 )
+
+if TYPE_CHECKING:
+    from newt.features.analysis.woe_calculator import WOEEncoder
+    from newt.features.binning import Binner
+    from newt.features.selection import FeatureSelector, PostFilter, StepwiseSelector
+    from newt.modeling import LogisticModel, Scorecard
 
 
 class ScorecardPipeline:
@@ -328,66 +336,66 @@ class ScorecardPipeline:
         return self._state.steps
 
     @property
-    def prefilter_(self) -> Any:
+    def prefilter_(self) -> Optional["FeatureSelector"]:
         """The FeatureSelector instance from the prefilter step."""
         return self._state.prefilter
 
     @prefilter_.setter
-    def prefilter_(self, value: Any) -> None:
+    def prefilter_(self, value: Optional["FeatureSelector"]) -> None:
         self._state.prefilter = value
 
     @property
-    def binner_(self) -> Any:
+    def binner_(self) -> Optional["Binner"]:
         """The Binner instance from the bin step."""
         return self._state.binner
 
     @binner_.setter
-    def binner_(self, value: Any) -> None:
+    def binner_(self, value: Optional["Binner"]) -> None:
         self._state.binner = value
 
     @property
-    def woe_encoders_(self) -> Dict[str, Any]:
+    def woe_encoders_(self) -> Dict[str, "WOEEncoder"]:
         """Dictionary mapping feature names to WOEEncoder instances."""
         return self._state.woe_encoders
 
     @woe_encoders_.setter
-    def woe_encoders_(self, value: Dict[str, Any]) -> None:
+    def woe_encoders_(self, value: Dict[str, "WOEEncoder"]) -> None:
         self._state.woe_encoders = value
 
     @property
-    def postfilter_(self) -> Any:
+    def postfilter_(self) -> Optional["PostFilter"]:
         """The PostFilter instance from the postfilter step."""
         return self._state.postfilter
 
     @postfilter_.setter
-    def postfilter_(self, value: Any) -> None:
+    def postfilter_(self, value: Optional["PostFilter"]) -> None:
         self._state.postfilter = value
 
     @property
-    def stepwise_(self) -> Any:
+    def stepwise_(self) -> Optional["StepwiseSelector"]:
         """The StepwiseSelector instance from the stepwise step."""
         return self._state.stepwise
 
     @stepwise_.setter
-    def stepwise_(self, value: Any) -> None:
+    def stepwise_(self, value: Optional["StepwiseSelector"]) -> None:
         self._state.stepwise = value
 
     @property
-    def model_(self) -> Any:
+    def model_(self) -> Optional["LogisticModel"]:
         """The fitted LogisticModel instance."""
         return self._state.model
 
     @model_.setter
-    def model_(self, value: Any) -> None:
+    def model_(self, value: Optional["LogisticModel"]) -> None:
         self._state.model = value
 
     @property
-    def scorecard_(self) -> Any:
+    def scorecard_(self) -> Optional["Scorecard"]:
         """The generated Scorecard instance."""
         return self._state.scorecard
 
     @scorecard_.setter
-    def scorecard_(self, value: Any) -> None:
+    def scorecard_(self, value: Optional["Scorecard"]) -> None:
         self._state.scorecard = value
 
     @property
@@ -425,32 +433,32 @@ class ScorecardPipeline:
         self._state.X_test_woe = value
 
     @property
-    def prefilter_result(self) -> Any:
+    def prefilter_result(self) -> Optional["FeatureSelector"]:
         """Alias for prefilter_."""
         return self.prefilter_
 
     @property
-    def binner(self) -> Any:
+    def binner(self) -> Optional["Binner"]:
         """Alias for binner_."""
         return self.binner_
 
     @property
-    def woe_encoders(self) -> Dict[str, Any]:
+    def woe_encoders(self) -> Dict[str, "WOEEncoder"]:
         """Alias for woe_encoders_."""
         return self.woe_encoders_
 
     @property
-    def postfilter_result(self) -> Any:
+    def postfilter_result(self) -> Optional["PostFilter"]:
         """Alias for postfilter_."""
         return self.postfilter_
 
     @property
-    def model(self) -> Any:
+    def model(self) -> Optional["LogisticModel"]:
         """Alias for model_."""
         return self.model_
 
     @property
-    def scorecard(self) -> Any:
+    def scorecard(self) -> Optional["Scorecard"]:
         """Alias for scorecard_."""
         return self.scorecard_
 
@@ -459,7 +467,7 @@ class ScorecardPipeline:
         """Get the list of features currently selected in the pipeline."""
         return self._state.selected_features
 
-    def summary(self) -> Dict[str, Any]:
+    def summary(self) -> Dict[str, object]:
         """Get pipeline summary."""
         summary = {
             "steps": self.steps_,

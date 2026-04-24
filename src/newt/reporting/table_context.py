@@ -33,9 +33,9 @@ class ReportBuildContext:
     latest_month_psi_cache: Dict[Tuple[str], Dict[object, float]] = field(
         default_factory=dict
     )
-    split_metrics_cache: Dict[
-        Tuple[object, ...], Tuple[pd.DataFrame, pd.DataFrame]
-    ] = field(default_factory=dict)
+    split_metrics_cache: Dict[Tuple[object, ...], Tuple[pd.DataFrame, pd.DataFrame]] = (
+        field(default_factory=dict)
+    )
     group_metrics_cache: Dict[Tuple[object, ...], pd.DataFrame] = field(
         default_factory=dict
     )

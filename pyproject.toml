@@ -72,6 +72,7 @@ include = '\.pyi?$'
 [tool.isort]
 profile = "black"
 multi_line_output = 3
+skip_gitignore = true
 
 [tool.pytest.ini_options]
 markers = [

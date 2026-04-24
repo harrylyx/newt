@@ -2,6 +2,7 @@ from typing import Dict, Union
 
 import pandas as pd
 
+from newt._engine import ensure_native_functions, validate_engine
 from newt._native import load_native_module, require_native_module
 from newt.config import BINNING
 
@@ -30,8 +31,10 @@ def calculate_iv(
     Returns:
         Dict containing 'iv' (float) and 'woe_table' (pd.DataFrame).
     """
-    if engine not in {"auto", "rust", "python"}:
-        raise ValueError("engine must be 'auto', 'rust' or 'python'")
+    try:
+        validate_engine(engine)
+    except ValueError as exc:
+        raise ValueError("engine must be 'auto', 'rust' or 'python'") from exc
 
     feature_data = prepare_feature_for_iv(df[feature], buckets=buckets)
     woe_table, python_iv = build_iv_summary(feature_data, df[target])
@@ -43,6 +46,11 @@ def calculate_iv(
         iv_value = float(python_iv)
     elif engine == "rust":
         rust_module = _load_rust_extension()
+        ensure_native_functions(
+            rust_module,
+            ["calculate_categorical_iv"],
+            component="Rust IV engine",
+        )
         iv_value = float(
             _calculate_rust_iv(
                 rust_module=rust_module,
@@ -52,21 +60,25 @@ def calculate_iv(
         )
     else:
         rust_module = load_native_module()
-        rust_fn = (
-            getattr(rust_module, "calculate_categorical_iv", None)
-            if rust_module is not None
-            else None
-        )
-        if rust_module is None or not callable(rust_fn):
+        if rust_module is None:
             iv_value = float(python_iv)
         else:
-            iv_value = float(
-                _calculate_rust_iv(
-                    rust_module=rust_module,
-                    feature_data=feature_data,
-                    target_series=df[target],
+            try:
+                ensure_native_functions(
+                    rust_module,
+                    ["calculate_categorical_iv"],
+                    component="Rust IV engine",
                 )
-            )
+            except RuntimeError:
+                iv_value = float(python_iv)
+            else:
+                iv_value = float(
+                    _calculate_rust_iv(
+                        rust_module=rust_module,
+                        feature_data=feature_data,
+                        target_series=df[target],
+                    )
+                )
 
     return {"iv": iv_value, "woe_table": woe_table}
 

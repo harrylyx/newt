@@ -1,13 +1,13 @@
-from typing import Union
-
 import numpy as np
 from sklearn.metrics import roc_curve
 
+from newt.metrics._common import ArrayLike
+
 
 def calculate_ks(
-    y_true: Union[np.ndarray, list],
-    y_prob: Union[np.ndarray, list],
-    sample_weight: Union[np.ndarray, list, None] = None,
+    y_true: ArrayLike,
+    y_prob: ArrayLike,
+    sample_weight: ArrayLike = None,
 ) -> float:
     """
     Calculate the Kolmogorov-Smirnov (KS) statistic.

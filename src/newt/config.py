@@ -54,9 +54,9 @@ class LoggingConfig:
     """日志相关默认配置"""
 
     DEFAULT_LOG_LEVEL: Final[str] = "DEBUG"
-    DEFAULT_LOG_FORMAT: Final[
-        str
-    ] = "%(asctime)s | %(levelname)s | %(name)s | %(message)s"
+    DEFAULT_LOG_FORMAT: Final[str] = (
+        "%(asctime)s | %(levelname)s | %(name)s | %(message)s"
+    )
 
 
 # Singleton instances for easy access

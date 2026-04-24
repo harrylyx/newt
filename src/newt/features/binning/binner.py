@@ -4,7 +4,7 @@ Unified binning interface.
 Provides a single entry point for binning features using various algorithms.
 """
 
-from typing import Any, Dict, List, Optional, Union
+from typing import Any, Dict, List, Optional, Tuple, Union
 
 import numpy as np
 import pandas as pd
@@ -311,6 +311,196 @@ class Binner(BinnerStatsMixin, BinnerIOMixin):
             encoders[feature] = encoder
         return encoders
 
+    def _prepare_fit_inputs(
+        self,
+        X: pd.DataFrame,
+        y: Optional[Union[pd.Series, str]],
+        method: str,
+    ) -> Tuple[pd.DataFrame, Optional[pd.Series]]:
+        """Resolve target input and validate supervised targets."""
+        y_series = y
+        if isinstance(y, str):
+            y_series = X[y]
+            if y in X.columns:
+                X = X.drop(columns=[y])
+
+        if method == "chi":
+            if y_series is None:
+                raise ValueError("ChiMerge requires target 'y'.")
+            if not isinstance(y_series, pd.Series):
+                y_series = pd.Series(y_series, index=X.index)
+            y_series = _validate_chi_target(
+                y_series,
+                context="Binner.fit(method='chi')",
+            )
+
+        return X, y_series
+
+    def _reset_fit_state(
+        self,
+        X: pd.DataFrame,
+        y_series: Optional[pd.Series],
+        numeric_cols: List[str],
+    ) -> None:
+        """Reset fitted attributes before a fresh fit."""
+        self.rules_ = {}
+        self.binners_ = {}
+        self.woe_maps_ = {}
+        self.ivs_ = {}
+        self.stats_ = {}
+        self._X = X.copy()
+        self._y = y_series.copy() if y_series is not None else None
+        self._features = numeric_cols
+
+    @staticmethod
+    def _resolve_fit_columns(X: pd.DataFrame, cols: Optional[List[str]]) -> List[str]:
+        if cols:
+            return [column for column in cols if column in X.columns]
+        return list(X.select_dtypes(include=[np.number]).columns)
+
+    @staticmethod
+    def _resolve_feature_min_samples(
+        X: pd.DataFrame,
+        numeric_cols: List[str],
+        min_samples: Union[int, float, None],
+    ) -> Dict[str, Optional[int]]:
+        feature_min_samples: Dict[str, Optional[int]] = {
+            col: None for col in numeric_cols
+        }
+        if min_samples is None:
+            return feature_min_samples
+
+        for col in numeric_cols:
+            valid_count = int(X[col].notna().sum())
+            if valid_count <= 0:
+                continue
+            feature_min_samples[col] = _resolve_min_samples_count(
+                min_samples=min_samples,
+                sample_count=valid_count,
+                context=f"Binner.fit(feature='{col}')",
+            )
+        return feature_min_samples
+
+    @staticmethod
+    def _build_binner_kwargs(
+        method: str,
+        n_bins: int,
+        min_samples: Union[int, float, None],
+        monotonic: Union[bool, str, None],
+        extra_kwargs: Dict[str, Any],
+    ) -> Dict[str, Any]:
+        kwargs_binner: Dict[str, Any] = {"n_bins": n_bins, "monotonic": monotonic}
+        if method == "dt" and min_samples is not None:
+            kwargs_binner["min_samples_leaf"] = min_samples
+        if method == "chi" and min_samples is not None:
+            kwargs_binner["min_samples"] = min_samples
+        kwargs_binner.update(extra_kwargs)
+        return kwargs_binner
+
+    @staticmethod
+    def _load_tqdm():
+        try:
+            from tqdm.auto import tqdm
+
+            return tqdm
+        except ImportError:
+            return None
+
+    def _fit_sequential_features(
+        self,
+        X: pd.DataFrame,
+        y_series: Optional[pd.Series],
+        method: str,
+        n_bins: int,
+        min_samples: Union[int, float, None],
+        monotonic: Union[bool, str, None],
+        numeric_cols: List[str],
+        feature_min_samples: Dict[str, Optional[int]],
+        show_progress: bool,
+        extra_kwargs: Dict[str, Any],
+        tqdm,
+    ) -> None:
+        """Fit features one by one using the selected Python binner."""
+        pbar = (
+            tqdm(numeric_cols, desc="Binning features", disable=not show_progress)
+            if tqdm
+            else numeric_cols
+        )
+        for col in pbar:
+            binner_cls = self.method_map.get(method)
+            if binner_cls is None:
+                raise ValueError(f"Unknown method: {method}")
+
+            kwargs_binner = self._build_binner_kwargs(
+                method=method,
+                n_bins=n_bins,
+                min_samples=min_samples,
+                monotonic=monotonic,
+                extra_kwargs=extra_kwargs,
+            )
+            binner = binner_cls(**kwargs_binner)
+
+            col_data = X[col]
+            valid_mask = col_data.notna()
+            if valid_mask.sum() == 0:
+                continue
+
+            y_fit = y_series[valid_mask] if y_series is not None else None
+            binner.fit(col_data[valid_mask], y_fit)
+            self._store_feature_binner(
+                feature=col,
+                binner=binner,
+                col_data=col_data,
+                y_series=y_series,
+                min_sample_count=feature_min_samples.get(col),
+            )
+
+    @staticmethod
+    def _normalize_split_lists(split_lists) -> List[List[float]]:
+        return [sorted(list(set(splits))) for splits in split_lists]
+
+    @classmethod
+    def _adjust_batch_monotonic_splits(
+        cls,
+        rust_module,
+        feature_arrays: List[np.ndarray],
+        y_arr: np.ndarray,
+        split_lists: List[List[float]],
+        monotonic: Union[bool, str, None],
+    ) -> Tuple[List[List[float]], List[bool]]:
+        """Adjust Rust batch splits for monotonicity when requested."""
+        if not monotonic:
+            return split_lists, [True] * len(split_lists)
+
+        monotonic_success = [False] * len(split_lists)
+        if not hasattr(rust_module, "adjust_batch_chi_merge_monotonic_numpy"):
+            return split_lists, monotonic_success
+
+        try:
+            native_result = rust_module.adjust_batch_chi_merge_monotonic_numpy(
+                feature_arrays,
+                y_arr,
+                split_lists,
+                _resolve_monotonic_mode(monotonic),
+            )
+        except Exception:
+            return split_lists, monotonic_success
+
+        if isinstance(native_result, tuple) and len(native_result) == 2:
+            candidate_splits, success_flags = native_result
+            if len(candidate_splits) == len(split_lists) and len(success_flags) == len(
+                split_lists
+            ):
+                return cls._normalize_split_lists(candidate_splits), [
+                    bool(success) for success in success_flags
+                ]
+            return split_lists, monotonic_success
+
+        if len(native_result) == len(split_lists):
+            return cls._normalize_split_lists(native_result), [True] * len(split_lists)
+
+        return split_lists, monotonic_success
+
     def fit(
         self,
         X: pd.DataFrame,
@@ -350,62 +540,16 @@ class Binner(BinnerStatsMixin, BinnerIOMixin):
         Examples:
             >>> binner.fit(df, target='default', method='chi', monotonic=True)
         """
-        y_series = y
-        if isinstance(y, str):
-            y_series = X[y]
-            if y in X.columns:
-                X = X.drop(columns=[y])
+        X, y_series = self._prepare_fit_inputs(X, y, method)
+        numeric_cols = self._resolve_fit_columns(X, cols)
+        feature_min_samples = self._resolve_feature_min_samples(
+            X=X,
+            numeric_cols=numeric_cols,
+            min_samples=min_samples,
+        )
+        self._reset_fit_state(X, y_series, numeric_cols)
 
-        if method == "chi":
-            if y_series is None:
-                raise ValueError("ChiMerge requires target 'y'.")
-            if not isinstance(y_series, pd.Series):
-                y_series = pd.Series(y_series, index=X.index)
-            y_series = _validate_chi_target(
-                y_series,
-                context="Binner.fit(method='chi')",
-            )
-
-        # Reset state for a fresh fit.
-        self.rules_ = {}
-        self.binners_ = {}
-        self.woe_maps_ = {}
-        self.ivs_ = {}
-        self.stats_ = {}
-
-        # Store references for later use
-        self._X = X.copy()
-        self._y = y_series.copy() if y_series is not None else None
-
-        # Determine columns to bin
-        if cols:
-            numeric_cols = [c for c in cols if c in X.columns]
-        else:
-            numeric_cols = list(X.select_dtypes(include=[np.number]).columns)
-
-        feature_min_samples: Dict[str, Optional[int]] = {
-            col: None for col in numeric_cols
-        }
-        if min_samples is not None:
-            for col in numeric_cols:
-                valid_count = int(X[col].notna().sum())
-                if valid_count <= 0:
-                    continue
-                feature_min_samples[col] = _resolve_min_samples_count(
-                    min_samples=min_samples,
-                    sample_count=valid_count,
-                    context=f"Binner.fit(feature='{col}')",
-                )
-
-        self._features = numeric_cols
-
-        # tqdm for progress tracking
-        try:
-            from tqdm.auto import tqdm
-
-            has_tqdm = True
-        except ImportError:
-            has_tqdm = False
+        tqdm = self._load_tqdm()
 
         # Determine if we can use batch Rust ChiMerge
         rust_module = _load_rust_engine()
@@ -435,7 +579,7 @@ class Binner(BinnerStatsMixin, BinnerIOMixin):
                     desc="Binning features (Rust Batch)",
                     disable=not show_progress,
                 )
-                if has_tqdm
+                if tqdm
                 else None
             )
 
@@ -510,46 +654,16 @@ class Binner(BinnerStatsMixin, BinnerIOMixin):
                         _fit_single_column_fallback(col)
                     continue
 
-                split_lists = [sorted(list(set(splits))) for splits in batch_splits]
-                adjusted_split_lists = split_lists
-                monotonic_success = [False] * len(cols_in_group)
-
-                if monotonic:
-                    if hasattr(rust_module, "adjust_batch_chi_merge_monotonic_numpy"):
-                        try:
-                            native_result = (
-                                rust_module.adjust_batch_chi_merge_monotonic_numpy(
-                                    feature_arrays,
-                                    y_arr,
-                                    split_lists,
-                                    _resolve_monotonic_mode(monotonic),
-                                )
-                            )
-                            if (
-                                isinstance(native_result, tuple)
-                                and len(native_result) == 2
-                            ):
-                                candidate_splits, success_flags = native_result
-                                if len(candidate_splits) == len(cols_in_group) and len(
-                                    success_flags
-                                ) == len(cols_in_group):
-                                    adjusted_split_lists = [
-                                        sorted(list(set(splits)))
-                                        for splits in candidate_splits
-                                    ]
-                                    monotonic_success = [
-                                        bool(success) for success in success_flags
-                                    ]
-                            elif len(native_result) == len(cols_in_group):
-                                adjusted_split_lists = [
-                                    sorted(list(set(splits)))
-                                    for splits in native_result
-                                ]
-                                monotonic_success = [True] * len(cols_in_group)
-                        except Exception:
-                            monotonic_success = [False] * len(cols_in_group)
-                else:
-                    monotonic_success = [True] * len(cols_in_group)
+                split_lists = self._normalize_split_lists(batch_splits)
+                adjusted_split_lists, monotonic_success = (
+                    self._adjust_batch_monotonic_splits(
+                        rust_module=rust_module,
+                        feature_arrays=feature_arrays,
+                        y_arr=y_arr,
+                        split_lists=split_lists,
+                        monotonic=monotonic,
+                    )
+                )
 
                 for split_idx, col in enumerate(cols_in_group):
                     meta = feature_meta[col]
@@ -590,42 +704,19 @@ class Binner(BinnerStatsMixin, BinnerIOMixin):
 
         else:
             # Sequential fallback
-            pbar = (
-                tqdm(numeric_cols, desc="Binning features", disable=not show_progress)
-                if has_tqdm
-                else numeric_cols
+            self._fit_sequential_features(
+                X=X,
+                y_series=y_series,
+                method=method,
+                n_bins=n_bins,
+                min_samples=min_samples,
+                monotonic=monotonic,
+                numeric_cols=numeric_cols,
+                feature_min_samples=feature_min_samples,
+                show_progress=show_progress,
+                extra_kwargs=kwargs,
+                tqdm=tqdm,
             )
-            for col in pbar:
-                binner_cls = self.method_map.get(method)
-                if binner_cls is None:
-                    raise ValueError(f"Unknown method: {method}")
-
-                kwargs_binner = {"n_bins": n_bins, "monotonic": monotonic}
-
-                if method == "dt" and min_samples is not None:
-                    kwargs_binner["min_samples_leaf"] = min_samples
-                if method == "chi" and min_samples is not None:
-                    kwargs_binner["min_samples"] = min_samples
-
-                kwargs_binner.update(kwargs)
-
-                binner = binner_cls(**kwargs_binner)
-
-                # For fitting, drop missing values
-                col_data = X[col]
-                valid_mask = col_data.notna()
-
-                if valid_mask.sum() == 0:
-                    continue
-
-                binner.fit(col_data[valid_mask], y_series[valid_mask])
-                self._store_feature_binner(
-                    feature=col,
-                    binner=binner,
-                    col_data=col_data,
-                    y_series=y_series,
-                    min_sample_count=feature_min_samples.get(col),
-                )
 
         # Calculate and store statistics
         self.fit_woe(X, y_series, show_progress=show_progress)

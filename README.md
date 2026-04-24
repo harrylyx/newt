@@ -373,8 +373,8 @@ Benchmark results are written to:
 uv sync --group dev
 
 # Format code
-uv run black .
-uv run isort .
+uv run black src tests benchmarks scripts
+uv run isort src tests benchmarks scripts
 
 # Run linter
 uv run flake8 src tests

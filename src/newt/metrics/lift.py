@@ -1,12 +1,12 @@
-from typing import Union
-
 import numpy as np
 import pandas as pd
 
+from newt.metrics._common import ArrayLike, to_numeric_array
+
 
 def calculate_lift(
-    y_true: Union[np.ndarray, list],
-    y_prob: Union[np.ndarray, list],
+    y_true: ArrayLike,
+    y_prob: ArrayLike,
     bins: int = 10,
 ) -> pd.DataFrame:
     """
@@ -22,8 +22,8 @@ def calculate_lift(
         events, event_rate, lift.
     """
     try:
-        y_true = np.asarray(y_true)
-        y_prob = np.asarray(y_prob)
+        y_true = to_numeric_array(y_true)
+        y_prob = to_numeric_array(y_prob)
 
         data = pd.DataFrame({"true": y_true, "prob": y_prob})
 
@@ -57,8 +57,8 @@ def calculate_lift(
 
 
 def calculate_lift_at_k(
-    y_true: Union[np.ndarray, list],
-    y_prob: Union[np.ndarray, list],
+    y_true: ArrayLike,
+    y_prob: ArrayLike,
     k: float = 0.1,
 ) -> float:
     """
@@ -73,8 +73,8 @@ def calculate_lift_at_k(
         float: Lift value at k.
     """
     try:
-        y_true = np.asarray(y_true)
-        y_prob = np.asarray(y_prob)
+        y_true = to_numeric_array(y_true)
+        y_prob = to_numeric_array(y_prob)
 
         # Validate k
         if not 0 < k <= 1:

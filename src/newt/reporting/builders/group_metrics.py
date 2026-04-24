@@ -379,7 +379,9 @@ def _build_split_metrics_tables(
             build_context=build_context,
         )
         if not month_table.empty:
-            month_table["近期月对比各集合PSI"] = month_table["观察点月"].map(month_latest_psi)
+            month_table["近期月对比各集合PSI"] = month_table["观察点月"].map(
+                month_latest_psi
+            )
         month_rows.append(month_table)
 
     tag_result = _sort_report_table(
@@ -980,7 +982,10 @@ def _join_present_tags(values: pd.Series) -> str:
 def _build_score_metric_options(
     score_direction_summary: pd.DataFrame,
 ) -> Dict[str, Dict[str, bool]]:
-    if score_direction_summary.empty or "分数字段" not in score_direction_summary.columns:
+    if (
+        score_direction_summary.empty
+        or "分数字段" not in score_direction_summary.columns
+    ):
         return {}
 
     options: Dict[str, Dict[str, bool]] = {}
@@ -1051,3 +1056,12 @@ def _month_sort_key(value: object) -> str:
 
 def _tag_sort_key(value: object) -> tuple[int, str]:
     return _shared_tag_sort_key(value)
+
+
+build_split_metrics_tables = _build_split_metrics_tables
+build_group_metrics = _build_group_metrics
+build_score_metric_options = _build_score_metric_options
+lookup_reverse_auc = _lookup_reverse_auc
+resolve_score_model_columns = _resolve_score_model_columns
+build_dimensional_comparison = _build_dimensional_comparison
+build_model_pair_comparison = _build_model_pair_comparison

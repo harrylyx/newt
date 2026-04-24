@@ -15,7 +15,9 @@ from typing import Dict, List, Optional, Sequence, Tuple, Union
 import numpy as np
 import pandas as pd
 
+from newt._engine import ensure_native_functions, validate_engine
 from newt._native import load_native_module
+from newt.metrics._common import build_score_edges, prepare_binary_metric_input
 
 PERCENT_LEVELS: Tuple[float, ...] = (0.10, 0.05, 0.02, 0.01)
 VALID_METRICS_MODES = frozenset(["exact", "binned"])
@@ -57,30 +59,9 @@ def calculate_binary_metrics(
 
     levels = tuple(lift_levels) if lift_levels is not None else PERCENT_LEVELS
 
-    # --- input normalisation ------------------------------------------------
-    if isinstance(y_true, pd.Series):
-        y_series = y_true
-    else:
-        y_series = pd.Series(np.asarray(y_true).ravel())
-
-    if isinstance(y_score, pd.Series):
-        s_series = y_score
-    else:
-        s_series = pd.Series(np.asarray(y_score).ravel())
-
-    total = int(len(y_series))
-    good = int((y_series == 0).sum())
-    bad = int((y_series == 1).sum())
-    binary_total = good + bad
-    bad_rate = float(bad / binary_total) if binary_total else np.nan
-
-    # --- clean to binary + numeric ------------------------------------------
-    mask = y_series.isin([0, 1]) & pd.notna(s_series)
-    y_clean = y_series.loc[mask].astype(int).to_numpy()
-    score_clean = pd.to_numeric(s_series.loc[mask], errors="coerce")
-    valid = pd.notna(score_clean)
-    y_clean = y_clean[valid.to_numpy()]
-    score_clean = score_clean.loc[valid].to_numpy(dtype=float)
+    prepared = prepare_binary_metric_input(y_true=y_true, y_score=y_score)
+    y_clean = prepared.y_clean
+    score_clean = prepared.score_clean
 
     if len(y_clean) == 0 or np.unique(y_clean).size < 2:
         metrics_dict: Dict[str, float] = {"KS": np.nan, "AUC": np.nan}
@@ -104,10 +85,10 @@ def calculate_binary_metrics(
         )
 
     return {
-        "总": total,
-        "好": good,
-        "坏": bad,
-        "坏占比": bad_rate,
+        "总": prepared.total,
+        "好": prepared.good,
+        "坏": prepared.bad,
+        "坏占比": prepared.bad_rate,
         **metrics_dict,
         **lift_dict,
     }
@@ -178,7 +159,7 @@ def _binned_metrics(
     reverse_auc: bool,
 ) -> Tuple[Dict[str, float], Dict[str, float]]:
     """Binned approximation: histogram → AUC, KS, Lift."""
-    edges = _build_score_edges(score_clean, bins)
+    edges = build_score_edges(score_clean, bins)
     n_bins = len(edges) - 1
 
     # O(N) bin assignment
@@ -297,25 +278,6 @@ def _binned_lifts(
     return lifts
 
 
-def _build_score_edges(scores: np.ndarray, bins: int) -> np.ndarray:
-    """Build quantile edges from score array."""
-    clean = scores[~np.isnan(scores)]
-    unique = np.unique(clean)
-    if unique.size <= 1:
-        return np.array([-np.inf, np.inf], dtype=float)
-
-    n_bins = min(bins, unique.size)
-    quantiles = np.linspace(0, 1, n_bins + 1)
-    edges = np.unique(np.quantile(clean, quantiles).astype(float))
-
-    if edges.size < 2:
-        return np.array([-np.inf, np.inf], dtype=float)
-
-    edges[0] = -np.inf
-    edges[-1] = np.inf
-    return edges
-
-
 # ---------------------------------------------------------------------------
 # Batch interface (Phase 2 will add Rust path here)
 # ---------------------------------------------------------------------------
@@ -338,8 +300,10 @@ def calculate_binary_metrics_batch(
     """
     levels = tuple(lift_levels) if lift_levels is not None else PERCENT_LEVELS
 
-    if engine not in {"python", "rust", "auto"}:
-        raise ValueError("engine must be 'python', 'rust' or 'auto'")
+    try:
+        validate_engine(engine)
+    except ValueError as exc:
+        raise ValueError("engine must be 'python', 'rust' or 'auto'") from exc
 
     if engine == "rust":
         return _rust_binary_metrics_batch(
@@ -396,14 +360,20 @@ def _rust_binary_metrics_batch(
             )
         return None
 
-    fn = getattr(module, "calculate_binary_metrics_batch_numpy", None)
-    if not callable(fn):
+    try:
+        ensure_native_functions(
+            module,
+            ["calculate_binary_metrics_batch_numpy"],
+            component="Rust binary metrics engine",
+        )
+    except RuntimeError:
         if strict:
             raise RuntimeError(
                 "Rust engine requested but calculate_binary_metrics_batch_numpy "
                 "is unavailable in native extension."
             )
         return None
+    fn = module.calculate_binary_metrics_batch_numpy
 
     try:
         y_groups = [

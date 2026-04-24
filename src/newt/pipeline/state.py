@@ -1,9 +1,17 @@
 """State container for scorecard pipeline execution."""
 
+from __future__ import annotations
+
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional
+from typing import TYPE_CHECKING, Dict, List, Optional
 
 import pandas as pd
+
+if TYPE_CHECKING:
+    from newt.features.analysis.woe_calculator import WOEEncoder
+    from newt.features.binning import Binner
+    from newt.features.selection import FeatureSelector, PostFilter, StepwiseSelector
+    from newt.modeling import LogisticModel, Scorecard
 
 
 @dataclass
@@ -17,13 +25,13 @@ class PipelineState:
     X_current: pd.DataFrame = field(init=False)
     X_test_current: Optional[pd.DataFrame] = field(init=False)
     steps: List[str] = field(default_factory=list)
-    prefilter: Any = None
-    binner: Any = None
-    woe_encoders: Dict[str, Any] = field(default_factory=dict)
-    postfilter: Any = None
-    stepwise: Any = None
-    model: Any = None
-    scorecard: Any = None
+    prefilter: Optional["FeatureSelector"] = None
+    binner: Optional["Binner"] = None
+    woe_encoders: Dict[str, "WOEEncoder"] = field(default_factory=dict)
+    postfilter: Optional["PostFilter"] = None
+    stepwise: Optional["StepwiseSelector"] = None
+    model: Optional["LogisticModel"] = None
+    scorecard: Optional["Scorecard"] = None
     X_binned: Optional[pd.DataFrame] = None
     X_woe: Optional[pd.DataFrame] = None
     X_test_binned: Optional[pd.DataFrame] = None

@@ -135,7 +135,9 @@ def test_model_adapter_extracts_scorecard_metadata(fake_scorecard_model):
         "offset",
         "intercept_points",
     }.issubset(set(params["参数名称"]))
-    assert {"fit_intercept", "method", "maxiter", "alpha"}.issubset(set(params["参数名称"]))
+    assert {"fit_intercept", "method", "maxiter", "alpha"}.issubset(
+        set(params["参数名称"])
+    )
 
     feature_summary = adapter.get_lr_feature_summary_table()
     assert {

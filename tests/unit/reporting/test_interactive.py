@@ -394,6 +394,12 @@ def test_calculate_bin_metrics_supports_quantile_and_custom_bins_with_amount_met
 
     assert not q_table.empty
     assert not custom_table.empty
+    expected_sample_columns = {"total_prop", "goods_prop", "bads_prop"}
+    assert expected_sample_columns.issubset(q_table.columns)
+    assert expected_sample_columns.issubset(custom_table.columns)
+    assert q_table["total_prop"].sum() == pytest.approx(1.0)
+    assert q_table["goods_prop"].sum() == pytest.approx(1.0)
+    assert q_table["bads_prop"].sum() == pytest.approx(1.0)
     expected_amount_columns = {
         "逾期本金",
         "放款金额",

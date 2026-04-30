@@ -102,6 +102,9 @@ def test_calculate_bin_performance_table_sorts_by_bin_order_and_recomputes_cumul
     )
 
     assert table["min"].tolist() == [-np.inf, 0.2, 0.5]
+    assert table["total_prop"].tolist() == pytest.approx([2 / 6, 2 / 6, 2 / 6])
+    assert table["goods_prop"].tolist() == pytest.approx([1 / 3, 2 / 3, 0.0])
+    assert table["bads_prop"].tolist() == pytest.approx([1 / 3, 0.0, 2 / 3])
     assert np.isclose(table.iloc[0]["cum_bad_rate"], 0.5)
     assert np.isclose(table.iloc[0]["cum_bads_prop"], 1 / 3)
     assert np.isclose(table.iloc[1]["cum_bads_prop"], 1 / 3)

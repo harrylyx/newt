@@ -169,7 +169,10 @@ def build_report_result(
         )
 
     feature_dict = pd.DataFrame()
-    if any(key in build_sheet_keys for key in ["variable_analysis", "portrait"]):
+    if any(
+        key in build_sheet_keys
+        for key in ["variable_analysis", "portrait", "scorecard_details"]
+    ):
         step_start = time.perf_counter()
         feature_dict = feature_metrics.load_feature_dictionary_from_df(feature_df)
         _log_context_stage(
@@ -271,6 +274,7 @@ def build_report_result(
         ),
         "scorecard_details": lambda: main_sheets.build_scorecard_details_sheet(
             model_adapter=model_adapter,
+            feature_dict=feature_dict,
         ),
         "model_performance": lambda: main_sheets.build_model_performance_sheet(
             data=data,

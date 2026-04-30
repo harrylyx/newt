@@ -942,6 +942,7 @@ Notes:
 | `thirdparty_info_period1_6` | `近6个月三方查询次数` | `thirdparty` | `thirdparty_info` |
 
   Compatibility note: legacy dictionaries that still use `表名` are auto-mapped to `指标表英文名`.
+  The same `中文名` mapping is used in the scorecard-details sheet when available.
 - `sheet_list` can optionally select sheets by index `1-5` or by name:
   `1=overview`, `2=model_design`, `3=variable_analysis`, `4=model_performance`, `5=scorecard_details`
 - Name selectors include:
@@ -1088,6 +1089,8 @@ custom_bin_metrics = calculate_bin_metrics(
 Notes:
 
 - `calculate_bin_metrics` keeps the legacy amount output set.
+- Sample share columns are included for each bin:
+  `total_prop, goods_prop, bads_prop`.
 - When amount columns are provided, appended amount columns are:
   `逾期本金, 放款金额, 金额坏占比, 放款金额占比, 逾期本金占比, 金额lift`.
 

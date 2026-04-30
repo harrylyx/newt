@@ -1054,6 +1054,47 @@ def test_report_scorecard_details_sheet_sorts_bins_and_places_missing_last(
     assert left_bounds == sorted(left_bounds)
 
 
+def test_report_scorecard_details_sheet_uses_feature_dictionary_chinese_names(
+    tmp_path,
+    report_frame,
+    fake_scorecard_model,
+):
+    feature_df = pd.DataFrame(
+        [
+            {
+                "英文名": "feature_a",
+                "中文名": "特征A中文",
+            }
+        ]
+    )
+    output_path = tmp_path / "scorecard_details_chinese_names.xlsx"
+    report = Report(
+        data=report_frame,
+        model=fake_scorecard_model,
+        tag="tag",
+        score_col="score_new",
+        date_col="obs_date",
+        label_list=["label_main"],
+        feature_df=feature_df,
+        sheet_list=["评分卡计算明细"],
+        report_out_path=str(output_path),
+    )
+
+    report.generate()
+
+    points_block = (
+        report.result_.get_sheet("评分卡计算明细").get_block("二、评分卡分值拆解").data
+    )
+    assert points_block.columns[:3].tolist() == ["变量", "中文名", "分箱"]
+
+    chinese_names = (
+        points_block.drop_duplicates("变量").set_index("变量")["中文名"].to_dict()
+    )
+    assert chinese_names["Intercept"] == "截距"
+    assert chinese_names["feature_a"] == "特征A中文"
+    assert chinese_names["feature_b"] == ""
+
+
 def test_report_scorecard_details_sheet_uses_points_decimals_output(
     tmp_path,
     report_frame,

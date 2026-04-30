@@ -265,6 +265,7 @@ def calculate_bin_performance_table(
     rows: List[Dict[str, object]] = []
     total_bad = int((frame[label_col] == 1).sum())
     total_all = int(len(frame))
+    total_good = total_all - total_bad
     overall_bad_rate = float(total_bad / total_all) if total_all else np.nan
 
     for bin_label, bin_frame in frame.groupby(
@@ -282,6 +283,9 @@ def calculate_bin_performance_table(
                 "goods": goods,
                 "bads": bads,
                 "total": total,
+                "total_prop": float(total / total_all) if total_all else np.nan,
+                "goods_prop": float(goods / total_good) if total_good else np.nan,
+                "bads_prop": float(bads / total_bad) if total_bad else np.nan,
                 "bad_rate": bad_rate,
                 "lift": (
                     float(bad_rate / overall_bad_rate)
@@ -322,6 +326,9 @@ def calculate_bin_performance_table(
         "goods",
         "bads",
         "total",
+        "total_prop",
+        "goods_prop",
+        "bads_prop",
         "bad_rate",
         "cum_bad_rate",
         "cum_bads_prop",

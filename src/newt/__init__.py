@@ -10,7 +10,7 @@ A comprehensive Python library for building credit scorecards with:
 - Pipeline-style workflow
 """
 
-__version__ = "0.3.0"
+__version__ = "0.3.1"
 
 # Runtime config loader
 from newt.config import load_conf

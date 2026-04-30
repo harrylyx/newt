@@ -564,16 +564,56 @@ def build_variable_analysis_sheet(
     return ReportSheet(name="变量分析", blocks=blocks)
 
 
+def _lookup_scorecard_chinese_name(
+    feature_dict: pd.DataFrame,
+    feature: object,
+) -> str:
+    feature_name = str(feature)
+    if feature_name == "Intercept":
+        return "截距"
+    meta = feature_metrics._lookup_feature_meta(feature_dict, feature_name)
+    display_name = meta.get("中文名", "")
+    if pd.isna(display_name):
+        return ""
+    return str(display_name)
+
+
+def _add_scorecard_chinese_names(
+    points_table: pd.DataFrame,
+    feature_dict: pd.DataFrame,
+) -> pd.DataFrame:
+    if points_table.empty or "feature" not in points_table.columns:
+        return points_table
+    result = points_table.copy()
+    if "chinese_name" in result.columns:
+        result = result.drop(columns=["chinese_name"])
+    feature_index = result.columns.get_loc("feature")
+    result.insert(
+        feature_index + 1,
+        "chinese_name",
+        result["feature"].map(
+            lambda feature: _lookup_scorecard_chinese_name(feature_dict, feature)
+        ),
+    )
+    return result
+
+
 def build_scorecard_details_sheet(
     model_adapter: ModelAdapter,
+    feature_dict: Optional[pd.DataFrame] = None,
 ) -> ReportSheet:
     """Build scorecard decomposition sheet."""
     base_table = model_adapter.get_scorecard_base_table()
     points_table = model_adapter.get_scorecard_points_table()
     if not points_table.empty:
+        points_table = _add_scorecard_chinese_names(
+            points_table,
+            feature_dict if feature_dict is not None else pd.DataFrame(),
+        )
         points_table = points_table.rename(
             columns={
                 "feature": "变量",
+                "chinese_name": "中文名",
                 "bin": "分箱",
                 "woe": "WOE",
                 "points": "分值",

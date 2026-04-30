@@ -936,6 +936,7 @@ report.generate()
 | `thirdparty_info_period1_6` | `近6个月三方查询次数` | `thirdparty` | `thirdparty_info` |
 
   兼容说明：如果历史字典仍使用 `表名`，报表会自动映射到 `指标表英文名`。
+  评分卡计算明细页也会优先使用这里的 `中文名` 映射。
 - `sheet_list` 可选传入序号 `1-5` 或名称来控制输出页面：
   `1=overview`、`2=model_design`、`3=variable_analysis`、`4=model_performance`、`5=scorecard_details`
 - 名称可选值包括：
@@ -1084,6 +1085,8 @@ custom_bin_metrics = calculate_bin_metrics(
 说明：
 
 - `calculate_bin_metrics` 保持旧版金额列行为。
+- 每个分箱会输出样本占比列：
+  `total_prop, goods_prop, bads_prop`。
 - 当金额列成对传入时，追加金额列为：
   `逾期本金, 放款金额, 金额坏占比, 放款金额占比, 逾期本金占比, 金额lift`。
 
